@@ -1,0 +1,38 @@
+# 环境与凭据（绝不入库）
+.env
+*.env
+!.env.example
+
+# 数据与备份（可能含个人信息，禁止入库）
+data/
+backups/
+uploads/
+*.sql.gz
+*.dump
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 前端
+web/node_modules/
+web/dist/
+web/.vite/
+web/*.local
+
+# 离线依赖：体积约 45MB，按 scripts/fetch-wheels.sh 重建
+import-api/wheels/*.whl
+!import-api/wheels/.gitkeep
+
+# 临时与系统
+.tmp/
+*.log
+Thumbs.db
+.DS_Store
+
+# 样例文件可提交（全部为虚构数据），排除 Office 临时文件
+samples/~$*
+samples/*.tmp

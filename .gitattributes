@@ -1,0 +1,15 @@
+# 统一换行，避免 Windows 提交的 CRLF 破坏 shell 脚本
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sql  text eol=lf
+
+# 二进制
+*.xlsx binary
+*.png  binary
+*.jpg  binary
+*.gz   binary
+*.whl  binary
