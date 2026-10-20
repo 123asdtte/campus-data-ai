@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import secrets
 from datetime import datetime
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from . import parsing
 from .config import settings
 from .db import pool
 from .mapping import (
@@ -111,14 +113,14 @@ def _encode_enums(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _pre_coerce(df: pd.DataFrame, target: str) -> Tuple[pd.DataFrame, List[Issue]]:
+def _pre_coerce(df: pd.DataFrame, target: str, row_offset: int = 0) -> Tuple[pd.DataFrame, List[Issue]]:
     """类型预转换：无法转换的值在此登记为问题，避免库层抛出不可读异常。"""
     issues: List[Issue] = []
 
     if "enrollment_year" in df.columns:
         values: List[Optional[int]] = []
         for idx, raw in df["enrollment_year"].items():
-            row_no = idx + 2
+            row_no = idx + 2 + row_offset
             if raw is None:
                 values.append(None)
                 continue
@@ -139,7 +141,7 @@ def _pre_coerce(df: pd.DataFrame, target: str) -> Tuple[pd.DataFrame, List[Issue
         raw_series = df["effective_date"]
         parsed = pd.to_datetime(raw_series, errors="coerce", format="mixed")
         for idx, raw in raw_series.items():
-            row_no = idx + 2
+            row_no = idx + 2 + row_offset
             if raw is None:
                 issues.append(Issue(row_no, "MISSING_REQUIRED", "生效日期为必填项", "effective_date"))
             elif pd.isna(parsed.loc[idx]):
@@ -170,7 +172,7 @@ def _code_for_failure(check: str, column: str, is_missing: bool) -> str:
     return "INVALID_ENUM"
 
 
-def _structural_issues(df: pd.DataFrame, target: str) -> List[Issue]:
+def _structural_issues(df: pd.DataFrame, target: str, row_offset: int = 0) -> List[Issue]:
     """Pandera 结构校验：必填、类型、长度、枚举、数值范围。"""
     schema = SCHEMAS[target]
     try:
@@ -194,7 +196,7 @@ def _structural_issues(df: pd.DataFrame, target: str) -> List[Issue]:
                           f"{column} 校验失败：{value}", str(column) if column else None)
                 )
                 continue
-            row_no = int(index) + 2
+            row_no = int(index) + 2 + row_offset
             is_missing = value is None or (isinstance(value, float) and pd.isna(value)) or value == ""
             if (row_no, column) in seen:
                 continue
@@ -205,7 +207,9 @@ def _structural_issues(df: pd.DataFrame, target: str) -> List[Issue]:
         return issues
 
 
-def _business_issues(df: pd.DataFrame, target: str, known_students: set[str]) -> List[Issue]:
+def _business_issues(
+    df: pd.DataFrame, target: str, known_students: set[str], row_offset: int = 0
+) -> List[Issue]:
     """业务规则：仅处理 Pandera 覆盖不到的部分。"""
     issues: List[Issue] = []
 
@@ -218,18 +222,18 @@ def _business_issues(df: pd.DataFrame, target: str, known_students: set[str]) ->
             duplicated = codes[codes.notna() & codes.duplicated(keep="first")]
             for idx in duplicated.index:
                 issues.append(
-                    Issue(idx + 2, "DUPLICATE_STUDENT_NO", f"学号在文件内重复：{df.at[idx, 'student_no']}", "student_no")
+                    Issue(idx + 2 + row_offset, "DUPLICATE_STUDENT_NO", f"学号在文件内重复：{df.at[idx, 'student_no']}", "student_no")
                 )
             for idx, value in codes.items():
                 if value is not None and value in known_students:
                     issues.append(
-                        Issue(idx + 2, "DUPLICATE_STUDENT_NO", f"学号已存在于数据库：{value}", "student_no")
+                        Issue(idx + 2 + row_offset, "DUPLICATE_STUDENT_NO", f"学号已存在于数据库：{value}", "student_no")
                     )
         else:
             for idx, value in codes.items():
                 if value is not None and value not in known_students:
                     issues.append(
-                        Issue(idx + 2, "UNKNOWN_STUDENT", f"数据库中不存在该学号：{value}", "student_no")
+                        Issue(idx + 2 + row_offset, "UNKNOWN_STUDENT", f"数据库中不存在该学号：{value}", "student_no")
                     )
 
     return issues
@@ -282,8 +286,87 @@ def _insert_issues(cur, batch_id: int, issues: List[Issue]) -> None:
     )
 
 
+# ------------------------------------------------------------------ 映射持久化
+def _sidecar_path(staged_path: str) -> str:
+    return f"{os.path.splitext(staged_path)[0]}.mapping.json"
+
+
+def _write_sidecar(staged_path: str, payload: Dict[str, Any]) -> None:
+    """把工作表、表头行与列映射存到暂存文件旁边。
+
+    不新增数据库字段，避免动已跑通的表结构；映射与文件同生共死。
+    """
+    try:
+        with open(_sidecar_path(staged_path), "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _read_sidecar(staged_path: str) -> Dict[str, Any]:
+    path = _sidecar_path(staged_path)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _apply_mapping(frame: pd.DataFrame, matches: List[Any], target: str) -> pd.DataFrame:
+    rename: Dict[str, str] = {}
+    used: set[str] = set()
+    for item in matches:
+        if item.target and item.source in frame.columns and item.target not in used:
+            rename[item.source] = item.target
+            used.add(item.target)
+
+    output = frame[list(rename)].rename(columns=rename) if rename else pd.DataFrame(index=frame.index)
+    for field in TARGETS[target]["fields"]:  # type: ignore[index]
+        if field not in output.columns:
+            output[field] = None
+    return output[list(TARGETS[target]["fields"])]  # type: ignore[index]
+
+
+def _prepare(
+    data: bytes,
+    filename: str,
+    target: str,
+    sheet_name: Optional[str],
+    header_row: Optional[int],
+    overrides: Optional[Dict[str, Optional[str]]],
+) -> Tuple[pd.DataFrame, pd.DataFrame, List[Any], List[str], Dict[str, Any]]:
+    frame, info = parsing.load_frame(data, filename, target, sheet_name, header_row)
+    frame = _normalize_frame(frame)
+    matches = parsing.auto_map(frame.columns, target)
+    if overrides:
+        matches = parsing.apply_overrides(matches, overrides)
+    missing = parsing.required_missing(matches, target)
+    mapped = _apply_mapping(frame, matches, target)
+    return frame, mapped, matches, missing, info
+
+
+def _mapping_payload(matches: List[Any], target: str) -> Dict[str, Any]:
+    return {
+        "mapping": parsing.matches_as_list(matches, target),
+        "column_mapping": parsing.mapping_to_dict(matches),
+        "unmapped_columns": [m.source for m in matches if not m.target and m.status == "unmatched"],
+        "conflicts": [m.source for m in matches if m.status == "conflict"],
+        "ambiguous": [m.source for m in matches if m.status == "ambiguous"],
+    }
+
+
 # ------------------------------------------------------------------ 主流程
-def create_batch(data: bytes, filename: str, target_type: str, actor: str) -> Dict[str, Any]:
+def create_batch(
+    data: bytes,
+    filename: str,
+    target_type: str,
+    actor: str,
+    sheet_name: Optional[str] = None,
+    header_row: Optional[int] = None,
+    overrides: Optional[Dict[str, Optional[str]]] = None,
+) -> Dict[str, Any]:
     if target_type not in TARGETS:
         raise ServiceError(f"不支持的目标类型：{target_type}")
     if not data:
@@ -293,14 +376,14 @@ def create_batch(data: bytes, filename: str, target_type: str, actor: str) -> Di
 
     safe_name = os.path.basename(filename)
     digest = _sha256(data)
-    frame = _normalize_frame(_read_frame(data, filename))
+    frame_raw, mapped, matches, missing, info = _prepare(
+        data, filename, target_type, sheet_name, header_row, overrides
+    )
 
-    if len(frame) == 0:
+    if len(mapped) == 0:
         raise ServiceError("文件没有可导入的数据行")
-    if len(frame) > settings.max_rows:
-        raise ServiceError(f"数据行数 {len(frame)} 超过 {settings.max_rows} 行上限", 413)
-
-    mapped, missing, mapping = _map_columns(frame, target_type)
+    if len(mapped) > settings.max_rows:
+        raise ServiceError(f"数据行数 {len(mapped)} 超过 {settings.max_rows} 行上限", 413)
 
     batch_code = f"IMP-{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3).upper()}"
     ext = ".xlsx" if safe_name.lower().endswith((".xlsx", ".xlsm")) else ".csv"
@@ -308,6 +391,15 @@ def create_batch(data: bytes, filename: str, target_type: str, actor: str) -> Di
     os.makedirs(settings.upload_dir, exist_ok=True)
     with open(staged_path, "wb") as handle:
         handle.write(data)
+
+    _write_sidecar(
+        staged_path,
+        {
+            "sheet_name": info["sheet_name"],
+            "header_row": info["header_row"],
+            "mapping": parsing.mapping_to_dict(matches),
+        },
+    )
 
     issues: List[Issue] = []
     status = "uploaded"
@@ -350,7 +442,7 @@ def create_batch(data: bytes, filename: str, target_type: str, actor: str) -> Di
                     safe_name[:255],
                     digest,
                     target_type,
-                    len(frame),
+                    len(mapped),
                     status,
                     staged_path,
                     actor[:150],
@@ -363,20 +455,29 @@ def create_batch(data: bytes, filename: str, target_type: str, actor: str) -> Di
 
     preview_rows = []
     for idx, row in mapped.head(20).iterrows():
-        item = {"__row": idx + 2}
+        item = {"__row": int(info["header_row"]) + idx + 1}
         for field in TARGETS[target_type]["fields"]:  # type: ignore[index]
             item[field] = _cell(row.get(field))
         preview_rows.append(item)
+
+    mapping_payload = _mapping_payload(matches, target_type)
 
     return {
         "batch_id": batch_id,
         "batch_code": batch_code,
         "target_type": target_type,
         "status": status,
-        "total_rows": len(frame),
+        "total_rows": len(mapped),
+        "sheet_name": info["sheet_name"],
+        "header_row": info["header_row"],
+        "sheets": info["analysis"]["sheets"],
+        "needs_sheet_choice": info["analysis"]["needs_sheet_choice"],
         "missing_required": missing,
-        "column_mapping": mapping,
-        "unmapped_columns": [c for c in frame.columns if c not in mapping],
+        "column_mapping": mapping_payload["column_mapping"],
+        "mapping": mapping_payload["mapping"],
+        "unmapped_columns": mapping_payload["unmapped_columns"],
+        "conflicts": mapping_payload["conflicts"],
+        "ambiguous": mapping_payload["ambiguous"],
         "field_labels": TARGETS[target_type]["labels"],  # type: ignore[index]
         "preview": preview_rows,
         "issues": [
@@ -409,20 +510,133 @@ def _revalidate(cur, batch: Dict[str, Any]) -> Tuple[pd.DataFrame, List[Issue], 
         data = handle.read()
 
     target = batch["target_type"]
-    frame = _normalize_frame(_read_frame(data, batch["source_filename"]))
-    mapped, missing, mapping = _map_columns(frame, target)
+    meta = _read_sidecar(path)
+    _frame_raw, mapped, matches, missing, info = _prepare(
+        data,
+        batch["source_filename"],
+        target,
+        meta.get("sheet_name"),
+        meta.get("header_row"),
+        meta.get("mapping"),
+    )
 
     if missing:
         labels = ", ".join(TARGETS[target]["labels"][f] for f in missing)  # type: ignore[index]
         raise ServiceError(f"缺少必需列：{labels}", 422)
 
+    # 表头不在第 1 行时，问题行号需要整体后移，否则定位会错
+    offset = max(int(info["header_row"]) - 1, 0)
     mapped = _encode_enums(mapped)
-    mapped, issues = _pre_coerce(mapped, target)
-    issues.extend(_structural_issues(mapped, target))
+    mapped, issues = _pre_coerce(mapped, target, offset)
+    issues.extend(_structural_issues(mapped, target, offset))
 
     known = _fetch_known_students(cur, mapped["student_no"].tolist() if "student_no" in mapped else [])
-    issues.extend(_business_issues(mapped, target, known))
-    return mapped, issues, mapping
+    issues.extend(_business_issues(mapped, target, known, offset))
+    mapped.attrs["row_offset"] = offset
+    return mapped, issues, parsing.mapping_to_dict(matches)
+
+
+def remap_batch(
+    batch_id: int,
+    actor: str,
+    sheet_name: Optional[str] = None,
+    header_row: Optional[int] = None,
+    overrides: Optional[Dict[str, Optional[str]]] = None,
+) -> Dict[str, Any]:
+    """用户调整工作表/表头/列映射后重新解析，不重新上传文件。"""
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            _set_actor(cur, actor)
+            cur.execute("SELECT * FROM campus.import_batches WHERE id = %s FOR UPDATE", (batch_id,))
+            batch = cur.fetchone()
+            if batch is None:
+                raise ServiceError(f"导入批次不存在：{batch_id}", 404)
+            if batch["batch_status"] == "imported":
+                raise ServiceError("该批次已导入，不能再调整映射", 409)
+
+            path = batch.get("staged_path")
+            if not path or not os.path.exists(path):
+                raise ServiceError("暂存文件已不存在，请重新上传", 409)
+
+            with open(path, "rb") as handle:
+                data = handle.read()
+
+            target = batch["target_type"]
+            meta = _read_sidecar(path)
+            use_sheet = sheet_name or meta.get("sheet_name")
+            use_header = header_row or meta.get("header_row")
+            use_mapping = overrides if overrides is not None else meta.get("mapping")
+
+            _frame_raw, mapped, matches, missing, info = _prepare(
+                data, batch["source_filename"], target, use_sheet, use_header, use_mapping
+            )
+
+            _write_sidecar(
+                path,
+                {
+                    "sheet_name": info["sheet_name"],
+                    "header_row": info["header_row"],
+                    "mapping": parsing.mapping_to_dict(matches),
+                },
+            )
+
+            status = "failed" if missing else "uploaded"
+            cur.execute(
+                """
+                UPDATE campus.import_batches
+                   SET total_rows = %s, valid_rows = 0, invalid_rows = 0,
+                       batch_status = %s, failure_reason = %s, finished_at = NULL
+                 WHERE id = %s
+                """,
+                (len(mapped), status, "缺少必需列" if missing else None, batch_id),
+            )
+            cur.execute("DELETE FROM campus.import_issues WHERE batch_id = %s", (batch_id,))
+
+            issues: List[Issue] = []
+            if missing:
+                labels = ", ".join(TARGETS[target]["labels"][f] for f in missing)  # type: ignore[index]
+                issues.append(
+                    Issue(MAX_TEXT_ISSUE_ROW, "COLUMN_MAPPING_REQUIRED", f"缺少必需列：{labels}")
+                )
+                _insert_issues(cur, batch_id, issues)
+
+    preview_rows = []
+    for idx, row in mapped.head(20).iterrows():
+        item = {"__row": int(info["header_row"]) + idx + 1}
+        for field in TARGETS[target]["fields"]:  # type: ignore[index]
+            item[field] = _cell(row.get(field))
+        preview_rows.append(item)
+
+    mapping_payload = _mapping_payload(matches, target)
+    return {
+        "batch_id": batch_id,
+        "batch_code": batch["batch_code"],
+        "target_type": target,
+        "status": status,
+        "total_rows": len(mapped),
+        "sheet_name": info["sheet_name"],
+        "header_row": info["header_row"],
+        "sheets": info["analysis"]["sheets"],
+        "needs_sheet_choice": info["analysis"]["needs_sheet_choice"],
+        "missing_required": missing,
+        "column_mapping": mapping_payload["column_mapping"],
+        "mapping": mapping_payload["mapping"],
+        "unmapped_columns": mapping_payload["unmapped_columns"],
+        "conflicts": mapping_payload["conflicts"],
+        "ambiguous": mapping_payload["ambiguous"],
+        "field_labels": TARGETS[target]["labels"],  # type: ignore[index]
+        "preview": preview_rows,
+        "issues": [
+            {
+                "row_number": i.row_number,
+                "field_name": i.field_name,
+                "issue_code": i.issue_code,
+                "severity": i.severity,
+                "issue_message": i.issue_message,
+            }
+            for i in issues
+        ],
+    }
 
 
 def validate_batch(batch_id: int, actor: str) -> Dict[str, Any]:
@@ -509,9 +723,10 @@ def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
             target = batch["target_type"]
             mapped, issues, _mapping = _revalidate(cur, batch)
             error_rows = _row_has_error(issues)
+            row_offset = int(mapped.attrs.get("row_offset", 0))
 
             for idx, row in mapped.iterrows():
-                row_no = idx + 2
+                row_no = idx + 2 + row_offset
                 if row_no in error_rows:
                     continue
 

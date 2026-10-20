@@ -1,11 +1,13 @@
 """列名映射与受控枚举。
 
-设计原则：
-- 中文表头 → 内部字段名的映射集中在此，页面与接口不重复维护。
+约定：
+- 别名表是唯一可维护入口：新增表头写法只需在此追加，不必改解析代码。
+- 别名按“规范化后完全相等”命中为 1.0；包含关系与模糊匹配由 parsing.py 处理。
 - 枚举同时接受中文标签与内部代码；无法识别时保留原值，交由校验环节报 INVALID_ENUM。
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List
 
 # ---------------------------------------------------------------- 学生信息
@@ -30,20 +32,47 @@ STUDENT_LABELS: Dict[str, str] = {
 }
 
 STUDENT_ALIASES: Dict[str, str] = {
+    # 学号
     "学号": "student_no",
     "学生学号": "student_no",
+    "学生编号": "student_no",
+    "学籍号": "student_no",
+    "学号编号": "student_no",
+    # 姓名
     "姓名": "student_name",
     "学生姓名": "student_name",
+    "学生名称": "student_name",
+    "名字": "student_name",
+    # 学院
     "学院": "college_name",
-    "院系": "college_name",
+    "所属学院": "college_name",
+    "学院名称": "college_name",
     "二级学院": "college_name",
+    "院系": "college_name",
+    "系部": "college_name",
+    "所在学院": "college_name",
+    # 专业
     "专业": "major_name",
+    "专业名称": "major_name",
+    "所学专业": "major_name",
+    "专业方向": "major_name",
+    # 班级
     "班级": "class_name",
     "行政班": "class_name",
+    "行政班级": "class_name",
+    "班级名称": "class_name",
+    "所在班级": "class_name",
+    "就读班级": "class_name",
+    # 入学年份
     "入学年份": "enrollment_year",
     "年级": "enrollment_year",
+    "入学年": "enrollment_year",
+    "入学时间": "enrollment_year",
+    # 状态
     "在校状态": "student_status",
     "学籍状态": "student_status",
+    "学生状态": "student_status",
+    "状态": "student_status",
 }
 
 # ---------------------------------------------------------------- 学籍异动
@@ -66,14 +95,24 @@ CHANGE_LABELS: Dict[str, str] = {
 CHANGE_ALIASES: Dict[str, str] = {
     "学号": "student_no",
     "学生学号": "student_no",
+    "学生编号": "student_no",
+    "学籍号": "student_no",
     "异动类型": "change_type",
     "学籍异动类型": "change_type",
+    "异动类别": "change_type",
+    "异动种类": "change_type",
     "生效日期": "effective_date",
     "异动日期": "effective_date",
     "发生日期": "effective_date",
+    "异动时间": "effective_date",
+    "日期": "effective_date",
     "异动原因": "change_reason",
     "原因": "change_reason",
+    "说明": "change_reason",
+    "备注": "change_reason",
     "记录状态": "record_status",
+    "处理状态": "record_status",
+    "状态": "record_status",
 }
 
 TARGETS: Dict[str, Dict[str, object]] = {
@@ -142,3 +181,27 @@ ENUM_FIELDS: Dict[str, tuple] = {
     "change_type": (CHANGE_TYPE_MAP, CHANGE_TYPE_CODES),
     "record_status": (RECORD_STATUS_MAP, RECORD_STATUS_CODES),
 }
+
+
+# ---------------------------------------------------------------- 规范化
+def normalize_header(value: object) -> str:
+    """去换行、全角空格、括号注释与标点，统一小写。
+
+    例：「学号（必填）」→「学号」；「 学生 姓名 」→「学生姓名」。
+    """
+    text = "" if value is None else str(value)
+    text = text.replace("\u3000", " ").replace("\r", "").replace("\n", "")
+    text = re.sub(r"[（(][^）)]*[）)]", "", text)
+    text = re.sub(r"[*＊:：\s]", "", text)
+    return text.strip().lower()
+
+
+def build_alias_index(target: str) -> Dict[str, str]:
+    """规范化别名 → 字段名。同时把字段代码本身作为别名，兼容英文表头。"""
+    aliases: Dict[str, str] = TARGETS[target]["aliases"]  # type: ignore[assignment]
+    index: Dict[str, str] = {}
+    for alias, field in aliases.items():
+        index[normalize_header(alias)] = field
+    for field in TARGETS[target]["fields"]:  # type: ignore[union-attr]
+        index.setdefault(normalize_header(field), field)
+    return index

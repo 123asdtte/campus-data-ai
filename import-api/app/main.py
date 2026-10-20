@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -52,6 +53,19 @@ def _handle(exc: service.ServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
+def _parse_mapping(raw: Optional[str]) -> Optional[Dict[str, Optional[str]]]:
+    """解析前端传来的列映射；非法 JSON 直接报 400，不静默忽略。"""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"mapping 不是合法 JSON：{exc}") from exc
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="mapping 必须是 {原始列名: 字段名} 对象")
+    return {str(key): (str(val) if val else None) for key, val in value.items()}
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     try:
@@ -68,11 +82,23 @@ def health() -> Dict[str, Any]:
 def preview_import(
     file: UploadFile = File(..., description="xlsx 或 csv 文件"),
     target_type: str = Form(..., description="students | student_changes"),
+    sheet_name: Optional[str] = Form(default=None, description="指定工作表；留空自动识别"),
+    header_row: Optional[int] = Form(default=None, description="指定表头行号；留空自动识别"),
+    mapping: Optional[str] = Form(default=None, description='JSON：{"原始列名": "字段名"}'),
     x_actor: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     data = file.file.read()
+    overrides = _parse_mapping(mapping)
     try:
-        return service.create_batch(data, file.filename or "upload.xlsx", target_type, _actor(x_actor))
+        return service.create_batch(
+            data,
+            file.filename or "upload.xlsx",
+            target_type,
+            _actor(x_actor),
+            sheet_name=sheet_name,
+            header_row=header_row,
+            overrides=overrides,
+        )
     except service.ServiceError as exc:
         raise _handle(exc) from exc
 
@@ -83,6 +109,17 @@ class Base64Upload(BaseModel):
     filename: str = Field(..., max_length=255)
     content_base64: str
     target_type: str
+    sheet_name: Optional[str] = None
+    header_row: Optional[int] = None
+    mapping: Optional[Dict[str, Optional[str]]] = None
+
+
+class RemapRequest(BaseModel):
+    """调整工作表、表头行或列映射后重新解析。"""
+
+    sheet_name: Optional[str] = None
+    header_row: Optional[int] = None
+    mapping: Optional[Dict[str, Optional[str]]] = None
 
 
 def _decode_base64(raw: str) -> bytes:
@@ -110,7 +147,33 @@ def preview_import_base64(
     if not data:
         raise HTTPException(status_code=400, detail="base64 解码结果为空")
     try:
-        return service.create_batch(data, payload.filename, payload.target_type, _actor(x_actor))
+        return service.create_batch(
+            data,
+            payload.filename,
+            payload.target_type,
+            _actor(x_actor),
+            sheet_name=payload.sheet_name,
+            header_row=payload.header_row,
+            overrides=payload.mapping,
+        )
+    except service.ServiceError as exc:
+        raise _handle(exc) from exc
+
+
+@app.post("/imports/{batch_id}/remap")
+def remap_import(
+    batch_id: int,
+    payload: RemapRequest,
+    x_actor: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    try:
+        return service.remap_batch(
+            batch_id,
+            _actor(x_actor),
+            sheet_name=payload.sheet_name,
+            header_row=payload.header_row,
+            overrides=payload.mapping,
+        )
     except service.ServiceError as exc:
         raise _handle(exc) from exc
 
