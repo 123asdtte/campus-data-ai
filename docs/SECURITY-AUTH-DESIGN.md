@@ -5,6 +5,13 @@
 - **前置**：阶段 1.3 部署验收通过；系统仍限定在本机 + 虚构数据环境
 - **相关**：`docs/ADR-001-import-mapping.md`、`docs/SECURITY-CHECKLIST.md`、`docs/DEPLOY-WEB-PLAN.md`
 
+> **决策更新（2026-10-20 23:00）**
+> 本文档第 2–6 节为**初版设计**，其中「候选方案比较」与「实施顺序」已被后续决策细化：
+> - 最终选型（pwdlib + PyCasbin + 自建会话）见 **`docs/SECURITY-AUTH-DECISION.md`**；
+> - 分阶段实施（P0–P5）、文件清单与验收标准见 **`docs/SECURITY-AUTH-ROADMAP.md`**。
+> 三份文档不冲突：本文保留**现状与风险证据**，DECISION 记录**为什么这样选**，ROADMAP 记录**怎么落地**。
+> 另：P0（Appsmith 只读化）经 2026-10-20 22:56 核验**尚未执行**，Appsmith 仍以 `campus_app` 直连。
+
 ---
 
 ## 1. 当前访问入口与安全现状
@@ -105,6 +112,8 @@ campus_app | Appsmith JDBC Driver | 172.20.0.4 | idle
 **结论：SSO 是首选终态，但当前不具备实施条件，需学校信息中心确认。**
 
 ### 2.2 候选方案比较
+
+> 下表为初版比较，用于说明取舍逻辑。最终选型（pwdlib 负责哈希、Casbin 负责判定、会话自建）与组件核查结果见 `docs/SECURITY-AUTH-DECISION.md`。
 
 | 维度 | A. 自建本地账号 + 服务端会话 | B. 学校统一身份认证（SSO） | C. Nginx Basic Auth | D. JWT 存 localStorage |
 |---|---|---|---|---|
@@ -221,6 +230,8 @@ campus_app | Appsmith JDBC Driver | 172.20.0.4 | idle
 ---
 
 ## 6. 建议实施顺序与验收标准
+
+> **本节已被 `docs/SECURITY-AUTH-ROADMAP.md` 的 P0–P5 取代**（阶段划分更细，补充了涉及文件、迁移、回滚与测试用例）。保留本节仅作为初版思路记录，实施以 ROADMAP 为准。
 
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
