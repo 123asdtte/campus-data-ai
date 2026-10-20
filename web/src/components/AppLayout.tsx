@@ -1,0 +1,83 @@
+import { Layout } from 'antd';
+import { AppstoreOutlined, CloudUploadOutlined, TeamOutlined } from '@ant-design/icons';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { actorName } from '../api/client';
+import BrandMark from './BrandMark';
+
+const { Sider, Content } = Layout;
+
+const NAV = [
+  { to: '/', label: '总览', icon: <AppstoreOutlined /> },
+  { to: '/students', label: '学生信息', icon: <TeamOutlined /> },
+  { to: '/import', label: '数据导入', icon: <CloudUploadOutlined /> },
+];
+
+const TITLE: Record<string, string> = {
+  '/': '总览',
+  '/students': '学生信息',
+  '/import': '数据导入',
+};
+
+export default function AppLayout() {
+  const { pathname } = useLocation();
+  const active = NAV.find((item) => (item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)));
+  const initials = actorName.slice(0, 1).toUpperCase();
+
+  return (
+    <Layout className="app-shell">
+      <Sider width={232} className="app-sider" theme="light">
+        <div className="app-brand">
+          <span className="app-brand-mark">
+            <BrandMark size={24} />
+          </span>
+          <div className="app-brand-text">
+            <div className="app-brand-title">郴州思科职业学院</div>
+            <div className="app-brand-sub">数据管理平台 · Data Platform</div>
+          </div>
+        </div>
+
+        <nav className="app-nav">
+          <div className="app-nav-label">业务模块</div>
+          {NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) => `app-nav-item${isActive ? ' is-active' : ''}`}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="app-sider-footer">
+          <div className="app-env">
+            <span className="app-env-dot" />
+            本地测试 · 虚构数据
+          </div>
+        </div>
+      </Sider>
+
+      <Layout>
+        <header className="app-header">
+          <div className="app-header-left">
+            <span className="app-crumb">数据管理</span>
+            <span className="app-crumb-sep">/</span>
+            <span className="app-header-title">{TITLE[active?.to ?? ''] ?? '总览'}</span>
+          </div>
+          <div className="app-header-right">
+            <span className="app-actor">
+              <span className="app-actor-avatar">{initials}</span>
+              {actorName}（未认证）
+            </span>
+          </div>
+        </header>
+
+        <Content className="app-content">
+          <Outlet />
+        </Content>
+      </Layout>
+    </Layout>
+  );
+}
