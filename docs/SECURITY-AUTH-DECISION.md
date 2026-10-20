@@ -5,6 +5,10 @@
 - **前提**：保留 React + TypeScript + FastAPI + PostgreSQL，不重写已跑通的解析与导入闭环
 - **核查方式**：GitHub API、PyPI JSON、官方文档（核查日期 2026-10-20）
 
+> **2026-10-20 23:30 补充**：本文第 2 节的若依评估只覆盖了 `RuoYi` 与 `RuoYi-Vue3`（Spring Boot + Vue），**未包含 RuoYi-Vue-Plus 6.X 的官方 React 前端**。
+> 该方向的完整核查与迁移方案见 **`docs/RUOYI-PLUS-EVALUATION.md`** 与 **`docs/RUOYI-PLUS-MIGRATION-PLAN.md`**。
+> 是否改用 RuoYi-Vue-Plus 由 POC 结果决定；若 POC No-Go，本文第 1 节的 pwdlib + Casbin 选型仍然有效。
+
 ---
 
 ## 1. 最终选型
@@ -46,6 +50,8 @@
 | **借鉴设计** | 参考它的「角色—菜单—数据范围」分层，用 Python 组件实现 | 低 | **采纳** |
 
 **决策：不迁移，只借鉴。** 理由不是若依不好，而是为了权限功能去重写一个已经通过验收的业务闭环，投入产出不成立。
+
+> 该结论仅针对 Spring Boot + Vue 的 RuoYi / RuoYi-Vue3。RuoYi-Vue-Plus 6.X 另有官方 React 前端，已单独立项评估，结论待 POC（见 `RUOYI-PLUS-EVALUATION.md`）。
 
 ---
 
