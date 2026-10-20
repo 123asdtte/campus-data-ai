@@ -201,3 +201,66 @@ preview（上传 + 解析 + 预览）
 | `record_status` | 草稿 / 待复核 / 已确认 / 已退回 | draft / pending_review / confirmed / returned |
 
 未命中的值不会被静默纠正，而是产生 `INVALID_ENUM`。
+
+---
+
+## 8. 自动识别与字段映射（v0.3）
+
+### 8.1 变更点
+
+上传后不再要求表头与固定列名完全一致。服务端会：
+
+1. 遍历工作簿的所有工作表，在前 15 行内寻找表头行；
+2. 用别名表把列名映射到业务字段，给出匹配方式与置信度；
+3. 无法识别、存在歧义或冲突时如实标注，不静默猜测。
+
+### 8.2 新增请求参数（均为可选，向后兼容）
+
+| 位置 | 参数 | 说明 |
+|---|---|---|
+| `POST /imports/preview`（form） | `sheet_name` | 指定工作表 |
+| | `header_row` | 指定表头行号（1 起） |
+| | `mapping` | JSON 字符串：`{"原始列名":"字段名"}`，值可为 `null` 表示不导入该列 |
+| `POST /imports/preview-base64`（JSON） | `sheet_name` / `header_row` / `mapping` | 同上，类型为字符串/整数/对象 |
+
+### 8.3 新增响应字段
+
+| 字段 | 说明 |
+|---|---|
+| `sheet_name` / `header_row` | 实际使用的工作表与表头行 |
+| `sheets` | 所有候选工作表：`name`、`header_row`、`data_rows`、`matched`、`matched_required`、`score` |
+| `needs_sheet_choice` | 多个工作表都命中必需字段时为 `true`，应由用户确认 |
+| `mapping` | 逐列明细：`source`、`target`、`target_label`、`confidence`、`method`、`status`、`candidates` |
+| `conflicts` | 多列映射到同一字段的列名列表 |
+| `ambiguous` | 匹配存在歧义的列名列表 |
+| `unmapped_columns` | 未识别的列名列表 |
+
+`method` 取值：`exact`（别名完全命中）、`contains`（包含关系）、`fuzzy`（相似度 ≥ 0.82）、`manual`（用户指定）、`none`。
+`status` 取值：`matched`、`ambiguous`、`conflict`、`unmatched`。
+
+### 8.4 `POST /imports/{batch_id}/remap`
+
+用户调整工作表、表头行或映射后重新解析，**不需要重新上传文件**。
+
+```json
+{
+  "sheet_name": "康养护理学院",
+  "header_row": 1,
+  "mapping": { "学生编号": "student_no", "备注": null }
+}
+```
+
+三个字段都可省略：省略时沿用上一次保存的值。若希望丢弃旧映射、重新自动识别，传 `"mapping": {}`。
+
+响应结构与 `preview` 一致。批次状态会被重置为 `uploaded`（缺必需字段时为 `failed`），已产生的异常明细清空。
+
+### 8.5 映射的保存位置
+
+映射与暂存文件同目录，文件名为 `<批次号>.mapping.json`，包含 `sheet_name`、`header_row`、`mapping`。
+**未新增数据库字段**，避免改动已跑通的表结构；该文件与暂存文件同生命周期，提交成功后会一并删除。
+
+### 8.6 行为约束
+
+- 无论置信度多高，提交前都必须展示映射结果。
+- 必填字段缺失或存在映射冲突时，`validate` 与 `commit` 均被禁止。
+- 字段映射只解决列名差异，不改变数据校验规则：非法枚举、重复学号、日期错误照常报错。
