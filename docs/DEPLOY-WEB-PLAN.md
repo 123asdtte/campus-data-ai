@@ -175,3 +175,54 @@ docker compose -p campus-web -f docker-compose.web.yml down
 - 不接入 Dify / Ollama / 任何模型
 - 不调整数据库结构
 - 不安装前端新依赖（容器化只复用现有 `dist`）
+
+---
+
+## 9. 实施记录（2026-10-20 22:10–22:25，已执行）
+
+### 9.1 备份（部署前）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `backups/campus_20261020_220941.sql.gz` |
+| 大小 | 26 KB（较上次 24 KB 增长，对应新增数据） |
+| 完整性 | `gzip -t` 通过；解析出 5 个 COPY 段 |
+| 备份内行数 | students **235**、student_changes **305**、import_batches **36**、import_issues **41**、operation_logs **544** |
+| 与库比对 | 与部署时实时查询**完全一致** |
+
+### 9.2 部署结果
+
+| 检查项 | 结果 |
+|---|---|
+| 镜像 | `campus-data-web:0.1.0`，94.3 MB（含 nginx 93.5 MB） |
+| 容器 | `campus-web` **healthy**，`127.0.0.1:8082->80/tcp` |
+| `/`、`/students`、`/import` | 均 200，`text/html`，499 B（SPA 回退正常） |
+| `/healthz` | 200 `ok` |
+| `/api/students`（经 nginx） | 200，返回真实 JSON |
+| `/api/api/students`（双重前缀） | 404，证明前缀被正确剥离 |
+| `/api/nonexistent` | 404 `{"detail":"Not Found"}`，后端 JSON 透传 |
+| 浏览器冒烟（7 项） | 全通过：首页、指标、学生页 20 行/234 条、导入页、深层路由刷新、API 5 次全 200、Console 无报错 |
+| 原三容器 | `campus-db`、`campus-import-api`、`campus-appsmith` 全程 healthy，未重启 |
+| 数据 | 部署前后计数一致（235/305/36/41/544），批次 27 仍为 `validated` 2007 行，未动 |
+| 磁盘 | F: 29 GB 可用（部署前后无可见变化） |
+
+### 9.3 实施中发现的坑（已修复并写入 README）
+
+**健康检查误判 unhealthy**：Docker Desktop 会向容器注入 `HTTP_PROXY=http://127.0.0.1:8080`，容器内并无该代理；busybox 的 `wget` 不支持 `no_proxy`，因此健康检查命令报 `Connection refused`，容器被标成 unhealthy，但服务本身完全正常。
+
+修复：健康检查改为 `curl -fsS --noproxy '*' http://127.0.0.1/healthz`。
+
+附带解释了一个旧现象：`import-api` 容器内访问 PyPI 全部失败，根因也是这个注入的代理指向了容器内不存在的地址。
+
+### 9.4 运维命令
+
+```bash
+# 更新前端（改了代码之后）
+cd web && npm ci && npm run build && cd ..
+docker compose -p campus-web -f docker-compose.web.yml build
+docker compose -p campus-web -f docker-compose.web.yml up -d --force-recreate
+
+# 停止 / 回退
+docker compose -p campus-web -f docker-compose.web.yml stop
+docker compose -p campus-web -f docker-compose.web.yml down
+```

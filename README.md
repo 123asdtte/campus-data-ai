@@ -274,14 +274,39 @@ npm run preview                # 本地预览构建产物
 | 提交时提示超时 | 文件过大或后端慢 | 前端超时 120 s；仍超时用「按批次号恢复」查状态，不要重复点击 |
 | 导入提示缺列 | 表头不匹配 | 用 `samples/` 下的模板，或对照 `docs/DATA-DICTIONARY.md` 的列名 |
 
-### 12.6 容器化（未启用）
+### 12.6 容器化部署（已启用）
 
-`web/dist` 构建产物可以交给 nginx 直接托管，但**本轮没有修改 `docker-compose.yml`**。
-如需上线，建议以独立文件追加服务（不改动现有三服务）：
+前端以**独立 Compose 栈**运行，不改动 `docker-compose.yml`，主栈（DB / API / Appsmith）不受影响。
+
+| 项 | 值 |
+|---|---|
+| 访问地址 | http://127.0.0.1:8082 |
+| 容器名 | `campus-web`（项目名 `campus-web`） |
+| 镜像 | `campus-data-web:0.1.0`（nginx 1.29-alpine + 预构建静态资源） |
+| 网络 | 复用 `campus-net`（external） |
+| 端口 | 仅 `127.0.0.1:8082:80` |
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.web.yml up -d
+# 首次或代码变更后：必须先在宿主机构建（容器无外网，不能 npm install）
+cd web && npm ci && npm run build && cd ..
+
+# 构建镜像并启动
+docker compose -p campus-web -f docker-compose.web.yml build
+docker compose -p campus-web -f docker-compose.web.yml up -d
+
+# 状态与日志
+docker compose -p campus-web -f docker-compose.web.yml ps
+docker logs -f campus-web
+
+# 停止 / 完全回退（主栈不受影响）
+docker compose -p campus-web -f docker-compose.web.yml stop
+docker compose -p campus-web -f docker-compose.web.yml down
 ```
 
-注意：容器内无法访问 npm registry，前端镜像必须先在宿主机 `npm run build`，镜像只负责拷贝 `dist`。
+**两个必须知道的坑**
+
+1. **容器内不能 `npm install`**：容器无外网出口，镜像只拷贝 `dist`。改了前端代码必须先在宿主机重新 `npm run build`，再 `build` 镜像并 `up -d --force-recreate`。
+2. **健康检查不能用 `wget`**：Docker Desktop 会向容器注入 `HTTP_PROXY=127.0.0.1:8080`，而容器内没有该代理；busybox 的 `wget` 不识别 `no_proxy`，会误报 `Connection refused`。健康检查必须用 `curl -fsS --noproxy '*'`。
+3. **回退路径**：`8082` 出问题时执行 `down` 即可，Vite 开发服务器（5173）与 Appsmith（8081）始终保留。
+
 

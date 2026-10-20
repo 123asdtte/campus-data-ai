@@ -1,0 +1,15 @@
+# 前端静态镜像：只承载构建产物，不在容器内安装 npm 依赖。
+# 原因：本机容器无外网出口，npm install 必然失败；构建在宿主机完成。
+# 构建前请先执行：cd web && npm ci && npm run build
+FROM nginx:1.29-alpine
+
+# 站点配置（含 /api 反向代理与 SPA 回退）
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# 构建产物
+COPY dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+  CMD curl -fsS --noproxy '*' http://127.0.0.1/healthz || exit 1

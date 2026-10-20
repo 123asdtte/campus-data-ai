@@ -1,0 +1,35 @@
+# 前端独立编排：不修改主 docker-compose.yml
+# 启动：docker compose -p campus-web -f docker-compose.web.yml up -d
+# 停止：docker compose -p campus-web -f docker-compose.web.yml down
+services:
+  web:
+    image: campus-data-web:0.1.0
+    build:
+      context: ./web
+      dockerfile: Dockerfile.web
+    container_name: campus-web
+    ports:
+      # 只绑定本机回环，不对局域网/公网暴露
+      - "127.0.0.1:8082:80"
+    networks:
+      - campus-net
+    healthcheck:
+      # Docker Desktop 会向容器注入 HTTP_PROXY=127.0.0.1:8080，
+      # 而容器内没有该代理；busybox 的 wget 不识别 no_proxy，会误报连接被拒。
+      # 因此显式使用 curl 并绕过代理。
+      test: ["CMD-SHELL", "curl -fsS --noproxy '*' http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # 复用主栈已创建的网络，不重复定义参数
+  campus-net:
+    external: true
+    name: campus-net
