@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, InputNumber, Select, Table, Tag, Typography, Upload } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadProps } from 'antd';
 import { InboxOutlined, ReloadOutlined } from '@ant-design/icons';
 import { ApiError } from '../api/client';
-import { commitImport, fetchBatch, previewImport, validateImport } from '../api/imports';
+import { commitImport, fetchBatch, previewImport, remapImport, validateImport } from '../api/imports';
 import type {
+  ColumnMapping,
   CommitResult,
   ImportIssue,
   PreviewResult,
@@ -17,9 +18,17 @@ import { EmptyState, PageHeader, Panel, StatusBadge } from '../components/ui';
 
 const MAX_SIZE_MB = 10;
 
-type BusyKind = 'preview' | 'validate' | 'commit' | null;
+type BusyKind = 'preview' | 'remap' | 'validate' | 'commit' | null;
 
-const STEPS = ['选择文件', '预览与映射', '校验结果', '导入完成'];
+const STEPS = ['选择文件', '识别与映射', '校验结果', '导入完成'];
+
+const METHOD_LABEL: Record<string, string> = {
+  exact: '精确',
+  contains: '包含',
+  fuzzy: '模糊',
+  manual: '手动',
+  none: '未识别',
+};
 
 function issueColumns(): ColumnsType<ImportIssue> {
   return [
@@ -62,7 +71,28 @@ export default function ImportPage() {
   const [busy, setBusy] = useState<BusyKind>(null);
   const [restoreId, setRestoreId] = useState<number | null>(null);
 
+  const [sheetName, setSheetName] = useState<string | undefined>();
+  const [headerRow, setHeaderRow] = useState<number>(1);
+  const [draft, setDraft] = useState<Record<string, string | null>>({});
+
   const stepIndex = commitResult ? 3 : validation ? 2 : preview ? 1 : 0;
+
+  const applyPreview = (result: PreviewResult) => {
+    setPreview(result);
+    setSheetName(result.sheet_name);
+    setHeaderRow(result.header_row);
+    const next: Record<string, string | null> = {};
+    result.mapping.forEach((item) => {
+      next[item.source] = item.target;
+    });
+    setDraft(next);
+  };
+
+  useEffect(() => {
+    if (!preview) return;
+    setValidation(null);
+    setCommitResult(null);
+  }, [preview]);
 
   const beforeUpload: UploadProps['beforeUpload'] = (selected) => {
     if (!/\.(xlsx|xlsm|csv)$/i.test(selected.name)) {
@@ -88,19 +118,48 @@ export default function ImportPage() {
     setBusy('preview');
     try {
       const result = await previewImport(file, target);
-      setPreview(result);
-      setValidation(null);
-      setCommitResult(null);
+      applyPreview(result);
       if (result.status === 'failed') {
-        message.error('文件缺少必需列，无法继续校验');
+        message.error('缺少必需字段，请检查映射后重试');
       } else {
-        message.success(`已解析 ${result.total_rows} 行`);
+        message.success(`识别到 ${result.sheet_name} · 第 ${result.header_row} 行为表头 · ${result.total_rows} 行`);
       }
     } catch (err) {
       message.error((err as ApiError).message);
     } finally {
       setBusy(null);
     }
+  };
+
+  const runRemap = async (nextSheet?: string, nextHeader?: number, nextDraft?: Record<string, string | null>) => {
+    if (!preview) return;
+    setBusy('remap');
+    try {
+      const result = await remapImport(preview.batch_id, {
+        sheetName: nextSheet ?? sheetName,
+        headerRow: nextHeader ?? headerRow,
+        mapping: nextDraft ?? draft,
+      });
+      applyPreview(result);
+      message.success('映射已更新，请重新校验');
+    } catch (err) {
+      message.error((err as ApiError).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleSheetChange = (name: string) => {
+    setSheetName(name);
+    setDraft({});
+    void runRemap(name, headerRow, {});
+  };
+
+  const handleHeaderChange = (value: number | null) => {
+    const next = value && value > 0 ? value : 1;
+    setHeaderRow(next);
+    setDraft({});
+    void runRemap(sheetName, next, {});
   };
 
   const handleValidate = async () => {
@@ -199,9 +258,62 @@ export default function ImportPage() {
     setValidation(null);
     setCommitResult(null);
     setRestoreId(null);
+    setDraft({});
   };
 
+  const blocked = Boolean(
+    preview && (preview.missing_required.length > 0 || preview.conflicts.length > 0),
+  );
   const canCommit = Boolean(validation && validation.valid_rows > 0 && busy !== 'commit');
+
+  const fieldOptions = useMemo(() => {
+    if (!preview) return [{ label: '不使用', value: '' }];
+    return [
+      { label: '不使用', value: '' },
+      ...Object.entries(preview.field_labels).map(([value, label]) => ({ label, value })),
+    ];
+  }, [preview]);
+
+  const mappingColumns: ColumnsType<ColumnMapping> = [
+    { title: '原始列名', dataIndex: 'source', width: 180, render: (value: string) => <span className="mono">{value}</span> },
+    {
+      title: '系统字段',
+      dataIndex: 'target',
+      width: 190,
+      render: (_value, record) => (
+        <Select
+          size="small"
+          style={{ width: 160 }}
+          value={draft[record.source] ?? ''}
+          options={fieldOptions}
+          onChange={(next) => setDraft((prev) => ({ ...prev, [record.source]: next || null }))}
+        />
+      ),
+    },
+    {
+      title: '匹配方式',
+      dataIndex: 'method',
+      width: 110,
+      render: (value: string, record) =>
+        draft[record.source] ? (
+          <Tag color={value === 'exact' ? 'green' : value === 'manual' ? 'blue' : 'gold'}>
+            {METHOD_LABEL[value] ?? value}
+          </Tag>
+        ) : (
+          <Tag>未使用</Tag>
+        ),
+    },
+    {
+      title: '状态',
+      key: 'state',
+      render: (_value, record) => {
+        if (record.status === 'conflict') return <StatusBadge tone="danger" label="映射冲突" />;
+        if (record.status === 'ambiguous') return <StatusBadge tone="warning" label="存在歧义" />;
+        if (!draft[record.source]) return <StatusBadge tone="muted" label="不导入此列" />;
+        return <StatusBadge tone="success" label="已匹配" />;
+      },
+    },
+  ];
 
   const previewColumns: ColumnsType<Record<string, unknown>> =
     preview && preview.preview.length > 0
@@ -219,7 +331,7 @@ export default function ImportPage() {
     <>
       <PageHeader
         title="数据导入"
-        description="上传 Excel / CSV，先预览与校验，确认后才写入数据库。异常行不会入库。"
+        description="上传后自动识别工作表与表头，匹配业务字段；确认映射后再校验、提交。"
         extra={
           <Button onClick={resetAll} disabled={busy !== null}>
             新建导入
@@ -270,7 +382,7 @@ export default function ImportPage() {
               loading={busy === 'preview'}
               disabled={!file || busy !== null}
             >
-              上传并预览
+              上传并识别
             </Button>
           </div>
         }
@@ -285,89 +397,163 @@ export default function ImportPage() {
           <p className="ant-upload-drag-icon">
             <InboxOutlined />
           </p>
-          <p className="ant-upload-text">
-            {file ? `已选择：${file.name}` : '点击或拖拽文件到此处'}
-          </p>
+          <p className="ant-upload-text">{file ? `已选择：${file.name}` : '点击或拖拽文件到此处'}</p>
           <p className="ant-upload-hint">
             {file
               ? `大小 ${(file.size / 1024).toFixed(0)} KB · 重新选择会覆盖当前文件`
-              : '文件仅在服务端解析，不会上传到第三方'}
+              : '表头写法不同无需预处理，系统会自动识别'}
           </p>
         </Upload.Dragger>
       </Panel>
 
       {preview && (
-        <Panel
-          title="02 预览与列映射"
-          sub={`批次 ${preview.batch_code}`}
-          flush
-          extra={
-            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-              共 {preview.total_rows} 行 · 目标：{preview.target_type === 'students' ? '学生信息' : '学籍异动'}
-            </span>
-          }
-        >
-          <div style={{ padding: '16px 16px 0' }}>
+        <>
+          <Panel
+            title="02 识别结果"
+            sub={`批次 ${preview.batch_code}`}
+            extra={
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                共 {preview.total_rows} 行 · 表头第 {preview.header_row} 行
+              </span>
+            }
+          >
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div className="field">
+                <span className="field-label">工作表</span>
+                <Select
+                  style={{ width: 200 }}
+                  value={sheetName}
+                  onChange={handleSheetChange}
+                  options={(preview.sheets.length > 0 ? preview.sheets : [{ name: preview.sheet_name }]).map(
+                    (item) => ({ label: item.name, value: item.name }),
+                  )}
+                />
+              </div>
+              <div className="field">
+                <span className="field-label">表头行号</span>
+                <InputNumber
+                  min={1}
+                  max={30}
+                  style={{ width: 110 }}
+                  value={headerRow}
+                  onChange={handleHeaderChange}
+                />
+              </div>
+              <div className="field">
+                <span className="field-label">数据行数</span>
+                <div className="mono" style={{ paddingBottom: 7 }}>{preview.total_rows}</div>
+              </div>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => void runRemap()}
+                loading={busy === 'remap'}
+                disabled={busy !== null}
+              >
+                应用映射并重新解析
+              </Button>
+            </div>
+
+            {preview.needs_sheet_choice && (
+              <Alert
+                style={{ marginTop: 12 }}
+                type="info"
+                showIcon
+                message={`文件包含 ${preview.sheets.length} 个可用工作表，当前识别为「${preview.sheet_name}」`}
+                description={`可选项：${preview.sheets.map((s) => `${s.name}（${s.data_rows} 行）`).join('、')}。请确认后再继续。`}
+              />
+            )}
+
             {preview.missing_required.length > 0 && (
               <Alert
+                style={{ marginTop: 12 }}
                 type="error"
                 showIcon
-                style={{ marginBottom: 12 }}
-                message="缺少必需列，无法继续"
-                description={`缺少：${preview.missing_required.join('、')}。请按模板补齐表头后重新上传。`}
+                message="仍缺少必需字段"
+                description={`缺少：${preview.missing_required
+                  .map((field) => preview.field_labels[field] ?? field)
+                  .join('、')}。请在下方手动指定对应列，或补齐表头后重新上传。`}
               />
             )}
 
-            {preview.unmapped_columns.length > 0 && (
+            {preview.conflicts.length > 0 && (
               <Alert
+                style={{ marginTop: 12 }}
+                type="error"
+                showIcon
+                message={`存在映射冲突：${preview.conflicts.join('、')}`}
+                description="多列被识别为同一字段，需手动指定其中一列，冲突未解决前不能提交。"
+              />
+            )}
+
+            {preview.ambiguous.length > 0 && (
+              <Alert
+                style={{ marginTop: 12 }}
                 type="warning"
                 showIcon
-                style={{ marginBottom: 12 }}
-                message={`以下列未被识别，将被忽略：${preview.unmapped_columns.join('、')}`}
+                message={`以下列的匹配存在歧义：${preview.ambiguous.join('、')}`}
+                description="系统已给出推荐，仍建议人工确认。"
               />
             )}
+          </Panel>
 
-            {Object.keys(preview.column_mapping).length > 0 && (
-              <div className="map-list" style={{ marginBottom: 14 }}>
-                {Object.entries(preview.column_mapping).map(([source, field]) => (
-                  <span className="map-chip" key={source}>
-                    {source}
-                    <span className="arrow">→</span>
-                    <span className="target">{preview.field_labels[field] ?? field}</span>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <Panel
+            title="字段映射"
+            sub={`${preview.mapping.filter((m) => draft[m.source]).length} / ${preview.mapping.length} 列已映射`}
+            flush
+            extra={
+              <Button
+                type="primary"
+                size="small"
+                onClick={() => void handleValidate()}
+                loading={busy === 'validate'}
+                disabled={blocked || busy !== null}
+              >
+                开始校验
+              </Button>
+            }
+          >
+            <Table<ColumnMapping>
+              rowKey="source"
+              size="small"
+              pagination={false}
+              columns={mappingColumns}
+              dataSource={preview.mapping}
+              scroll={{ x: 700 }}
+              locale={{ emptyText: <EmptyState title="未识别到任何列" /> }}
+            />
+          </Panel>
 
-          <Table<Record<string, unknown>>
-            rowKey="__row"
-            columns={previewColumns}
-            dataSource={preview.preview}
-            pagination={false}
-            scroll={{ x: 'max-content' }}
-            locale={{ emptyText: <EmptyState title="没有可预览的数据行" /> }}
-          />
-
-          <div className="action-bar">
-            <span className="action-bar-note">预览与校验都不会写入数据库</span>
-            <Button
-              type="primary"
-              onClick={() => void handleValidate()}
-              loading={busy === 'validate'}
-              disabled={preview.status === 'failed' || busy !== null}
-            >
-              开始校验
-            </Button>
-          </div>
-        </Panel>
+          <Panel title="数据预览" sub="映射后前 20 行" flush>
+            <Table<Record<string, unknown>>
+              rowKey="__row"
+              columns={previewColumns}
+              dataSource={preview.preview}
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+              locale={{ emptyText: <EmptyState title="没有可预览的数据行" /> }}
+            />
+            <div className="action-bar">
+              <span className="action-bar-note">
+                {blocked ? '映射问题解决前不能提交' : '预览与校验都不会写入数据库'}
+              </span>
+              <Button type="primary" onClick={() => void handleValidate()} loading={busy === 'validate'} disabled={blocked || busy !== null}>
+                开始校验
+              </Button>
+            </div>
+          </Panel>
+        </>
       )}
 
       {validation && (
         <Panel
           title="03 校验结果"
           sub={`批次 ${validation.batch_code}`}
-          extra={<StatusBadge tone={validation.invalid_rows > 0 ? 'warning' : 'success'} label={validation.invalid_rows > 0 ? '存在异常行' : '全部通过'} />}
+          extra={
+            <StatusBadge
+              tone={validation.invalid_rows > 0 ? 'warning' : 'success'}
+              label={validation.invalid_rows > 0 ? '存在异常行' : '全部通过'}
+            />
+          }
         >
           <div className="metric-row" style={{ marginBottom: 14 }}>
             <div className="metric is-success">
@@ -413,7 +599,7 @@ export default function ImportPage() {
               danger
               onClick={handleCommitClick}
               loading={busy === 'commit'}
-              disabled={!canCommit}
+              disabled={!canCommit || blocked}
             >
               确认导入 {validation.valid_rows} 条
             </Button>
@@ -446,12 +632,7 @@ export default function ImportPage() {
               pagination={false}
               dataSource={commitResult.skipped_rows}
               columns={[
-                {
-                  title: '行号',
-                  dataIndex: 'row_number',
-                  width: 100,
-                  render: (v: number) => <span className="mono">{v}</span>,
-                },
+                { title: '行号', dataIndex: 'row_number', width: 100, render: (v: number) => <span className="mono">{v}</span> },
                 { title: '原因', dataIndex: 'reason' },
               ]}
             />

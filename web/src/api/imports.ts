@@ -15,11 +15,40 @@ export function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export async function previewImport(file: File, targetType: TargetType): Promise<PreviewResult> {
+export interface PreviewOptions {
+  sheetName?: string;
+  headerRow?: number;
+  mapping?: Record<string, string | null>;
+}
+
+export async function previewImport(
+  file: File,
+  targetType: TargetType,
+  options: PreviewOptions = {},
+): Promise<PreviewResult> {
   const content = await fileToBase64(file);
   return post<PreviewResult>(
     '/imports/preview-base64',
-    { filename: file.name, content_base64: content, target_type: targetType },
+    {
+      filename: file.name,
+      content_base64: content,
+      target_type: targetType,
+      sheet_name: options.sheetName ?? null,
+      header_row: options.headerRow ?? null,
+      mapping: options.mapping ?? null,
+    },
+    60000,
+  );
+}
+
+export function remapImport(batchId: number, options: PreviewOptions): Promise<PreviewResult> {
+  return post<PreviewResult>(
+    `/imports/${batchId}/remap`,
+    {
+      sheet_name: options.sheetName ?? null,
+      header_row: options.headerRow ?? null,
+      mapping: options.mapping ?? null,
+    },
     60000,
   );
 }

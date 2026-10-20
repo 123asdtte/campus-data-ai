@@ -104,12 +104,38 @@ export interface PreviewResult {
   target_type: TargetType;
   status: string;
   total_rows: number;
+  sheet_name: string;
+  header_row: number;
+  sheets: SheetInfo[];
+  needs_sheet_choice: boolean;
   missing_required: string[];
   column_mapping: Record<string, string>;
+  mapping: ColumnMapping[];
   unmapped_columns: string[];
+  conflicts: string[];
+  ambiguous: string[];
   field_labels: Record<string, string>;
   preview: Array<Record<string, unknown>>;
   issues: ImportIssue[];
+}
+
+export interface SheetInfo {
+  name: string;
+  header_row: number;
+  data_rows: number;
+  matched: number;
+  matched_required: number;
+  score: number;
+}
+
+export interface ColumnMapping {
+  source: string;
+  target: string | null;
+  target_label: string;
+  confidence: number;
+  method: string;
+  status: 'matched' | 'ambiguous' | 'conflict' | 'unmatched';
+  candidates: Array<{ field: string; label: string; confidence: number }>;
 }
 
 export interface ValidateResult {
