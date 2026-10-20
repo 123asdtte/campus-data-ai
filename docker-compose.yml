@@ -1,0 +1,122 @@
+# =====================================================================
+# 校园数据管理与 AI 助手平台 — 阶段 1 运行栈
+# 仅包含：PostgreSQL（业务主库） + Appsmith（页面） + Import API（导入校验）
+# 第一阶段不部署 Dify；Dify 在阶段 2 按需追加，避免磁盘与内存过早占用。
+#
+# 使用：
+#   cp .env.example .env      # 填写密码
+#   docker compose up -d
+# 注意：所有端口只绑定 127.0.0.1，不暴露到局域网/公网。
+# =====================================================================
+name: campus-data-ai
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  campus-db:
+    image: postgres:16.15-alpine
+    container_name: campus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-campus}
+      POSTGRES_USER: ${POSTGRES_USER:-campus_dba}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置，请检查 .env}
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - campus_pgdata:/var/lib/postgresql/data
+      # 仅在数据卷为空时执行一次：建表 + 演示数据
+      - ./sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./sql/002_seed_demo.sql:/docker-entrypoint-initdb.d/002_seed_demo.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+    networks:
+      - campus-net
+
+  appsmith:
+    image: appsmith/appsmith-ce:v2.5.0
+    container_name: campus-appsmith
+    restart: unless-stopped
+    environment:
+      APPSMITH_ENCRYPTION_PASSWORD: ${APPSMITH_ENCRYPTION_PASSWORD:?APPSMITH_ENCRYPTION_PASSWORD 未设置}
+      APPSMITH_ENCRYPTION_SALT: ${APPSMITH_ENCRYPTION_SALT:?APPSMITH_ENCRYPTION_SALT 未设置}
+      APPSMITH_DISABLE_TELEMETRY: "true"
+      APPSMITH_DISABLE_INTERCOM: "true"
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8081:80"
+      - "127.0.0.1:8443:443"
+    volumes:
+      # Appsmith 自带的 MongoDB/Redis 与上传文件均落在此卷，
+      # 它是 Appsmith 自身的元数据存储，不是校园业务数据库。
+      - appsmith_stacks:/appsmith-stacks
+    # Appsmith 官方建议 2 vCPU / 8 GB 宿主机；此处限制单容器上限，避免挤占数据库
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    depends_on:
+      campus-db:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - campus-net
+
+  import-api:
+    build:
+      context: ./import-api
+    image: campus-import-api:0.1.0
+    container_name: campus-import-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://campus_app:${APP_DB_PASSWORD:?APP_DB_PASSWORD 未设置}@campus-db:5432/${POSTGRES_DB:-campus}
+      ACTOR_FALLBACK: import-api
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
+      MAX_ROWS: ${MAX_ROWS:-10000}
+      KEEP_UPLOAD_FILES: ${KEEP_UPLOAD_FILES:-false}
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - campus_uploads:/data/uploads
+      - ./samples:/app/samples
+    depends_on:
+      campus-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      - campus-net
+
+volumes:
+  campus_pgdata:
+    name: campus_pgdata
+  appsmith_stacks:
+    name: campus_appsmith_stacks
+  campus_uploads:
+    name: campus_uploads
+
+networks:
+  campus-net:
+    name: campus-net
+    driver: bridge
