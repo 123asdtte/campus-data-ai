@@ -190,9 +190,22 @@ jq -n --rawfile sys /tmp/review-prompt.md --rawfile diff /tmp/pr.diff.trunc \
     messages: [{role: "system", content: $sys}, {role: "user", content: $diff}]}' \
   > /tmp/review-body.json
 
+# 可选：给请求体追加参数，用于关掉推理模型的思考阶段。
+# 各家开关不同（reasoning_effort / thinking / chat_template_kwargs / enable_thinking），
+# 写死在脚本里等于赌某个网关的实现，所以交给仓库变量配置：
+#   Settings → Variables → AI_EXTRA_BODY = {"reasoning_effort":"none"}
+if [ -n "${AI_EXTRA_BODY:-}" ]; then
+  printf '%s' "$AI_EXTRA_BODY" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || fail "AI_EXTRA_BODY 不是合法的 JSON 对象：$AI_EXTRA_BODY"
+  printf '%s' "$AI_EXTRA_BODY" > /tmp/extra.json
+  jq --slurpfile extra /tmp/extra.json '. * $extra[0]' /tmp/review-body.json > /tmp/review-body.merged \
+    && mv /tmp/review-body.merged /tmp/review-body.json
+fi
+
 # 从响应里取出正文。端点忽略 stream 时会回完整 JSON，两条路都要能走。
 REVIEW=""
 STREAM_NOTE=""
+REASONING_LEN=0
 extract_review() {
   local src=/tmp/review-stream.txt
   if jq -e '.choices[0].message.content' "$src" >/dev/null 2>&1; then
@@ -205,6 +218,11 @@ extract_review() {
     | sed 's/^data:[[:space:]]*//' \
     | grep -av '^\[DONE\][[:space:]]*$' \
     | jq -j '.choices[0].delta.content // empty' 2>/dev/null) || true
+  # 推理模型（如 deepseek-*-flash 系列）先整段输出思维链，再给正文。
+  # 正文为空而思维链很长，说明时间全花在思考上，超时是结果不是原因。
+  REASONING_LEN=$(grep -a '^data:' "$src" 2>/dev/null \
+    | sed 's/^data:[[:space:]]*//' \
+    | jq -j '.choices[0].delta.reasoning_content // empty' 2>/dev/null | wc -c) || true
   # 正常 SSE 以 [DONE] 收尾；没有它说明连接被中途掐断，内容可能停在半句
   if [ -n "$REVIEW" ] && ! tail -c 200 "$src" | grep -aq '\[DONE\]'; then
     STREAM_NOTE="上游未发送结束标记，以下结论可能被截断。"
@@ -237,8 +255,9 @@ while :; do
   [ "$RC" -ne 0 ] && HTTP_CODE="curl_error"
   ELAPSED=$((SECONDS - START))
 
-  REVIEW=""; STREAM_NOTE=""
+  REVIEW=""; STREAM_NOTE=""; REASONING_LEN=0
   extract_review
+  RECV=$(wc -c < /tmp/review-stream.txt)
 
   # 拿到正文就算成功；但若连接是中断的（curl 18/28/56），内容必然不完整，
   # 不能当成正常结论发出去，必须挂上显式警告。
@@ -249,6 +268,10 @@ while :; do
     echo "LLM 响应：第 $ATTEMPT 次尝试，HTTP $HTTP_CODE，耗时 ${ELAPSED}s，输出 $(printf '%s' "$REVIEW" | wc -c) 字节"
     break
   fi
+
+  # 收到了数据说明连接是通的，重试只会再耗掉一整个超时（实测：同一份 18KB diff
+  # 两次各收 631KB / 953KB 后超时）。只有一个字节都没收到才值得重试。
+  if [ "$HTTP_CODE" = "curl_error" ] && [ "$RECV" -gt 0 ]; then break; fi
 
   # 只对瞬时故障重试；401/403/404 是密钥或模型名配错，重试没有意义
   case "$HTTP_CODE" in
@@ -262,6 +285,11 @@ while :; do
 done
 
 if [ -z "$REVIEW" ]; then
+  # 正文为空但思维链很长：推理模型把整个超时预算花在思考上，
+  # 报「超时」会把接手的人引向错误方向（去查网络），得说清是模型行为。
+  if [ "${REASONING_LEN:-0}" -gt 200 ]; then
+    fail "模型只产出了思维链（${REASONING_LEN} 字节），${LLM_TIMEOUT}s 内没有进入正文。这不是网络问题——连接正常、数据持续到达，是推理模型的思考阶段吃掉了全部时间。处理方式：用仓库变量 AI_EXTRA_BODY 关掉思考（如 {\"reasoning_effort\":\"none\"}），或换一个非推理模型"
+  fi
   # 28=超时 18/56=连接被掐 6=域名解析失败 7=连不上
   case "$RC" in
     28) HINT="，响应超时（模型在 ${LLM_TIMEOUT}s 内没有产出）" ;;

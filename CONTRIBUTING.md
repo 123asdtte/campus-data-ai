@@ -160,6 +160,29 @@ gh secret set AI_MODEL    --repo 123asdtte/campus-data-ai   # 如 deepseek-flash
 
 未配置时 AI 评审自动跳过（不报错、不阻塞）；配置后**新发起的 PR** 自动获得评审评论。
 
+### 用推理模型时的注意事项（重要）
+
+如果 `AI_MODEL` 是带思考阶段的推理模型（`deepseek-*-flash`、`o*`、`*-thinking` 等），它会先整段输出思维链（`reasoning_content`），再给正文。实测一份 **18KB** 的 diff，300 秒里收到了 **95 万字节**的思维链，始终没进入正文——评审必然失败。
+
+失败说明里会明写这种情况：「模型只产出了思维链，N 秒内没有进入正文」。**这不是网络问题**，改超时也没用。
+
+处理方式是给请求体加参数关掉思考。各家字段名不一样，所以在仓库 **Variables**（注意不是 Secrets）里配置 `AI_EXTRA_BODY`，值为 JSON：
+
+| 网关类型 | 取值 |
+|---|---|
+| OpenAI o 系列 / 部分兼容层 | `{"reasoning_effort":"none"}` |
+| Anthropic 风格 | `{"thinking":{"type":"disabled"}}` |
+| vLLM / DeepSeek 原生 | `{"chat_template_kwargs":{"enable_thinking":false}}` |
+| 通义 / Qwen 系 | `{"enable_thinking":false}` |
+
+```bash
+gh variable set AI_EXTRA_BODY --repo 123asdtte/campus-data-ai --body '{"reasoning_effort":"none"}'
+```
+
+配置错了网关会返回 400，评审照样失败但会留痕；不确定就用非推理模型。
+
+另外两个可调项（同样是 Variables）：`LLM_TIMEOUT`（单次上限，默认 300 秒）、`LLM_RETRY`（额外重试次数，默认 1）。两者乘积会被自动压到 10 分钟以内，以免吃掉整个 job 预算。
+
 ### 实际发给模型的内容
 
 评审会把 PR diff 发给**外部**模型端点，所以送审范围是收窄过的：
