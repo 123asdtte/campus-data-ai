@@ -131,9 +131,14 @@ class TestAuditTrail:
         ]
 
     def test_操作人来自请求头而非数据库账号(self, db_client, load_sample) -> None:
+        """审计里的操作人取自 X-Actor，而不是数据库连接角色。
+
+        注：这里必须用 ASCII 值。中文操作人会被 httpx 在构造请求时拒绝，
+        该限制已由 test_api_contract.py 的 xfail 用例单独固化。
+        """
         batch_id = preview(db_client, "x.csv", load_sample("test_acceptance.csv")).json()["batch_id"]
-        db_client.post(f"/imports/{batch_id}/validate", headers={"X-Actor": "另一个操作人"})
-        db_client.post(f"/imports/{batch_id}/commit", headers={"X-Actor": "另一个操作人"})
+        db_client.post(f"/imports/{batch_id}/validate", headers={"X-Actor": "other.actor"})
+        db_client.post(f"/imports/{batch_id}/commit", headers={"X-Actor": "other.actor"})
 
         from app.db import pool
 
@@ -142,7 +147,7 @@ class TestAuditTrail:
                 cur.execute("SELECT DISTINCT actor_user_id FROM campus.operation_logs")
                 actors = {row["actor_user_id"] for row in cur.fetchall()}
 
-        assert actors == {"另一个操作人"}
+        assert actors == {"other.actor"}
 
 
 class TestRowNumberOffset:
@@ -190,7 +195,9 @@ class TestRejectPaths:
         validated = db_client.post(f"/imports/{body['batch_id']}/validate", headers=HEADERS).json()
 
         assert validated["total_rows"] == 9
-        assert validated["invalid_rows"] == 3
+        # 本用例前 students 已被 TRUNCATE，9 行学号全部查无此人，
+        # 因此受影响行数等于总行数；四类异常是叠加在不同行上的。
+        assert validated["invalid_rows"] == 9
         assert {i["issue_code"] for i in validated["issues"]} == {
             "UNKNOWN_STUDENT",  # 库中没有任何学生
             "INVALID_DATE",  # 2026-13-45

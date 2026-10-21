@@ -131,3 +131,21 @@ class TestQueryValidation:
 
     def test_不存在的路由返回404(self, api_client) -> None:
         assert api_client.get("/not-exist").status_code == 404
+
+
+class TestActorHeader:
+    """操作人通过 X-Actor 请求头传递，没有认证，值完全由客户端决定。
+
+    这是 README 已声明的「仅具演示价值」的一部分，此处只固化现状边界。
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "已知缺陷：HTTP 头值只接受 ASCII/latin-1，X-Actor 无法承载中文操作人。"
+            "学校场景的操作人基本都是中文姓名，修复时需改为请求体字段或自建编码方案；"
+            "修复后请移除此标记，让本用例正式断言中文操作人可用"
+        ),
+    )
+    def test_中文操作人无法通过X_Actor传递(self, api_client) -> None:
+        api_client.post("/imports/abc/validate", headers={"X-Actor": "张老师"})
