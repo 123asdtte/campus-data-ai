@@ -58,6 +58,8 @@
 | [RUOYI-POC-DATA-PERMISSION.md](RUOYI-POC-DATA-PERMISSION.md) | 🧪 | 数据权限：框架 Mapper 与实际业务路径**分别**取证，A1–A8 矩阵 |
 | [RUOYI-POC-GO-NOGO.md](RUOYI-POC-GO-NOGO.md) | 🧪 | Go/No-Go 判定与成本对比（结论：条件性 Go） |
 | [RUOYI-POC-STUDENT-SLICE.md](RUOYI-POC-STUDENT-SLICE.md) | 🧪 | 学生管理切片 S1–S3 验收：12 项测试全通过 |
+| [POC-FRESH-CLONE-REPORT.md](POC-FRESH-CLONE-REPORT.md) | 🧪 | 全新克隆复现验证：修复 4 个阻塞后 12/12 通过 |
+| [RUOYI-S1S3-MERGE-PLAN.md](RUOYI-S1S3-MERGE-PLAN.md) | 📐 | S1–S3 合入主项目的迁移评审计划（未执行） |
 
 ---
 
