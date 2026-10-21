@@ -24,6 +24,13 @@ LLM_TIMEOUT="${LLM_TIMEOUT:-300}"      # 单次请求上限（秒）
 LLM_RETRY="${LLM_RETRY:-1}"            # 5xx / 超时的重试次数
 LLM_RETRY_MAX="${LLM_RETRY_MAX:-600}"  # 含重试的总时长上限（秒）
 DIFF_LIMIT=122880                      # 120KB
+FAIL_MARKER="<!-- ai-review-failed -->"  # 失败说明的识别标记，HTML 注释在页面上不可见
+
+# 找出本 PR 上既有的失败说明；没有则输出空字符串
+find_status_comment() {
+  gh api "repos/$REPO/issues/$PR/comments" --paginate \
+    --jq '.[] | select(.body | startswith("<!-- ai-review-failed -->")) | .id' 2>/dev/null | head -1
+}
 
 # 在 PR 上说明「本次评审未完成」，然后按设计退出 0（不阻塞合并）
 fail() {
@@ -31,6 +38,7 @@ fail() {
   # 用 printf 逐行写，不用 heredoc：原因里可能带上游返回的 JSON 片段，
   # heredoc 会解释其中的反斜杠转义，导致贴出来的内容变形。
   {
+    printf '%s\n' "$FAIL_MARKER"
     printf '## 🤖 AI 评审未完成\n\n'
     printf '提交 `%s` 的**自动评审没有产出结论**，原因：%s\n\n' "$SHA" "$1"
     printf '这不代表 PR 有问题，也**不阻塞合并**，请按常规人工评审。\n\n'
@@ -38,6 +46,19 @@ fail() {
     printf -- '- 运行日志：[%s 的评审任务](%s)\n\n' "$SHA" "$RUN_URL"
     printf '<sub>该说明由流水线在评审失败时自动发布；修复上游后可重新运行本任务。</sub>\n'
   } > /tmp/pr-fail.md
+
+  # 只保留一条失败说明：已有就原地更新。
+  # 否则每次 push 都新增一条，上游持续不可用时 PR 会被同类评论刷满。
+  local existing
+  existing=$(find_status_comment)
+  if [ -n "$existing" ]; then
+    if gh api -X PATCH "repos/$REPO/issues/comments/$existing" \
+         -F body=@/tmp/pr-fail.md >/dev/null 2>&1; then
+      echo "已更新既有的失败说明（comment=$existing）"
+      exit 0
+    fi
+  fi
+
   gh pr comment "$PR" --repo "$REPO" --body-file /tmp/pr-fail.md >/dev/null 2>&1 \
     && echo "已在 PR 上发布失败说明" \
     || echo "失败说明发布失败（忽略，不影响合并）"
@@ -129,3 +150,10 @@ fi
 
 gh pr comment "$PR" --repo "$REPO" --body-file /tmp/pr-comment.md >/dev/null
 echo "AI 评审已发布为 PR 评论"
+
+# 评审成功后清掉历史失败说明，避免 PR 上同时挂着「未完成」和「已完成」两条互相矛盾的评论
+STALE=$(find_status_comment)
+if [ -n "$STALE" ]; then
+  gh api -X DELETE "repos/$REPO/issues/comments/$STALE" >/dev/null 2>&1 \
+    && echo "已清理历史失败说明（comment=$STALE）"
+fi
