@@ -1,0 +1,6 @@
+# 开发与测试依赖：只在本地跑 pytest 与 CI 中安装，不打进运行镜像。
+# 用法：pip install -r requirements-dev.txt
+-r requirements.txt
+
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0

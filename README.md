@@ -194,12 +194,34 @@ docker compose -p campus-web -f docker-compose.web.yml logs -f
 
 ## 8. 测试现状
 
-| 层次 | 现状 |
-|---|---|
-| 后端自动化单元测试 | **目前没有** `import-api/tests` 目录，`pytest` 尚未接入 CI |
-| 前端类型检查与构建 | `npm run build`（含 `tsc --noEmit`），CI 中已启用 |
-| 浏览器验收 | 由 Playwright 驱动 Chromium 完成，脚本在 POC 目录（仓库外） |
-| 验收报告 | 全部在 `docs/`，见 [docs/README.md](docs/README.md) |
+`import-api/tests/` 已建立，`pytest` 接入 CI（`.github/workflows/ci.yml` 的 `backend-tests` job）。
+用例分三层，按「是否需要数据库」切开：
+
+| 层次 | 文件 | 覆盖内容 | 依赖 |
+|---|---|---|---|
+| 表头与映射 | `test_mapping.py`、`test_parsing.py` | 规范化、别名、包含匹配、冲突、未知列、多工作表、表头定位、重名列 | 无 |
+| 校验规则 | `test_validation.py`、`test_business_rules.py` | 类型预转换、必填/长度/枚举/范围、行号偏移、学号重复与库内已存在 | 无 |
+| 接口契约 | `test_api_contract.py` | 400/413/422 拒绝路径、base64 入口、健康检查降级 | 无（不触发 lifespan） |
+| 真库集成 | `test_db_integration.py` | 状态机、幂等 409、事务、**审计触发器与业务同事务** | PostgreSQL |
+
+```bash
+cd import-api
+pip install -r requirements-dev.txt
+
+python -m pytest                      # 前三层；真库用例自动 skip
+CAMPUS_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/campus_test \
+  python -m pytest                    # 额外跑真库集成用例
+```
+
+真库用例会 **TRUNCATE 业务表**，只能指向独立测试库；CI 用 `postgres:16.15-alpine` service
+并先执行 `python scripts/init-test-db.py` 建结构。**禁止把该变量指向主库 `campus`。**
+
+本轮尚未覆盖（仍是空白，不是「已验证」）：
+
+- 提交阶段的数据库异常注入与回滚；
+- 并发对同一批次的提交（当前靠 `UPDATE ... WHERE batch_status='validated'` 兜底，未压测）；
+- 超大文件（接近 10 MB / 10,000 行）；
+- 前端交互仍靠人眼，Playwright 脚本在仓库之外的 POC 目录。
 
 验收全部使用 **`samples/` 下的虚构数据**（学号形如 `SMPL2026xxxx`、`DEMO2021xxxx`）。**禁止把真实学生数据带入任何开发或验证环境。**
 
