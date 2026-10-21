@@ -42,7 +42,7 @@ campus-appsmith   Appsmith CE v2.5.0            低代码界面（历史方案�
 - 所有端口只绑定 `127.0.0.1`，不对局域网/公网暴露。
 - 业务表位于 `campus` schema，审计由数据库触发器保证「业务变更与审计同事务」。
 
-### 2.2 独立 POC：RuoYi-Vue-Plus 验证环境（仓库之外）
+### 2.2 独立 POC：RuoYi-Vue-Plus 验证环境（独立私有仓库）
 
 ```
 Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
