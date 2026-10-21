@@ -168,3 +168,64 @@ POST http://127.0.0.1:9180/auth/login
 | 总耗时 | 约 2.5 小时（含首次 Maven 依赖下载约 7 分钟、两次失败重建） |
 | 新增文件 | `docker-compose.poc.yml`、`sql/01_ruoyi.sql`、`sql/02_campus.sql`、`poc-api/main.py`、`poc-api/client.py`、`poc-config/*.yml`、`backend/Dockerfile.poc`、`PocProxyController.java` |
 | 主项目改动 | **仅新增两份文档** |
+
+---
+
+# 补记（2026-10-21 09:30）：403 已定位并修复，端到端链路打通
+
+前文 §4 的「登录 403」已查明并解决，本节的结论**取代**前文关于该问题的描述。
+
+## 9. 403 的确切根因
+
+**不是 Sa-Token，不是密码错误，也不是客户端配置问题。**
+
+| 项 | 证据 |
+|---|---|
+| 抛出位置 | `ruoyi-common-encrypt` 的 `CryptoFilter` 第 81 行：`new ServiceException("没有访问权限，请联系管理员授权", HttpStatus.FORBIDDEN)` |
+| 触发条件 | POST/PUT 请求**没有携带 `encrypt-key` 头**，且目标方法标注了 `@ApiEncrypt` |
+| 注解位置 | `AuthController` 第 75 行：`@ApiEncrypt` 打在 `login()` 方法上（第 180 行 `binding` 同样标注） |
+| 开关 | `ApiDecryptAutoConfiguration` 有 `@ConditionalOnProperty("api-decrypt.enabled", havingValue="true")`，默认 `true` |
+| 排除路径 | `security.excludes` **不含** `/auth/**`，但这与本问题无关——拦截器走的是登录校验，抛的是 `NotLoginException`，与本次 `ServiceException` 不是同一类 |
+| 为什么日志里没有堆栈 | `GlobalExceptionHandler.handleServiceException` 只 `log.error(e.getMessage())`，不打印栈，导致误判为权限问题 |
+
+**一句话：RuoYi 6.0 的登录接口要求请求体加密，明文请求被加密过滤器拦下，并复用了「没有访问权限」这句提示。**
+
+## 10. 最小修复
+
+| 改动 | 文件 | 说明 |
+|---|---|---|
+| POC 关闭接口加密 | 启动参数 `--api-decrypt.enabled=false` | 仅关闭**传输层加密**，未关闭认证/授权/拦截器；隔离环境内明文可接受，生产必须开启并发加密请求 |
+| 代理透传上游错误 | `PocProxyController` | 原来 `RestClient` 遇 4xx 抛异常被包装成 500，改为捕获 `RestClientResponseException` 原样返回状态码与响应体 |
+| 代理加权限点 | `PocProxyController` | 新增 `@SaCheckPermission("poc:student:write")`。加之前**任何登录用户都能写**（见 §11 的缺陷） |
+
+未做：未全局关闭鉴权、未把 `/auth/**` 加入永久白名单、未删除拦截器、未硬编码 token。
+
+## 11. 复测结果（真实请求）
+
+| 测试 | 结果 |
+|---|---|
+| 匿名 POST `/auth/login` | **200**，返回 JWT（长度 504），不再 403 |
+| 无 token 访问 `/system/user/list` | 业务码 **401**「登录状态异常」 |
+| 带 token 访问 `/system/user/list` | 业务码 **200**，`total=3` |
+| admin 调代理写学生 | **200**，审计 `ry:admin` / `campus_app` / `insert` |
+| 伪造 `X-Actor: attacker` + `X-Poc-User: ry:hacker` | 审计仍为 **`ry:admin`**，伪造无效 |
+| 跨学院写入（admin 属「研发部门」写「电子信息学院」） | **403** `越权：不能写入其他学院数据`，且未落库（`count=0`） |
+| 无效 token 调代理 | 业务码 **401** |
+| 低权限账号（无角色）调 `/system/user/list` | **403**（框架 RBAC 生效） |
+| 低权限账号调代理（加权限点后） | **403** |
+| 低权限账号调代理（**加权限点前**） | **200 且写入成功**，审计 `ry:poc_readonly` —— **已修复的缺陷** |
+
+POC 审计表现状：
+
+```
+ry:admin        | campus_app | 4 条
+ry:zhangsan     | campus_app | 2 条
+ry:poc_readonly | campus_app | 1 条   ← 权限点缺失期间写入，保留为证据
+(空)            | ruoyi      | 2 条   ← 种子直连 SQL
+```
+
+## 12. 本次新增的发现
+
+1. **RuoYi 6.0 默认要求登录接口加密**，任何接入方（含未来前端）都必须带 `encrypt-key` 头，否则会得到误导性的 403。
+2. **代理接口默认不继承权限**：框架只保护自己 `@SaCheckPermission` 标注的接口，自建代理必须显式声明权限点，否则「登录即可写」。
+3. 框架级**数据权限（sys_dept 数据范围）仍未验证**：本次跨学院拦截是在 FastAPI 里做的字符串比对，不是框架的 `@DataPermission`。
