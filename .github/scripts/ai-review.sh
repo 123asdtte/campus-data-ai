@@ -12,8 +12,10 @@ set -uo pipefail
 PR="${PR_NUMBER:?PR_NUMBER 未设置}"
 REPO="${GITHUB_REPOSITORY:?}"
 RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/$REPO/actions/runs/${GITHUB_RUN_ID:-0}"
-# 末尾取短 hash 用；set -u 下直接写 ${GITHUB_SHA:0:7} 在变量缺失时会让脚本当场退出
-SHA="${GITHUB_SHA:-unknown}"
+# 优先用 PR 的实际提交：pull_request 事件下 GITHUB_SHA 是合并预演提交
+# （refs/pull/N/merge），写进评论会指向一个查不到的分支提交。
+# 末尾统一取短 hash；set -u 下直接写 ${VAR:0:7} 在变量缺失时会让脚本当场退出。
+SHA="${PR_HEAD_SHA:-${GITHUB_SHA:-unknown}}"
 SHA="${SHA:0:7}"
 
 # LLM 调用上限：上游 504 是常态，必须给硬上限。
