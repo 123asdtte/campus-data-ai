@@ -101,7 +101,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | 端口 | 8081、8443、55432、8010、8082 未被占用 | 已确认（5432/8000/8080 被其他服务占用，故整体避开） |
 | PostgreSQL | 16.15（镜像 `postgres:16.15-alpine`） | 容器内 |
 | Python | 3.12（镜像 `python:3.12-slim`） | 仅构建期；运行时在容器内 |
-| Node.js | 20+ / npm | **仅构建前端时需要**（容器无外网，须在宿主机构建） |
+| Node.js | 不需要 | 前端在容器内构建（2026-10-21 起）；仅修改前端代码时本地装 Node 更方便 |
 
 **磁盘告警阈值**：低于 10 GB 时停止拉取新镜像并提示清理；低于 5 GB 时禁止大批量导入。用 `./scripts/check-disk.sh` 快速检查。
 
@@ -148,21 +148,21 @@ cp .env.example .env      # 然后逐项替换 __CHANGE_ME_* 占位符
 ### 6.2 启动
 
 ```bash
-docker compose up -d                     # db / appsmith / import-api
+docker compose up -d --build             # db / appsmith / import-api（镜像自动构建）
 docker compose exec -T campus-db psql -U campus_dba -d campus \
   -v app_password="$APP_DB_PASSWORD" -v ro_password="$RO_DB_PASSWORD" \
   -q -f - < sql/003_roles.sql          # 最小权限账号（只做一次）
 ```
 
-前端（独立栈，**须先在宿主机构建**）：
+前端（独立栈，同样容器内构建，**无需宿主机 Node**）：
 
 ```bash
-cd web && npm ci && npm run build && cd ..
-docker compose -p campus-web -f docker-compose.web.yml build
-docker compose -p campus-web -f docker-compose.web.yml up -d
+docker compose -p campus-web -f docker-compose.web.yml up -d --build
 ```
 
-> 容器内**没有外网出口**，不能 `npm install`，必须在宿主机构建后只拷产物。
+> 2026-10-21 起前端改为多阶段构建（node:22-alpine 容器内 npm ci + vite build），
+> 构建阶段显式绕开 Docker Desktop 注入的失效代理，直连官方源。
+> 若你的网络无法直连 PyPI/npm，再退回离线路径：`./scripts/fetch-wheels.sh` + 宿主机构建（见 §14）。
 
 ### 6.3 访问入口
 
@@ -291,7 +291,7 @@ docker compose -p campus-web -f docker-compose.web.yml ps
 
 ## 14. 已知限制
 
-- 容器无外网出口：依赖需用 `scripts/fetch-wheels.sh` 预下载，前端需在宿主机构建；
+- 运行时容器无外网出口（Docker Desktop 注入失效代理）：构建阶段已绕开，但容器内不能再跑 pip/npm；
 - 仅支持 `.xlsx` / `.xlsm` / `.csv`，不支持 `.xls`、多层合并表头、加密工作簿；
 - 提交成功后暂存目录的 `.mapping.json` 不会被删除（已知小缺陷）；
 - Appsmith 目前仍持有可写数据库账号 `campus_app`，**属待处理的高风险项**。
