@@ -35,4 +35,7 @@ jobs:
           AI_MODEL: ${{ secrets.AI_MODEL }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # pull_request 事件里 GITHUB_SHA 是「合并预演」提交（refs/pull/N/merge），
+          # 不是 PR 的实际提交；评论里要引用提交号必须用 head sha。
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/ai-review.sh
