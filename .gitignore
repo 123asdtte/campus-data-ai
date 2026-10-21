@@ -30,8 +30,24 @@ import-api/wheels/*.whl
 # 临时与系统
 .tmp/
 *.log
+*.pid
+*.bak
 Thumbs.db
 .DS_Store
+
+# 私钥与证书（严禁入库）
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# 测试与覆盖率产物
+coverage/
+htmlcov/
+*.lcov
+.playwright/
 
 # 样例文件可提交（全部为虚构数据），排除 Office 临时文件
 samples/~$*
