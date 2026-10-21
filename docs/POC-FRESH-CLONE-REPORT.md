@@ -86,6 +86,21 @@ campus.students   = 4（两个学院各 2 条虚构数据）
 
 ---
 
+## 4.1 前端全新克隆验收（2026-10-21 19:25 补测）
+
+固定版本：`6.X-React` @ `25e69f1`（仓库内 vendored）。使用 `package.json` 实际脚本 `pnpm build`（→ `build:prod`）。
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 依赖安装 | `pnpm install --registry=https://registry.npmjs.org`（清空代理环境变量） | **成功，3m43s** |
+| 生产构建 | `pnpm build` | **成功，1m37s（vite 构建 45.5s）**，产物 `ui-react/dist` |
+| 静态托管 + 代理 | 零依赖 Node 静态服务，`/dev-api` → `127.0.0.1:9180` | 首页 200、代理登录 200 |
+| 浏览器验收 | Chromium headless，`admin / admin123` | 登录后跳 `/index`；菜单：首页、系统管理、系统监控、系统工具、测试菜单（5 个）；接口 `/auth/code`、`/auth/login`、`/system/menu/getRouters`、`/system/user/getInfo`、`/resource/message/box` 全部 200 |
+
+唯一残留：console 有 2 条 `data:image/gif;base64,undefined`（antd 加载图标的装饰性资源告警），不影响功能。
+
+> 网络注意：首次安装因 TLS 握手失败中断，清空 `HTTP_PROXY/HTTPS_PROXY` 后重试成功——与已知的 Docker 代理注入问题同源。
+
 ## 5. 许可证与第三方代码核查
 
 | 项 | 结果 |
@@ -93,7 +108,8 @@ campus.students   = 4（两个学院各 2 条虚构数据）
 | RuoYi-Vue-Plus 后端 | 仓库内保留 `backend/LICENSE`（MIT，Copyright 2019 RuoYi-Vue-Plus） ✓ |
 | plus-ui 前端 | 上游 GitHub 标记 **MIT**，但**该 commit 根目录没有 LICENSE 文件**，`package.json` 也无 `license` 字段 ⚠️ |
 | FastAPI 副本 | 本项目自有代码，随主仓库分发 |
-| 建议 | 在 POC 仓库补 `THIRD-PARTY-NOTICES.md`，写明两个上游仓库、commit、MIT 许可与版权归属；不因此认定「无附加义务」 |
+| 已落地 | POC 仓库新增 `THIRD-PARTY-NOTICES.md`（PR #2）：RuoYi 标注「已核实」；plus-ui 标注「**未确认**」并说明 LICENSE 仅见于 5.X 分支 |
+| 结论 | 不把 plus-ui 写成「已授权」；对外分发前需上游确认或在 `6.X-React` 出现 LICENSE |
 
 ---
 
@@ -101,7 +117,7 @@ campus.students   = 4（两个学院各 2 条虚构数据）
 
 | # | 项 | 说明 |
 |---|---|---|
-| 1 | **前端（ui-react）全新构建未在本次复跑** | 上次在原环境验证过（`pnpm install` 6m35s + `build` 33s）；全新克隆下依赖下载与构建**属待验证** |
+| 1 | ~~前端（ui-react）全新构建未在本次复跑~~ | **已补齐（2026-10-21 19:25）**：全新克隆 `pnpm install` 3m43s + `pnpm build` 1m37s（构建 45.5s），静态托管 + 代理 + 真实登录 + 5 个动态菜单全部通过，详见 §5 |
 | 2 | 未在**物理干净机**（无 Docker 缓存、无镜像）上跑过 | 本机已有基础镜像缓存，首次 `docker pull` 耗时未知 |
 | 3 | 依赖下载依赖网络 | Maven/NPM/PyPI 均走直连；离线环境需另备 wheels 与 npm 缓存 |
 | 4 | 固定容器名 | 同机不能并行两套栈；如需并行，需加 `COMPOSE_PROJECT_NAME` 与端口参数化 |
