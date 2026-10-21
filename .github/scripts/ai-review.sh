@@ -22,6 +22,14 @@ SHA="${SHA:0:7}"
 # 没有 --max-time 时 curl 会一直挂着，把 runner 耗到 GitHub 的 6 小时上限。
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"      # 单次请求上限（秒）
 LLM_RETRY="${LLM_RETRY:-1}"            # 5xx / 超时的额外重试次数
+# LLM 环节（探测 + 正式请求 + 重试）的总预算。job 上限是 15 分钟，checkout、
+# 取 diff、发评论还要占掉一部分；不设总账的话，探测跑满再叠加重试会把 job
+# 拖过 900s，最后被 kill 在「发布失败说明」之前 —— 留痕逻辑等于白写。
+LLM_BUDGET="${LLM_BUDGET:-780}"
+LLM_DEADLINE=$((SECONDS + LLM_BUDGET))
+# 到点前至少留这么多秒发评论
+LLM_RESERVE=60
+remaining_budget() { echo $((LLM_DEADLINE - SECONDS)); }
 # 60KB ≈ 1.5 万 token。此前 120KB 约 3~4 万 token，端到端生成很容易超过任何
 # 网关的空闲超时；降一半后配合流式输出，实测能拿到首字节并跑完。
 DIFF_LIMIT="${DIFF_LIMIT:-61440}"
@@ -184,6 +192,107 @@ cat > /tmp/review-prompt.md <<'PROMPT'
 不要复述 diff；不要输出与本 PR 无关的泛泛建议。
 PROMPT
 
+# 3.5) 自动探测并关闭推理模型的「思考阶段」
+# 2026-10-21 实测：deepseek-*-flash 这类推理模型会把整份超时预算耗在
+# reasoning_content 上，正文始终零字节，评论只能写「未完成」。
+# 各家网关的开关字段不一样（chat_template_kwargs.enable_thinking /
+# enable_thinking / thinking.type / reasoning_effort / thinking_budget），
+# 写死任何一个都是赌某个网关的实现。
+# 所以：先用一次极小的探测请求判断这个模型到底会不会先思考；会的话再逐个试
+# 开关，取第一个让 reasoning_content 归零的。探测成本（几秒到 30 秒）远低于
+# 一次注定失败的正式请求（300 秒）。
+# 探测提示词必须能触发思考（真给一段 diff）：平凡提示词下推理模型本来就不
+# 思考，探测会全部误判为「无需关闭」。
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-30}"
+PROBE_CANDIDATES='[{"chat_template_kwargs":{"enable_thinking":false}},{"enable_thinking":false},{"thinking":{"type":"disabled"}},{"reasoning_effort":"none"},{"thinking_budget":0}]'
+THINK_OFF=""
+PROBE_CODE=""
+PROBE_TEXT_LEN=0
+PROBE_REASON_LEN=0
+
+# 取响应里某个字段的长度。端点忽略 stream 时回完整 JSON，正常时是 SSE，两条路都要能读。
+llm_field_len() {
+  # 注意：SSE 末尾的 "data: [DONE]" 不是 JSON，jq 会在拼完正文后返回非 0。
+  # 这里不能写 `|| v=""` —— 那会把已经拼好的内容整个丢掉，最终读到 0 字节。
+  local f="$1" k="$2" v=""
+  v=$(jq -j ".choices[0].message.$k // empty" "$f" 2>/dev/null) || true
+  if [ -z "$v" ]; then
+    v=$(grep -a '^data:' "$f" 2>/dev/null | sed 's/^data:[[:space:]]*//' \
+      | jq -j ".choices[0].delta.$k // empty" 2>/dev/null) || true
+  fi
+  printf '%s' "$v" | wc -c | tr -d '[:space:]'
+}
+
+# $1 = 要追加到请求体的 JSON 对象（"{}" 表示不加）；$2 = 本次超时（可选）
+# 结果写入 PROBE_* 三个变量
+probe_once() {
+  local extra="$1" tmo="${2:-$PROBE_TIMEOUT}" code=""
+  jq -n --rawfile sys /tmp/probe-prompt.md --rawfile diff /tmp/probe.diff \
+    --arg model "$AI_MODEL" --argjson extra "$extra" \
+    '{model: $model, stream: true, temperature: 0.2, max_tokens: 64,
+      messages: [{role: "system", content: $sys}, {role: "user", content: $diff}]} + $extra' \
+    > /tmp/probe-body.json 2>/dev/null || return 2
+  : > /tmp/probe-out.txt
+  code=$(curl -sS -N -o /tmp/probe-out.txt -w "%{http_code}" \
+    --max-time "$tmo" \
+    -X POST "${AI_BASE_URL%/}/chat/completions" \
+    -H "Authorization: Bearer $AI_API_KEY" \
+    -H "Content-Type: application/json" \
+    -H "Accept: text/event-stream" \
+    -d @/tmp/probe-body.json) || code="curl_error"
+  PROBE_CODE="$code"
+  PROBE_TEXT_LEN=$(llm_field_len /tmp/probe-out.txt content)
+  PROBE_REASON_LEN=$(llm_field_len /tmp/probe-out.txt reasoning_content)
+  # 「应答成功」≠「拿到正文」：推理模型只吐思维链时 HTTP 也是 200。
+  # 两者要分开判断，否则「只思考」会被当成探测失败，直接跳过所有开关。
+  [ "$code" = "200" ] || return 1
+  [ "${PROBE_TEXT_LEN:-0}" -gt 0 ] && return 0
+  [ "${PROBE_REASON_LEN:-0}" -gt 0 ] && return 0
+  return 1
+}
+
+if [ -z "${AI_EXTRA_BODY:-}" ] && [ "$(remaining_budget)" -gt "$PROBE_TIMEOUT" ]; then
+  head -c 1500 /tmp/pr.diff.trunc > /tmp/probe.diff
+  cat > /tmp/probe-prompt.md <<'PROBE'
+你是代码评审员。读下面这段 diff 片段，用一句话（不超过 30 字）指出最值得关注的一点。
+PROBE
+  if probe_once '{}'; then
+    if [ "${PROBE_REASON_LEN:-0}" -gt 0 ]; then
+      echo "探测：模型先输出思维链（${PROBE_REASON_LEN} 字节），逐个尝试关闭思考的开关…"
+      local_n=$(printf '%s' "$PROBE_CANDIDATES" | jq 'length')
+      local_i=0
+      while [ "$local_i" -lt "$local_n" ]; do
+        local_left=$(remaining_budget)
+        # 预算见底就停止探测：继续试下去会把正式请求的时间也吃掉，
+        # 最后既没结论也没留下失败说明
+        if [ "$local_left" -le "$LLM_RESERVE" ]; then
+          echo "探测：剩余预算 ${local_left}s，停止探测，保住正式请求的时间"
+          break
+        fi
+        local_tmo=$PROBE_TIMEOUT
+        [ "$local_left" -lt "$local_tmo" ] && local_tmo=$local_left
+        local_cand=$(printf '%s' "$PROBE_CANDIDATES" | jq -c ".[$local_i]")
+        if probe_once "$local_cand" "$local_tmo"; then
+          if [ "${PROBE_REASON_LEN:-0}" -eq 0 ] && [ "${PROBE_TEXT_LEN:-0}" -gt 0 ]; then
+            THINK_OFF="$local_cand"
+            echo "探测：$local_cand 生效，正式请求将带上该参数"
+            break
+          fi
+          echo "探测：$local_cand 仍有思维链（${PROBE_REASON_LEN} 字节），换下一个"
+        else
+          echo "探测：$local_cand 未被接受（HTTP ${PROBE_CODE:-未知}），换下一个"
+        fi
+        local_i=$((local_i + 1))
+      done
+      [ -z "$THINK_OFF" ] && echo "探测：所有已知开关都无效，按原样发起正式请求"
+    else
+      echo "探测：模型直接输出正文（${PROBE_TEXT_LEN} 字节），无需关闭思考"
+    fi
+  else
+    echo "探测请求未成功（HTTP ${PROBE_CODE:-未知}），按原样发起正式请求"
+  fi
+fi
+
 # 4) 调用 LLM（OpenAI 兼容协议，流式）
 # 用 --rawfile 而非 --arg "$(cat ...)"：60KB 内容过 shell 参数既可能触到
 # ARG_MAX，也会让非法字节的报错信息难以定位。
@@ -204,6 +313,10 @@ if [ -n "${AI_EXTRA_BODY:-}" ]; then
     || fail "AI_EXTRA_BODY 不是合法的 JSON 对象：$AI_EXTRA_BODY"
   printf '%s' "$AI_EXTRA_BODY" > /tmp/extra.json
   jq --slurpfile extra /tmp/extra.json '. * $extra[0]' /tmp/review-body.json > /tmp/review-body.merged \
+    && mv /tmp/review-body.merged /tmp/review-body.json
+elif [ -n "$THINK_OFF" ]; then
+  # 自动探测得到的开关（见 3.5）
+  jq --argjson extra "$THINK_OFF" '. + $extra' /tmp/review-body.json > /tmp/review-body.merged \
     && mv /tmp/review-body.merged /tmp/review-body.json
 fi
 
@@ -246,11 +359,21 @@ if [ $((MAX_ATTEMPTS * LLM_TIMEOUT)) -gt 600 ]; then
   MAX_ATTEMPTS=$((600 / LLM_TIMEOUT))
   [ "$MAX_ATTEMPTS" -lt 1 ] && MAX_ATTEMPTS=1
 fi
+HTTP_CODE="未发起"; RC=0; ELAPSED=0
 while :; do
+  LEFT=$(remaining_budget)
+  # 探测已经吃掉不少时间时，正式请求必须按剩余预算收缩，不能照用 300s：
+  # 被 job 超时 kill 掉的话，前面拿到的内容一点都发不出去。
+  if [ "$LEFT" -le "$LLM_RESERVE" ]; then
+    echo "LLM 预算耗尽（剩余 ${LEFT}s），放弃正式请求"
+    break
+  fi
+  CUR_TIMEOUT=$LLM_TIMEOUT
+  [ "$LEFT" -lt "$CUR_TIMEOUT" ] && CUR_TIMEOUT=$LEFT
   : > /tmp/review-stream.txt
   START=$SECONDS
   HTTP_CODE=$(curl -sS -N -o /tmp/review-stream.txt -w "%{http_code}" \
-    --max-time "$LLM_TIMEOUT" \
+    --max-time "$CUR_TIMEOUT" \
     -X POST "${AI_BASE_URL%/}/chat/completions" \
     -H "Authorization: Bearer $AI_API_KEY" \
     -H "Content-Type: application/json" \
@@ -293,8 +416,15 @@ if [ -z "$REVIEW" ]; then
   # 正文为空但思维链很长：推理模型把整个超时预算花在思考上，
   # 报「超时」会把接手的人引向错误方向（去查网络），得说清是模型行为。
   if [ "${REASONING_LEN:-0}" -gt 200 ]; then
-    FAIL_HINT='- 排查方向：在仓库 Variables 里设置 `AI_EXTRA_BODY` 关掉思考，或把 `AI_MODEL` 换成非推理模型（详见 CONTRIBUTING §10）'
-    fail "模型只产出了思维链（${REASONING_LEN} 字节），${LLM_TIMEOUT}s 内没有进入正文。这不是网络问题——连接正常、数据持续到达，是推理模型的思考阶段吃掉了全部时间。处理方式：用仓库变量 AI_EXTRA_BODY 关掉思考（如 {\"reasoning_effort\":\"none\"}），或换一个非推理模型"
+    # 已自动试过开关仍无效 = 这个网关不吃已知任何一种；明确说已试过，
+    # 免得接手的人再从零排查一遍
+    if [ -n "$THINK_OFF" ]; then
+      TRIED="本次已自动加上 \`$THINK_OFF\` 关闭思考，模型仍在输出思维链"
+    else
+      TRIED="本次已自动试过 $(printf '%s' "$PROBE_CANDIDATES" | jq 'length') 种关闭思考的开关，这个网关都没有接受"
+    fi
+    FAIL_HINT='- 排查方向：在仓库 Variables 里设置 `AI_EXTRA_BODY`（用你的网关实际支持的字段），或把 `AI_MODEL` 换成非推理模型（详见 CONTRIBUTING §10）'
+    fail "模型只产出了思维链（${REASONING_LEN} 字节），${LLM_TIMEOUT}s 内没有进入正文。这不是网络问题——连接正常、数据持续到达，是推理模型的思考阶段吃掉了全部时间。${TRIED}；请用仓库变量 AI_EXTRA_BODY 指定该网关的开关字段，或换一个非推理模型"
   fi
   # 28=超时 18/56=连接被掐 6=域名解析失败 7=连不上
   case "$RC" in

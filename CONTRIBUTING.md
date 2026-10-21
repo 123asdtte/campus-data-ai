@@ -166,7 +166,11 @@ gh secret set AI_MODEL    --repo 123asdtte/campus-data-ai   # 如 deepseek-flash
 
 失败说明里会明写这种情况：「模型只产出了思维链，N 秒内没有进入正文」。**这不是网络问题**，改超时也没用。
 
-处理方式是给请求体加参数关掉思考。各家字段名不一样，所以在仓库 **Variables**（注意不是 Secrets）里配置 `AI_EXTRA_BODY`，值为 JSON：
+**脚本默认会自己处理**：正式请求前先发一次极小的探测请求（一段真实 diff 片段 + 64 token 上限），
+若发现模型先吐思维链，就依次尝试下面这些已知开关，取第一个能让 `reasoning_content` 归零的，
+再发正式请求。整个过程只在日志里留痕（`探测：xxx 生效`），不需要任何配置。
+
+只有探测全部落空（网关不吃已知任何一种开关）时，才需要在仓库 **Variables**（注意不是 Secrets）里手动指定 `AI_EXTRA_BODY`，值为 JSON：
 
 | 网关类型 | 取值 |
 |---|---|
@@ -181,7 +185,9 @@ gh variable set AI_EXTRA_BODY --repo 123asdtte/campus-data-ai --body '{"reasonin
 
 配置错了网关会返回 400，评审照样失败但会留痕；不确定就用非推理模型。
 
-另外两个可调项（同样是 Variables）：`LLM_TIMEOUT`（单次上限，默认 300 秒）、`LLM_RETRY`（额外重试次数，默认 1）。两者乘积会被自动压到 10 分钟以内，以免吃掉整个 job 预算。
+其他可调项（同样是 Variables）：`LLM_TIMEOUT`（单次上限，默认 300 秒）、`LLM_RETRY`（额外重试次数，默认 1）、
+`PROBE_TIMEOUT`（单次探测上限，默认 30 秒）、`LLM_BUDGET`（探测+请求+重试的总预算，默认 780 秒）。
+总预算是为了保证 job 被 kill 之前一定能把失败说明发出去——被 kill 的话，PR 上会一点痕迹都没有。
 
 ### 实际发给模型的内容
 

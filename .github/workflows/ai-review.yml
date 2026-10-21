@@ -38,6 +38,8 @@ jobs:
           AI_EXTRA_BODY: ${{ vars.AI_EXTRA_BODY }}
           LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
           LLM_RETRY: ${{ vars.LLM_RETRY }}
+          PROBE_TIMEOUT: ${{ vars.PROBE_TIMEOUT }}
+          LLM_BUDGET: ${{ vars.LLM_BUDGET }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # pull_request 事件里 GITHUB_SHA 是「合并预演」提交（refs/pull/N/merge），
