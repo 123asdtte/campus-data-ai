@@ -33,6 +33,11 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
+          # 可选：仓库 Variables（不是 Secrets）里配置，用来关掉推理模型的思考阶段，
+          # 或调整超时/重试，无需改脚本。留空则用脚本内默认值。
+          AI_EXTRA_BODY: ${{ vars.AI_EXTRA_BODY }}
+          LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
+          LLM_RETRY: ${{ vars.LLM_RETRY }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # pull_request 事件里 GITHUB_SHA 是「合并预演」提交（refs/pull/N/merge），
