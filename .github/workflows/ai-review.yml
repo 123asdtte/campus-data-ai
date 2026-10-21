@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  # 失败说明走的是 issues 评论接口（repos/{owner}/{repo}/issues/{n}/comments），
+  # 没有它时「留痕」会静默失败
+  issues: write
 
 jobs:
   ai-review:
@@ -20,7 +23,9 @@ jobs:
     timeout-minutes: 15
     # 同一 PR 连续推送时取消上一轮评审，避免排队堆积和重复评论。
     concurrency:
-      group: ai-review-${{ github.event.pull_request.number }}
+      # 非 pull_request 事件（如以后加 workflow_dispatch）下 number 为空，
+      # 没有兜底的话所有此类运行会挤进同一个 group 互相取消
+      group: ai-review-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
     steps:
       - name: 检出完整历史（diff 需要）
