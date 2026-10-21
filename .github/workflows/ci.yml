@@ -33,3 +33,39 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m compileall -q import-api/app import-api/scripts
+
+  backend-tests:
+    name: 后端接口与校验测试
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_USER: campus_test
+          POSTGRES_PASSWORD: campus_test
+          POSTGRES_DB: campus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U campus_test -d campus_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # 真库集成测试的开关。未设置时这组用例会自动 skip，
+      # 但 CI 里必须真的跑，否则「审计与业务同事务」这类结论没有证据。
+      CAMPUS_TEST_DATABASE_URL: postgresql://campus_test:campus_test@127.0.0.1:5432/campus_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: import-api/requirements-dev.txt
+      - name: 安装依赖
+        run: pip install -r import-api/requirements-dev.txt
+      - name: 初始化测试库结构
+        run: python scripts/init-test-db.py
+      - name: 运行 pytest
+        working-directory: import-api
+        run: python -m pytest
