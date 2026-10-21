@@ -29,6 +29,10 @@ DIFF_LIMIT="${DIFF_LIMIT:-61440}"
 # 可能含真实数据 —— 少发出去一点，README §13 的泄露面就小一点。
 DIFF_EXCLUDE="${DIFF_EXCLUDE:-^(docs/|samples/|import-api/wheels/|web/node_modules/)|(package-lock[.]json|pnpm-lock[.]yaml|yarn[.]lock)$|[.](xlsx|xls|xlsm|csv|tsv|png|jpe?g|gif|svg|ico|pdf|zip|whl|woff2?)$}"
 FAIL_MARKER="<!-- ai-review-failed -->"  # 失败说明的识别标记，HTML 注释在页面上不可见
+# 排查方向随失败原因变化：原因是「模型只思考不出正文」时还让人去查密钥，
+# 等于把接手的人往反方向带。
+FAIL_HINT=""
+DEFAULT_HINT='- 排查方向：仓库 Secrets 中 `AI_MODEL` / `AI_BASE_URL` 是否可用'
 
 # 找出本 PR 上既有的失败说明；没有则输出空字符串
 find_status_comment() {
@@ -46,7 +50,7 @@ fail() {
     printf '## 🤖 AI 评审未完成\n\n'
     printf '提交 `%s` 的**自动评审没有产出结论**，原因：%s\n\n' "$SHA" "$1"
     printf '这不代表 PR 有问题，也**不阻塞合并**，请按常规人工评审。\n\n'
-    printf -- '- 排查方向：仓库 Secrets 中 `AI_MODEL` / `AI_BASE_URL` 是否可用\n'
+    printf '%s\n' "${FAIL_HINT:-$DEFAULT_HINT}"
     printf -- '- 运行日志：[%s 的评审任务](%s)\n\n' "$SHA" "$RUN_URL"
     printf '<sub>该说明由流水线在评审失败时自动发布；修复上游后可重新运行本任务。</sub>\n'
   } > /tmp/pr-fail.md
@@ -149,6 +153,7 @@ check_secret "OpenAI 风格密钥" 'sk-[A-Za-z0-9_-]{24,}'
 check_secret "GitHub Token" 'gh[pousr]_[A-Za-z0-9]{20,}'
 if [ -n "$BLOCKED" ]; then
   # 只说命中哪一类，绝不回显命中的字符串本身——否则等于把密钥写进 PR 评论
+  FAIL_HINT='- 下一步：确认该字符串是否为真实凭据。若是，请立即轮换并从提交历史中移除，然后重新运行本任务'
   fail "diff 中疑似含凭据（$BLOCKED），已阻止发送到外部模型；请确认是否为真实凭据，必要时轮换"
 fi
 
@@ -288,6 +293,7 @@ if [ -z "$REVIEW" ]; then
   # 正文为空但思维链很长：推理模型把整个超时预算花在思考上，
   # 报「超时」会把接手的人引向错误方向（去查网络），得说清是模型行为。
   if [ "${REASONING_LEN:-0}" -gt 200 ]; then
+    FAIL_HINT='- 排查方向：在仓库 Variables 里设置 `AI_EXTRA_BODY` 关掉思考，或把 `AI_MODEL` 换成非推理模型（详见 CONTRIBUTING §10）'
     fail "模型只产出了思维链（${REASONING_LEN} 字节），${LLM_TIMEOUT}s 内没有进入正文。这不是网络问题——连接正常、数据持续到达，是推理模型的思考阶段吃掉了全部时间。处理方式：用仓库变量 AI_EXTRA_BODY 关掉思考（如 {\"reasoning_effort\":\"none\"}），或换一个非推理模型"
   fi
   # 28=超时 18/56=连接被掐 6=域名解析失败 7=连不上
