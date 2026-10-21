@@ -25,27 +25,45 @@ LLM_RETRY="${LLM_RETRY:-1}"            # 5xx / 超时的额外重试次数
 # LLM 环节（探测 + 正式请求 + 重试）的总预算。job 上限是 15 分钟，checkout、
 # 取 diff、发评论还要占掉一部分；不设总账的话，探测跑满再叠加重试会把 job
 # 拖过 900s，最后被 kill 在「发布失败说明」之前 —— 留痕逻辑等于白写。
-LLM_BUDGET="${LLM_BUDGET:-780}"
-LLM_DEADLINE=$((SECONDS + LLM_BUDGET))
+# 720 = job 上限 900s 减去 checkout、取 diff、发评论的余量。
+LLM_BUDGET="${LLM_BUDGET:-720}"
 # 到点前至少留这么多秒发评论
 LLM_RESERVE=60
-remaining_budget() { echo $((LLM_DEADLINE - SECONDS)); }
 # 60KB ≈ 1.5 万 token。此前 120KB 约 3~4 万 token，端到端生成很容易超过任何
 # 网关的空闲超时；降一半后配合流式输出，实测能拿到首字节并跑完。
 DIFF_LIMIT="${DIFF_LIMIT:-61440}"
 # 不参与评审的路径。这些文件体积大、token 密度低，且 docs/ 与 samples/ 里
 # 可能含真实数据 —— 少发出去一点，README §13 的泄露面就小一点。
 DIFF_EXCLUDE="${DIFF_EXCLUDE:-^(docs/|samples/|import-api/wheels/|web/node_modules/)|(package-lock[.]json|pnpm-lock[.]yaml|yarn[.]lock)$|[.](xlsx|xls|xlsm|csv|tsv|png|jpe?g|gif|svg|ico|pdf|zip|whl|woff2?)$}"
+# 数值型变量来自仓库 Variables，配错成非数字时会在后面的算术展开处直接终止
+# 脚本——而那时还没走到 fail，PR 上一点痕迹都没有。所以先统一校验并回退默认值。
+is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+for CFG_VAR in LLM_TIMEOUT LLM_RETRY LLM_BUDGET PROBE_TIMEOUT DIFF_LIMIT; do
+  if ! is_uint "${!CFG_VAR:-}"; then
+    case "$CFG_VAR" in
+      LLM_TIMEOUT) LLM_TIMEOUT=300 ;;
+      LLM_RETRY) LLM_RETRY=1 ;;
+      LLM_BUDGET) LLM_BUDGET=720 ;;
+      PROBE_TIMEOUT) PROBE_TIMEOUT=30 ;;
+      DIFF_LIMIT) DIFF_LIMIT=61440 ;;
+    esac
+    echo "$CFG_VAR 不是正整数，已回退为 ${!CFG_VAR}"
+  fi
+done
+LLM_DEADLINE=$((SECONDS + LLM_BUDGET))
+remaining_budget() { echo $((LLM_DEADLINE - SECONDS)); }
+
 FAIL_MARKER="<!-- ai-review-failed -->"  # 失败说明的识别标记，HTML 注释在页面上不可见
 # 排查方向随失败原因变化：原因是「模型只思考不出正文」时还让人去查密钥，
 # 等于把接手的人往反方向带。
 FAIL_HINT=""
 DEFAULT_HINT='- 排查方向：仓库 Secrets 中 `AI_MODEL` / `AI_BASE_URL` 是否可用'
 
-# 找出本 PR 上既有的失败说明；没有则输出空字符串
+# 找出本 PR 上既有的失败说明（可能有多条：并发运行或历史重跑留下的），
+# 每行一个 id；没有则输出空字符串
 find_status_comment() {
   gh api "repos/$REPO/issues/$PR/comments" --paginate \
-    --jq '.[] | select(.body | startswith("<!-- ai-review-failed -->")) | .id' 2>/dev/null | head -1
+    --jq '.[] | select(.body | startswith("<!-- ai-review-failed -->")) | .id' 2>/dev/null
 }
 
 # 在 PR 上说明「本次评审未完成」，然后按设计退出 0（不阻塞合并）
@@ -65,12 +83,17 @@ fail() {
 
   # 只保留一条失败说明：已有就原地更新。
   # 否则每次 push 都新增一条，上游持续不可用时 PR 会被同类评论刷满。
-  local existing
-  existing=$(find_status_comment)
-  if [ -n "$existing" ]; then
-    if gh api -X PATCH "repos/$REPO/issues/comments/$existing" \
+  local ids first id
+  ids=$(find_status_comment)
+  first=$(printf '%s\n' "$ids" | head -1)
+  if [ -n "$first" ]; then
+    if gh api -X PATCH "repos/$REPO/issues/comments/$first" \
          -F body=@/tmp/pr-fail.md >/dev/null 2>&1; then
-      echo "已更新既有的失败说明（comment=$existing）"
+      echo "已更新既有的失败说明（comment=$first）"
+      # 并发或历史重跑可能留下多条同类说明，其余删掉
+      printf '%s\n' "$ids" | tail -n +2 | while read -r id; do
+        [ -n "$id" ] && gh api -X DELETE "repos/$REPO/issues/comments/$id" >/dev/null 2>&1
+      done
       exit 0
     fi
   fi
@@ -101,6 +124,9 @@ fi
 filter_diff() {
   awk -v exclude="$DIFF_EXCLUDE" '
     function flush() { if (keep && buf != "") printf "%s", buf; buf = "" }
+    # 先用 "diff --git" 头的路径做个初判，后面遇到 +++ / --- 行再校正：
+    # 头行按 " b/" 切在重命名（a/old b/new）和文件名含空格时会取错路径，
+    # 而 +++ b/xxx 才是新路径的唯一权威来源。
     /^diff --git / {
       flush()
       line = $0; sub(/^diff --git /, "", line)
@@ -108,7 +134,19 @@ filter_diff() {
       path = (i > 0) ? substr(line, i + 3) : line
       gsub(/"/, "", path)
       keep = (path !~ exclude)
-      if (!keep) { print path > "/dev/stderr" } else { buf = $0 "\n" }
+      pending = 1
+      if (!keep) { print path > "/dev/stderr"; buf = "" } else { buf = $0 "\n" }
+      next
+    }
+    # 只看 +++ 行：--- 是旧路径，删除文件时它是 /dev/null，重命名时它是旧名字，
+    # 拿它做判断会误伤「从 docs/ 挪到代码目录」这类改动
+    pending && /^\+\+\+ / {
+      p = $0; sub(/^\+\+\+ /, "", p); sub(/\t.*$/, "", p)
+      sub(/^[ab]\//, "", p); gsub(/"/, "", p)
+      pending = 0
+      # 头行已经判为不保留的，不要在这里翻案（否则会留下没有归属的片段）
+      if (keep && p !~ exclude) { buf = buf $0 "\n" }
+      else if (keep) { print p > "/dev/stderr"; buf = "" ; keep = 0 }
       next
     }
     { if (keep) buf = buf $0 "\n" }
@@ -147,12 +185,14 @@ echo "diff：原始 $(wc -c < /tmp/pr.diff) 字节，过滤后 $(wc -c < /tmp/pr
 
 # 2.4) 敏感信息前置拦截。
 # 评审的代价是把 diff 完整发给外部模型端点，而 README §13 明令「不要分发凭据」。
-# 只匹配高置信度的密钥形态，宁可不报也不误伤——误伤会让正常 PR 失去评审，
-# 而漏报的风险由「不发出去」这个默认动作兜底。
+# 只匹配高置信度的密钥形态。命中即中止整次评审（宁可误伤也不漏报）——误伤的
+# 代价只是这次没有 AI 评审，漏报的代价是把凭据真的发了出去。
+# 扫的是「过滤后、截断前」的完整 diff：只扫截断后的 60KB 的话，写在后面的
+# 密钥会被截掉从而漏检，然后照常发出去。
 BLOCKED=""
 check_secret() {
   # 用 -e 传模式：私钥特征串以 "-" 开头，不加 -e 会被 grep 当成选项
-  grep -aqE -e "$2" /tmp/pr.diff.trunc && BLOCKED="${BLOCKED}${BLOCKED:+, }$1"
+  grep -aqE -e "$2" /tmp/pr.diff.kept && BLOCKED="${BLOCKED}${BLOCKED:+, }$1"
   return 0
 }
 check_secret "AWS AccessKey" 'AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}'
@@ -227,9 +267,12 @@ llm_field_len() {
 # 结果写入 PROBE_* 三个变量
 probe_once() {
   local extra="$1" tmo="${2:-$PROBE_TIMEOUT}" code=""
+  # max_tokens 给 256：上限太低会把思维链一起截断，探测就读不到
+  # reasoning_content，从而把「会思考的模型」误判成「不思考」。
+  # 注释不能写在多行命令的中间 —— 那会把反斜杠续行一起注释掉，jq 收不到过滤器。
   jq -n --rawfile sys /tmp/probe-prompt.md --rawfile diff /tmp/probe.diff \
     --arg model "$AI_MODEL" --argjson extra "$extra" \
-    '{model: $model, stream: true, temperature: 0.2, max_tokens: 64,
+    '{model: $model, stream: true, temperature: 0.2, max_tokens: 256,
       messages: [{role: "system", content: $sys}, {role: "user", content: $diff}]} + $extra' \
     > /tmp/probe-body.json 2>/dev/null || return 2
   : > /tmp/probe-out.txt
@@ -309,8 +352,11 @@ jq -n --rawfile sys /tmp/review-prompt.md --rawfile diff /tmp/pr.diff.trunc \
 # 写死在脚本里等于赌某个网关的实现，所以交给仓库变量配置：
 #   Settings → Variables → AI_EXTRA_BODY = {"reasoning_effort":"none"}
 if [ -n "${AI_EXTRA_BODY:-}" ]; then
-  printf '%s' "$AI_EXTRA_BODY" | jq -e 'type == "object"' >/dev/null 2>&1 \
-    || fail "AI_EXTRA_BODY 不是合法的 JSON 对象：$AI_EXTRA_BODY"
+  printf '%s' "$AI_EXTRA_BODY" | jq -e 'type == "object"' >/dev/null 2>&1 || {
+    # 默认提示会让人去查 AI_MODEL / AI_BASE_URL，但这里的原因只是变量写错了
+    FAIL_HINT='- 排查方向：仓库 Variables 里的 `AI_EXTRA_BODY` 必须是 JSON **对象**，例如 `{"reasoning_effort":"none"}`（详见 CONTRIBUTING §10）'
+    fail "AI_EXTRA_BODY 不是合法的 JSON 对象：$AI_EXTRA_BODY"
+  }
   printf '%s' "$AI_EXTRA_BODY" > /tmp/extra.json
   jq --slurpfile extra /tmp/extra.json '. * $extra[0]' /tmp/review-body.json > /tmp/review-body.merged \
     && mv /tmp/review-body.merged /tmp/review-body.json
@@ -455,8 +501,10 @@ gh pr comment "$PR" --repo "$REPO" --body-file /tmp/pr-comment.md >/dev/null
 echo "AI 评审已发布为 PR 评论"
 
 # 评审成功后清掉历史失败说明，避免 PR 上同时挂着「未完成」和「已完成」两条互相矛盾的评论
-STALE=$(find_status_comment)
-if [ -n "$STALE" ]; then
-  gh api -X DELETE "repos/$REPO/issues/comments/$STALE" >/dev/null 2>&1 \
-    && echo "已清理历史失败说明（comment=$STALE）"
+STALE_IDS=$(find_status_comment)
+if [ -n "$STALE_IDS" ]; then
+  printf '%s\n' "$STALE_IDS" | while read -r stale; do
+    [ -n "$stale" ] && gh api -X DELETE "repos/$REPO/issues/comments/$stale" >/dev/null 2>&1 \
+      && echo "已清理历史失败说明（comment=$stale）"
+  done
 fi
