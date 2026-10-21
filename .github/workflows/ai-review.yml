@@ -1,0 +1,31 @@
+name: AI 评审
+
+# PR 创建/更新时自动执行。评审结论以评论形式发布，仅供参考，不阻塞合并。
+# 需要先在仓库 Secrets 配置：AI_API_KEY / AI_BASE_URL / AI_MODEL，未配置时自动跳过。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    name: AI 评审
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出完整历史（diff 需要）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 执行 AI 评审
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/ai-review.sh

@@ -136,3 +136,32 @@ git diff --cached --stat
 - CI 会自动跑前端类型检查与构建；失败请先修再重推；
 - 评审意见请逐条回应，不接受「已改」这种无信息量的回复；
 - 合并后删除功能分支。
+
+---
+
+## 10. PR 自动评审（AI 评审机器人）
+
+发起 PR 后，流水线会自动执行两类检查：
+
+| 检查 | 触发 | 作用 | 是否阻塞 |
+|---|---|---|---|
+| **CI**（ci.yml） | push / PR | 前端类型检查与构建、后端语法检查 | 建议修到全绿 |
+| **AI 评审**（ai-review.yml） | PR | 把 diff 发给 LLM，评审结论以 PR 评论发布（阻断/建议/确认三级） | **不阻塞**，仅供参考 |
+
+AI 评审的审查重点与项目红线一致：认证绕过、学院数据范围、SQL 参数化、事务与审计一致性、敏感信息、回退方式。
+
+### 评审所需的仓库 Secret（管理员配置一次）
+
+```bash
+gh secret set AI_API_KEY  --repo 123asdtte/campus-data-ai   # LLM 平台的 API Key
+gh secret set AI_BASE_URL --repo 123asdtte/campus-data-ai   # 如 https://tokenrhythm.studio/v1
+gh secret set AI_MODEL    --repo 123asdtte/campus-data-ai   # 如 deepseek-flash
+```
+
+未配置时 AI 评审自动跳过（不报错、不阻塞）；配置后**新发起的 PR** 自动获得评审评论。
+
+### 边界
+
+- AI 评审**不能替代人工审查**：合并决策仍由评审人做出；
+- 涉及认证、权限、数据范围、审计的 PR，AI 意见只作为线索，结论以人工核验为准；
+- 评审失败（LLM 超时/限流）不会阻塞 PR，会在 Actions 日志中记录原因。
