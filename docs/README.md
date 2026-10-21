@@ -29,6 +29,7 @@
 | [GIT-WORKFLOW.md](GIT-WORKFLOW.md) | ✅ | 分支模型、提交信息、版本标签、回滚 |
 | [APPSMITH-SETUP.md](APPSMITH-SETUP.md) | 📜 | Appsmith 部署（历史方案，非主入口） |
 | [TEST-PLAN.md](TEST-PLAN.md) | 📐 | 测试计划 |
+| `.github/workflows/ai-review.yml` | ✅ | PR 自动评审机器人：diff 发给 LLM，结论以 PR 评论发布（需配置 AI_API_KEY 等 Secrets，未配置自动跳过） |
 
 ## 三、技术决策（ADR）
 
