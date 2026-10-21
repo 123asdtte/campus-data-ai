@@ -55,7 +55,7 @@ jq -n --arg sys "$(cat /tmp/review-prompt.md)" --arg diff "$(cat /tmp/pr.diff.tr
   '{model: $model, messages: [{role: "system", content: $sys}, {role: "user", content: $diff}], temperature: 0.2, max_tokens: 8000}' \
   > /tmp/review-body.json
 
-HTTP_CODE=$(curl -sS -o /tmp/review-resp.json -w "%{http_code}" \
+HTTP_CODE=$(curl -sS --max-time 300 --retry 1 -o /tmp/review-resp.json -w "%{http_code}" \
   -X POST "${AI_BASE_URL%/}/chat/completions" \
   -H "Authorization: Bearer $AI_API_KEY" \
   -H "Content-Type: application/json" \

@@ -15,6 +15,7 @@ jobs:
   ai-review:
     name: AI 评审
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: 检出完整历史（diff 需要）
         uses: actions/checkout@v4
