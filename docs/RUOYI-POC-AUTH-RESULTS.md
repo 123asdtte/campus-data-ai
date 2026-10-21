@@ -248,6 +248,55 @@ React 前端验证见下一节。
 ### 13.1 前端事实核查（纠正此前判断）
 
 - 前端**不是独立仓库**：位于 `CrazyLionCat/plus-ui` 的 `6.X-React` 分支，本次锁定 commit **`25e69f1937edee20b832ec0ae724fbc32bb9c31e`**。
-- **构建工具是 Vite，不是 Umi Max**：`vite.config.ts` 为实际配置（`createUmiAppConfig()` 只是命名沿用），`@umijs/max` 出现在依赖里但配置由 Vite 承担。此前评估中「Umi Max 前端」的表述需要修正。
+- **构建工具是 Umi Max 4.7.16**（`pnpm dev` 实际执行 `max dev`，`pnpm build` 同理），仓库内同时存在 `vite.config.ts`（`createUmiAppConfig()` 由它派生 proxy 配置）。
+  → 此前我在本文件中「构建工具是 Vite」的判断**有误，已更正**：Umi Max 内部基于 Vite，两者并不矛盾，但真正驱动 dev/build 的命令是 Umi Max。
 - 代理默认值硬编码在 `vite.config.ts`：`target: 'http://localhost:8080'`，前缀取 `VITE_APP_BASE_API || '/dev-api'`。POC 内改为读 `VITE_APP_PROXY_TARGET`（生产需指向正式网关）。
 - `packageManager` 固定 `pnpm@10.34.5`，要求 `node >= 20.19`、`pnpm >= 10`。
+
+### 13.2 React 配套前端验收（2026-10-21 10:40–11:20）
+
+**版本锁定**：`CrazyLionCat/plus-ui` 分支 `6.X-React`，commit **`25e69f1937edee20b832ec0ae724fbc32bb9c31e`**
+（`package.json` name = `plus-ui-react`，version 6.0.0；`packageManager` = pnpm@10.34.5；要求 node ≥ 20.19、pnpm ≥ 10）。
+
+**构建**
+
+| 步骤 | 结果 |
+|---|---|
+| 依赖安装 | **成功**（6m35s）。首次失败原因：全局 `.npmrc` 指向 `registry.npmmirror.com` 且 store 落在沙箱不可写的 `Z:/.pnpm-store`；改用 `--registry=https://registry.npmjs.org --store-dir=<项目内路径>` 后通过 |
+| 生产构建 | **成功**（33–48 秒），产物在 `ui-react/dist`，含 `login-*.js`、`permissionStore-*.js`、`dynamicPage-*.js` 等 |
+
+**运行方式**：POC 用一个零依赖 Node 静态服务托管 `dist`，并把 `/dev-api/*` 代理到 `http://127.0.0.1:9180`（Java 后端）。之所以不用 `pnpm dev`：Umi dev server 在本机始终未监听成功（`max dev` 启动后 4 分钟无监听）。
+
+**必需的构建期环境变量**（仓库默认 `.env.production` 里没有，缺失会导致前端**根本不发请求**）：
+
+```
+VITE_APP_BASE_API=/dev-api
+VITE_APP_CLIENT_ID=e5cd7e4891bf95d1d19206ce24a7b32e
+VITE_APP_ENCRYPT=false          # 与后端 --api-decrypt.enabled=false 保持一致
+VITE_APP_MESSAGE_ENABLED=false
+```
+
+**浏览器实测（8 项，7 项通过）**
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | 前端首页可加载 | 通过（首屏 248 字） |
+| 2 | 存在登录表单 | 通过（`#username` / `#password` / 记住我） |
+| 3 | **真实登录并跳转首页** | **通过**：`/auth/code` → `/auth/login` → `/system/user/getInfo`（`permissions=["*:*:*"]`、`roles=["superadmin"]`）→ `/system/menu/getRouters` → `/resource/message/box`，URL 跳到 `/index` |
+| 4 | 经前端代理访问受保护接口 | 通过（`/dev-api/system/user/list` 200） |
+| 5 | 动态菜单渲染 | 通过：5 个顶级菜单（首页、系统管理、系统监控、系统工具、测试菜单） |
+| 6 | 无权限账号调受保护接口被拒 | 通过：`poc_readonly` 调 `/poc/proxy/students` 返回业务码 403 |
+| 7 | 前端未直连宿主机 FastAPI 端口 | 通过：8 次调用全部经 `/dev-api` 前缀 |
+| 8 | Console 无报错 | **未通过**：`data:image/gif;base64,undefined` ×2 —— antd 加载动画的 base64 图标变量缺失，属**装饰性**资源错误，不影响功能（登录、菜单、数据均正常） |
+
+**过程中纠正的两处自身错误**（已记入本文件）：
+
+1. 自动化脚本里「登录成功」的判定式写松了，把**仍在登录页**误判为通过——真实情况是点击「登录」根本没触发请求；
+2. 按钮选择器 `has-text("登")` 命中了「注册账号」；应使用 `filter({ hasText: /^登\s*录$/ })`。
+
+**POC 专用配置（不得照搬到生产）**
+
+- 后端 `--api-decrypt.enabled=false`：仅关闭传输层加解密，认证/授权不变；生产要么实现框架要求的加密协议，要么改用其它受保护传输方案；
+- 前端 `VITE_APP_ENCRYPT=false`：与上述保持一致；
+- 前端 `VITE_APP_CLIENT_ID` 指向 POC 的 clientId；
+- `vite.config.ts` 中原本硬编码的 `target: 'http://localhost:8080'` 在 POC 里改为读 `VITE_APP_PROXY_TARGET`（生产需指向正式网关）。
