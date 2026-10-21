@@ -52,7 +52,7 @@ PROMPT
 
 # 4) 调用 LLM（OpenAI 兼容协议）
 jq -n --arg sys "$(cat /tmp/review-prompt.md)" --arg diff "$(cat /tmp/pr.diff.trunc)" --arg model "$AI_MODEL" \
-  '{model: $model, messages: [{role: "system", content: $sys}, {role: "user", content: $diff}], temperature: 0.2}' \
+  '{model: $model, messages: [{role: "system", content: $sys}, {role: "user", content: $diff}], temperature: 0.2, max_tokens: 8000}' \
   > /tmp/review-body.json
 
 HTTP_CODE=$(curl -sS -o /tmp/review-resp.json -w "%{http_code}" \
