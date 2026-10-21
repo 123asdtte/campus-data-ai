@@ -47,7 +47,8 @@ for CFG_VAR in LLM_TIMEOUT LLM_RETRY LLM_BUDGET PROBE_TIMEOUT DIFF_LIMIT; do
       PROBE_TIMEOUT) PROBE_TIMEOUT=30 ;;
       DIFF_LIMIT) DIFF_LIMIT=61440 ;;
     esac
-    echo "$CFG_VAR 不是正整数，已回退为 ${!CFG_VAR}"
+    # 未设置时 ${VAR:-默认} 已经填了默认值，走到这里说明仓库变量写成了非数字
+    echo "$CFG_VAR 的值不是正整数（或未设置），已回退为 ${!CFG_VAR}"
   fi
 done
 LLM_DEADLINE=$((SECONDS + LLM_BUDGET))
@@ -62,8 +63,11 @@ DEFAULT_HINT='- 排查方向：仓库 Secrets 中 `AI_MODEL` / `AI_BASE_URL` 是
 # 找出本 PR 上既有的失败说明（可能有多条：并发运行或历史重跑留下的），
 # 每行一个 id；没有则输出空字符串
 find_status_comment() {
+  # 末尾过滤成纯数字：gh --paginate 多页输出时页间可能混入非数字行，
+  # 后面的 while read 会把它们当成 comment id 去调用接口
   gh api "repos/$REPO/issues/$PR/comments" --paginate \
-    --jq '.[] | select(.body | startswith("<!-- ai-review-failed -->")) | .id' 2>/dev/null
+    --jq '.[] | select(.body | startswith("<!-- ai-review-failed -->")) | .id' 2>/dev/null \
+    | grep -E '^[0-9]+$'
 }
 
 # 在 PR 上说明「本次评审未完成」，然后按设计退出 0（不阻塞合并）
@@ -138,6 +142,9 @@ filter_diff() {
       if (!keep) { print path > "/dev/stderr"; buf = "" } else { buf = $0 "\n" }
       next
     }
+    # 二进制 diff 没有 +++ 行，pending 会一直悬到下一个 diff --git 头；
+    # 这里显式清零，避免状态泄漏到后面的段落
+    pending && /^(Binary files|GIT binary patch)/ { pending = 0 }
     # 只看 +++ 行：--- 是旧路径，删除文件时它是 /dev/null，重命名时它是旧名字，
     # 拿它做判断会误伤「从 docs/ 挪到代码目录」这类改动
     pending && /^\+\+\+ / {
