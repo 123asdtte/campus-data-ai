@@ -47,6 +47,7 @@
 | [SECURITY-AUTH-DESIGN.md](SECURITY-AUTH-DESIGN.md) | 📐 | 现状取证：访问入口、数据库角色、审计契约、绕过路径 |
 | [SECURITY-AUTH-ROADMAP.md](SECURITY-AUTH-ROADMAP.md) | 📐 | P0–P5 实施步骤、文件清单、测试与回退 |
 | [API-MIGRATION-INVENTORY.md](API-MIGRATION-INVENTORY.md) | ✅ | 现有 12 个接口的完整盘点与安全边界（迁移依据） |
+| [IMPORT-API-SECURITY-INVENTORY.md](IMPORT-API-SECURITY-INVENTORY.md) | ✅ | 导入 7 接口的逐条安全取证：全部无认证，commit 写学生表（Issue #9） |
 
 ## 五、RuoYi POC 验收记录（隔离环境，仓库之外）
 
