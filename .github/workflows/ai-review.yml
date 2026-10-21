@@ -15,7 +15,13 @@ jobs:
   ai-review:
     name: AI 评审
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # 必须大于脚本本身的最坏耗时（curl 重试上限 600s + checkout/gh 约 90s），
+    # 否则 job 会在「发布失败说明」之前被 kill，留痕逻辑等于没生效。
+    timeout-minutes: 15
+    # 同一 PR 连续推送时取消上一轮评审，避免排队堆积和重复评论。
+    concurrency:
+      group: ai-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     steps:
       - name: 检出完整历史（diff 需要）
         uses: actions/checkout@v4
