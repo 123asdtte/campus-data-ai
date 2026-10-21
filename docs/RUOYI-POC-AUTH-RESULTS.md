@@ -229,3 +229,25 @@ ry:poc_readonly | campus_app | 1 条   ← 权限点缺失期间写入，保留�
 1. **RuoYi 6.0 默认要求登录接口加密**，任何接入方（含未来前端）都必须带 `encrypt-key` 头，否则会得到误导性的 403。
 2. **代理接口默认不继承权限**：框架只保护自己 `@SaCheckPermission` 标注的接口，自建代理必须显式声明权限点，否则「登录即可写」。
 3. 框架级**数据权限（sys_dept 数据范围）仍未验证**：本次跨学院拦截是在 FastAPI 里做的字符串比对，不是框架的 `@DataPermission`。
+
+---
+
+## 13. 数据权限与 React 前端（2026-10-21 10:00 续）
+
+数据权限专项验证另见 **`docs/RUOYI-POC-DATA-PERMISSION.md`**，结论摘要：
+
+| 类别 | 结论 |
+|---|---|
+| 框架 Mapper 数据权限（`sys_user` 真实查询，`data_scope=3`） | **通过**：本部门用户只见本部门 1 人，超管见全部 6 人 |
+| 实际业务路径（Java 代理 → FastAPI → PG） | **通过**：A1–A8 八项矩阵全对，跨学院查询/详情/搜索/修改均被拒且数据库无变更 |
+| 不经过 Java Mapper 的业务 SQL | **全部学生业务 SQL**（解析、校验、落库、查询），隔离责任在 Python 侧 |
+| 合法修改的审计 | `ry:poc_college_a` / `campus_app` / `update` / `changed_fields={student_name, updated_at}` |
+
+React 前端验证见下一节。
+
+### 13.1 前端事实核查（纠正此前判断）
+
+- 前端**不是独立仓库**：位于 `CrazyLionCat/plus-ui` 的 `6.X-React` 分支，本次锁定 commit **`25e69f1937edee20b832ec0ae724fbc32bb9c31e`**。
+- **构建工具是 Vite，不是 Umi Max**：`vite.config.ts` 为实际配置（`createUmiAppConfig()` 只是命名沿用），`@umijs/max` 出现在依赖里但配置由 Vite 承担。此前评估中「Umi Max 前端」的表述需要修正。
+- 代理默认值硬编码在 `vite.config.ts`：`target: 'http://localhost:8080'`，前缀取 `VITE_APP_BASE_API || '/dev-api'`。POC 内改为读 `VITE_APP_PROXY_TARGET`（生产需指向正式网关）。
+- `packageManager` 固定 `pnpm@10.34.5`，要求 `node >= 20.19`、`pnpm >= 10`。
