@@ -27,6 +27,15 @@ FUZZY_THRESHOLD = 0.82
 AMBIGUITY_GAP = 0.12
 
 
+class WorkbookError(Exception):
+    """文件读不出来（编码、格式、损坏）。
+
+    与「数据有问题」区分：这类错误发生在解析之前，用户换一份文件就能解决，
+    因此上层一律映射成 4xx。解析层自己抛它、service 转成 ServiceError，
+    避免 openpyxl / pandas 的原始异常冒到 FastAPI 变成 500（矩阵 §10-4）。
+    """
+
+
 # ------------------------------------------------------------------ 规范化
 # normalize_header 由 mapping.py 提供，保证别名表与匹配算法使用同一套规则。
 
@@ -66,12 +75,49 @@ def _is_xlsx(filename: str) -> bool:
     return filename.lower().endswith((".xlsx", ".xlsm"))
 
 
+_CORRUPT_WORKBOOK = (
+    "无法读取 Excel 内容：文件可能已损坏，或并非真正的 xlsx。"
+    "请确认它能在 Excel 中正常打开后重试。"
+)
+_UNKNOWN_ENCODING = (
+    "文件编码无法识别：已按 UTF-8 与 GBK 依次尝试，均失败。"
+    "请用 Excel 另存为「CSV UTF-8」后重新上传。"
+)
+
+
+def _decode_text(data: bytes) -> str:
+    """严格解码 CSV 字节流，失败即报错。
+
+    两点与旧实现的差别（矩阵 §10-3），都关系到「乱码静默入库」：
+
+    1. **顺序**：必须先 UTF-8、再 GBK。旧实现先 `utf-8-sig, errors="replace"`
+       拿一份结果，再用 `gbk` 严格解码去覆盖它——只要文件恰好能被 GBK 解出来
+       （GBK 相当宽容），UTF-8 文件就会被改成乱码，而替换已发生，无从察觉。
+    2. **不留替换字符**：不用 `errors="replace"`。`U+FFFD` 是合法字符，学号变成
+       `S\\ufffd001` 仍能通过长度与非空校验并入库，事后无法与正常学号区分。
+    """
+    for encoding in ("utf-8-sig", "gbk"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise WorkbookError(_UNKNOWN_ENCODING)
+
+
+def _open_workbook(data: bytes):
+    """打开 xlsx/xlsm；损坏、加密、伪装的 zip 一律转 WorkbookError。"""
+    import openpyxl
+
+    try:
+        return openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001 - zipfile/defusedxml/openpyxl 各有异常类型
+        raise WorkbookError(_CORRUPT_WORKBOOK) from exc
+
+
 def _read_raw_rows(data: bytes, filename: str, sheet_name: Optional[str]) -> Tuple[List[List[Any]], int]:
     """读出原始行（不含表头处理），返回 (rows, total_rows)。"""
     if _is_xlsx(filename):
-        import openpyxl
-
-        workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        workbook = _open_workbook(data)
         try:
             worksheet = workbook[sheet_name] if sheet_name in workbook.sheetnames else workbook.worksheets[0]
             rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
@@ -79,12 +125,7 @@ def _read_raw_rows(data: bytes, filename: str, sheet_name: Optional[str]) -> Tup
         finally:
             workbook.close()
 
-    raw = data.decode("utf-8-sig", errors="replace")
-    try:
-        raw = data.decode("gbk")
-    except UnicodeDecodeError:
-        pass
-    reader = list(csv.reader(io.StringIO(raw)))
+    reader = list(csv.reader(io.StringIO(_decode_text(data))))
     return [list(row) for row in reader], len(reader)
 
 
@@ -110,11 +151,11 @@ def analyze_workbook(data: bytes, filename: str, target: str) -> Dict[str, Any]:
 
     sheet_names: List[str]
     if _is_xlsx(filename):
-        import openpyxl
-
-        workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        sheet_names = list(workbook.sheetnames)
-        workbook.close()
+        workbook = _open_workbook(data)
+        try:
+            sheet_names = list(workbook.sheetnames)
+        finally:
+            workbook.close()
     else:
         sheet_names = ["CSV"]
 
@@ -170,21 +211,29 @@ def load_frame(
     chosen_header = header_row or (best["header_row"] if best else 1)
 
     if _is_xlsx(filename):
-        frame = pd.read_excel(
-            io.BytesIO(data),
-            sheet_name=chosen_sheet,
-            header=chosen_header - 1,
-            dtype=str,
-            engine="openpyxl",
-            keep_default_na=False,
-        )
-    else:
-        raw = data.decode("utf-8-sig", errors="replace")
         try:
-            raw = data.decode("gbk")
-        except UnicodeDecodeError:
-            pass
-        frame = pd.read_csv(io.StringIO(raw), header=chosen_header - 1, dtype=str, keep_default_na=False)
+            frame = pd.read_excel(
+                io.BytesIO(data),
+                sheet_name=chosen_sheet,
+                header=chosen_header - 1,
+                dtype=str,
+                engine="openpyxl",
+                keep_default_na=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - pandas 会把 zipfile 异常再包一层
+            raise WorkbookError(_CORRUPT_WORKBOOK) from exc
+    else:
+        try:
+            frame = pd.read_csv(
+                io.StringIO(_decode_text(data)),
+                header=chosen_header - 1,
+                dtype=str,
+                keep_default_na=False,
+            )
+        except WorkbookError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - ParserError / EmptyDataError 等
+            raise WorkbookError(f"CSV 内容无法解析：{exc}") from exc
 
     # 表头可能重名（如两列都叫“备注”），补序号避免 pandas 取列时返回多列
     seen: Dict[str, int] = {}
