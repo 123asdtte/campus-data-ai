@@ -1,0 +1,50 @@
+# Prometheus 最小监控配置（校园数据平台）
+#
+# 目标：
+#   1. 抓取自身，确认 Prometheus 存活；
+#   2. 通过 blackbox-exporter 从**容器网络内部**探测三个 HTTP 入口：
+#        - 统一入口 gateway:9180/healthz（网关进程存活）
+#        - 业务服务 import-api:8000/health/ready（进程 + 数据库可用）
+#        - 前端 web:80/healthz（nginx 存活）
+#      这些地址都不经过宿主端口，避免“端口没发布”被误判为服务故障。
+#   3. 规则文件中的告警发送给 alertmanager。
+#
+# 说明：这是“最小集”，只覆盖可用性。JVM/连接池/慢查询等指标需在网关
+# 暴露 /actuator/prometheus 后再增加抓取任务（见 docs/MONITORING.md）。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Prometheus 自身（up == 0 用于自检）
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # HTTP 可用性：blackbox exporter 按模块探测，Prometheus 只负责调度与存储
+  - job_name: campus-http-probe
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://gateway:9180/healthz
+          - http://import-api:8000/health/ready
+          - http://web:80/healthz
+    relabel_configs:
+      # 把 target 的 URL 放进 __param_target，真正抓取地址改为 blackbox
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

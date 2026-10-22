@@ -1,0 +1,14 @@
+# blackbox-exporter 模块定义
+#
+# 只定义 http_2xx：2xx 视为成功，其余状态码一律失败。
+# 不跟随重定向（follow_redirects: false）：健康探针应直接返回 200，
+# 若被重定向到登录页，说明入口配置异常，应当暴露而不是掩盖。
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      preferred_ip_protocol: ip4
+      follow_redirects: false
+      valid_status_codes: [200]

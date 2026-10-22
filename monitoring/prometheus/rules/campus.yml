@@ -1,0 +1,33 @@
+# 可用性告警规则（最小集）
+#
+# 注意 for 的时长：15s 抓取一次，for: 1m 约等于连续 4 次失败才触发，
+# 避免容器重启瞬间的抖动造成误报。
+groups:
+  - name: campus-availability
+    rules:
+      - alert: CampusEndpointDown
+        expr: probe_success == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} 健康探针连续失败"
+          description: "blackbox 探测该地址连续 1 分钟失败，请检查容器状态、网络与依赖服务。"
+
+      - alert: CampusTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "抓取目标 {{ $labels.job }}/{{ $labels.instance }} 不可达"
+          description: "Prometheus 连续 2 分钟无法抓取该目标，可能是 exporter 或监控组件自身异常。"
+
+      - alert: CampusProbeSlow
+        expr: probe_duration_seconds > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 响应变慢"
+          description: "HTTP 探测耗时持续 5 分钟超过 2 秒，检查数据库连接、网关下游与主机负载。"

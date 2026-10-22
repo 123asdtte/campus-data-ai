@@ -22,7 +22,8 @@
 | D-006 | 2026-10-22 | 上述分支的合并顺序与执行方式 | Verified（实际顺序见正文） | — | 发布流程 |
 | D-007 | 2026-10-22 | 开发脚本对齐统一入口与全新建库流程 | Verified（本分支 `chore/dev-env-align`） | `chore/dev-env-align` | 新同事启动、冒烟、文档 |
 | D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Verified（#39 已合并 `146548d`；本分支叠加后实测通过） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
-| D-009 | 2026-10-22 | 前端 nginx 动态解析网关，避免网关重建后 502 | Verified（本分支 `fix/web-nginx-dns`） | `fix/web-nginx-dns` | 前端可用性、部署 |
+| D-009 | 2026-10-22 | 前端 nginx 动态解析网关，避免网关重建后 502 | Verified（已合并 `cfeec7a`） | `fix/web-nginx-dns` | 前端可用性、部署 |
+| D-010 | 2026-10-22 | 监控最小集：Prometheus + blackbox + Alertmanager | Verified（本分支 `ops/monitoring-minimal`） | `ops/monitoring-minimal` | 上线预检、运维 |
 
 ---
 
@@ -258,7 +259,7 @@
 
 ## D-009 前端 nginx 动态解析网关，避免网关重建后 502
 
-- **状态**：Verified
+- **状态**：Verified（已合并 `cfeec7a`）
 - **Decision owner**：AI
 - **问题与背景**：`campus-web` 的 nginx 用字面量 `proxy_pass http://gateway:9180/`。nginx 只在启动时解析一次 Docker 服务名并缓存 IP；网关容器重建（换镜像、改配置、升级）后 IP 变化，前端仍指向旧 IP。
 - **证据（实测）**：
@@ -280,3 +281,39 @@
   - 以 `-BaseUrl http://127.0.0.1:8082/gw` 跑完整冒烟，覆盖浏览器真实路径。
 - **回退**：恢复 `proxy_pass http://gateway:9180/;` 并 `docker exec campus-web nginx -s reload`；之后的网关重建需手工重启前端。
 - **授权**：无需人工授权（A 类：开发/部署配置）；正式环境域名与证书切换仍属 C 类，未执行。
+
+---
+
+## D-010 监控最小集：Prometheus + blackbox + Alertmanager
+
+- **状态**：Verified
+- **Decision owner**：AI
+- **问题与背景**：`scripts/preflight.py` 的“监控组件”长期 FAIL；服务不可用时只能靠人工发现。目标是最小可用性监控，而不是完整指标/日志平台。
+- **证据**：
+  - 预检 16 项中“监控组件”FAIL（compose 无相关服务）；
+  - 现有镜像源 `docker.m.daocloud.io` / `docker.1panel.live` 拉取失败（`Unsupported method ('CONNECT')`），但 Docker Hub registry 可直连；
+  - 现有栈已提供三个稳定健康端点：`gateway:9180/healthz`、`import-api:8000/health/ready`、`web:80/healthz`。
+- **可选方案**：
+  1. Prometheus + blackbox-exporter + Alertmanager（profile 隔离）——可用性监控、配置可审计、无外部依赖；
+  2. 只上 Grafana——需要数据源与面板维护，且没有采集就没有数据；
+  3. Loki/ELK——解决日志检索，不是可用性监控；
+  4. 云监控/SaaS——需要外网与凭据，默认不采用。
+- **决定**：方案 1，理由：
+  - blackbox 从容器网络内部探测，不依赖宿主端口，能真实反映服务到服务的连通性；
+  - profile `monitoring` 默认不启动，不把约 150MB 镜像与常驻内存强加给每台开发机；生产显式启用；
+  - 所有宿主端口仍只绑 `127.0.0.1`；
+  - Alertmanager 当前**不外发**告警（无 webhook/邮箱），避免把地址与凭据写进仓库；正式部署必须补真实 receiver；
+  - 预检从“只看定义”升级为“定义 + 运行中”双条件，避免纸面监控。
+- **影响与兼容性**：
+  - `docker-compose.yml` 新增 3 个 profiled 服务与 2 个数据卷；默认 `docker compose up` 行为不变；
+  - `scripts/preflight.py` 读取 compose 时显式带 `--profile monitoring`，并要求 `campus-prometheus`/`campus-alertmanager`/`campus-blackbox` 均在运行；
+  - 新增 `docs/MONITORING.md`（现行为 20 份）。
+- **安全风险与权衡**：探测只发 GET，不携带业务凭据；监控数据留在本地卷；无外部投递意味着“告警看得见但没人收到”，已在文档中明确为正式上线前必须补齐的运维项。
+- **涉及文件**：`docker-compose.yml`、`monitoring/**`、`scripts/preflight.py`、`docs/MONITORING.md`、`docs/DECISION-LOG.md`、`docs/README.md`、`PROJECT-ROADMAP.md`、`scripts/dev/down-main.ps1`。
+- **验证方法（实测）**：
+  - `promtool check config` / `promtool check rules` / `amtool check-config` 全部 SUCCESS；
+  - `/api/v1/targets`：4 个 target 全部 `up`；`probe_success` 三个入口均为 `1`；
+  - 故障演练：`docker stop campus-import-api` → 约 75s 后 `CampusEndpointDown` firing，Alertmanager 收到 active；`docker start` 后约 75s 告警解除；
+  - `scripts/preflight.py`：“监控组件”PASS（运行中），FAIL 由 3 降到 **2**（仅 TLS 与 dev jar 配置）。
+- **回退**：`docker compose --profile monitoring stop ...` 并回退 compose/preflight 改动；数据卷 `campus_prometheus`/`campus_alertmanager` 可保留或删除。回退后预检“监控组件”重新 FAIL，属预期。
+- **授权**：无需人工授权（A/B 类：开发环境新增非生产监控依赖与预检口径）；正式告警渠道与值班安排需运维确认。

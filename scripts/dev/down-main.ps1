@@ -30,6 +30,7 @@ if (-not $Purge) {
     if ($code -eq 0) {
         Write-Status PASS '主栈已停止，数据卷保留（下次 up-main 数据仍在）'
         Write-Host '  保留的卷：campus_pgdata / campus_uploads / campus_gateway_pgdata / campus_gateway_redis'
+        Write-Host '            campus_prometheus / campus_alertmanager（仅启用监控时产生）'
         Write-Host '  历史卷：campus_appsmith_stacks（Appsmith 已下线，仅为不丢数据保留）'
     }
     exit $code
@@ -41,6 +42,8 @@ Write-Host '  campus_pgdata            业务数据库（学生、异动、导�
 Write-Host '  campus_uploads           上传的导入文件'
 Write-Host '  campus_gateway_pgdata    网关认证库（RuoYi sys_* 表、账号、权限）'
 Write-Host '  campus_gateway_redis     网关会话缓存'
+Write-Host '  campus_prometheus        监控指标（15 天保留）'
+Write-Host '  campus_alertmanager      告警状态'
 Write-Host '  campus_appsmith_stacks   历史 Appsmith 元数据（已下线，删了不影响主栈）'
 Write-Host ''
 Write-Host '建议先备份：.\scripts\backup.sh' -ForegroundColor Yellow
