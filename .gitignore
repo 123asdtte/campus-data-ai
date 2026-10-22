@@ -10,6 +10,9 @@ uploads/
 *.sql.gz
 *.dump
 
+# 生产运行时配置（由 scripts/render-gateway-config.py 生成）
+runtime-config/
+
 # Python
 __pycache__/
 *.py[cod]

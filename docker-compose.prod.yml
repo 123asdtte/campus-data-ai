@@ -1,0 +1,18 @@
+# 生产网关覆盖配置（与 docker-compose.yml 叠加使用）
+#
+# 前置：
+#   1. mvn -Pprod -pl ruoyi-admin -am clean package   # 镜像不含本地配置
+#   2. GATEWAY_MONITOR_PASSWORD=... python scripts/render-gateway-config.py
+#       生成 runtime-config/application-prod.yml（已过滤 Maven 占位符）
+#   3. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# 说明：
+#   - SPRING_CONFIG_ADDITIONAL_LOCATION 让 Spring 从挂载目录加载 profile 配置；
+#   - runtime-config/ 已被 .gitignore 排除，禁止提交；
+#   - 生产密钥仍通过 .env / 密钥管理注入，不写入本文件。
+services:
+  gateway:
+    environment:
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/app/config/
+    volumes:
+      - ./runtime-config:/app/config:ro
