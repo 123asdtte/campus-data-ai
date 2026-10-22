@@ -21,9 +21,13 @@
 
 推荐结论：**四项全做**。D-4 与 D-1 是无争议的清理；D-2 与 D-3 都是「把静默错误改成显式报错」，方向一致——宁可让用户当场重存文件，也不要让他三天后发现学号是乱码。
 
+> 进度：**D-4 已实施；D-1 已实施（孤儿文件清理脚本除外）**；D-2、D-3 待实施。
+
 ---
 
 ## D-4 死代码：`_read_frame` / `_map_columns`
+
+**状态：已实施。** 两个函数与随之失去引用的 `import io` 已删除；剩余引用只出现在测试注释里，随 D-2 一并改写。
 
 **现状**
 
@@ -53,6 +57,8 @@
 ---
 
 ## D-1 sidecar `.mapping.json` 残留
+
+**状态：部分实施。** 提交路径已改为 `_remove_staged()`（同删暂存文件与 sidecar，`test_staging.py::TestSidecarCleanup` 由 xfail 转为正式断言，`test_parsing_edge.py::TestStagedCleanup` 补 3 条纯 FS 用例）。**孤儿文件的一次性清理脚本未做**——存量环境仍需要 `find UPLOAD_DIR -name '*.mapping.json' -delete` 手动清一次。
 
 **现状**
 

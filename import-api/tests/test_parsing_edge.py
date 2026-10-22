@@ -12,7 +12,13 @@ from __future__ import annotations
 import pytest
 
 from app import parsing
-from app.service import ServiceError, _read_sidecar, _sidecar_path, _write_sidecar
+from app.service import (
+    ServiceError,
+    _read_sidecar,
+    _remove_staged,
+    _sidecar_path,
+    _write_sidecar,
+)
 
 CSV_BYTES = "学号,姓名\nS001,甲\n".encode("utf-8")
 
@@ -93,3 +99,38 @@ class TestSidecar:
 
     def test_sidecar路径由暂存文件派生(self, tmp_path) -> None:
         assert _sidecar_path(str(tmp_path / "IMP-1.csv")) == str(tmp_path / "IMP-1.mapping.json")
+
+
+class TestStagedCleanup:
+    """矩阵 §10-1：提交后只删暂存文件、不删 sidecar，导致 `.mapping.json` 永久残留。"""
+
+    def test_删除暂存时一并删除sidecar(self, tmp_path) -> None:
+        staged = tmp_path / "IMP-1.csv"
+        staged.write_bytes(CSV_BYTES)
+        _write_sidecar(str(staged), {"mapping": {"学号": "student_no"}})
+        assert (tmp_path / "IMP-1.mapping.json").exists()
+
+        _remove_staged(str(staged))
+
+        assert not staged.exists()
+        assert not (tmp_path / "IMP-1.mapping.json").exists()
+
+    def test_暂存文件已缺失时删除不报错(self, tmp_path) -> None:
+        """文件被运维手工清掉、只剩 sidecar 时，仍然要能把残留清干净。"""
+        staged = tmp_path / "IMP-2.csv"
+        _write_sidecar(str(staged), {"mapping": {}})
+
+        _remove_staged(str(staged))
+
+        assert not (tmp_path / "IMP-2.mapping.json").exists()
+
+    def test_只删自己的sidecar不影响同目录其他批次(self, tmp_path) -> None:
+        first = tmp_path / "IMP-3.csv"
+        second = tmp_path / "IMP-4.csv"
+        _write_sidecar(str(first), {"mapping": {}})
+        _write_sidecar(str(second), {"mapping": {}})
+
+        _remove_staged(str(first))
+
+        assert not (tmp_path / "IMP-3.mapping.json").exists()
+        assert (tmp_path / "IMP-4.mapping.json").exists()
