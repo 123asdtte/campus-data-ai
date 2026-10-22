@@ -156,6 +156,7 @@ cp .env.example .env      # 然后逐项替换 __CHANGE_ME_* 占位符
 ```
 
 密码生成：`openssl rand -base64 24`。`.env` 已被 `.gitignore` 排除，**不要提交**。
+`JWT_SECRET_KEY` 必须至少 32 字符（`openssl rand -hex 32`），缺失时 compose 会拒绝启动网关。
 
 ### 6.2 启动
 
