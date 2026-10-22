@@ -27,8 +27,12 @@ pytestmark = pytest.mark.skipif(
 
 HEADERS = {"X-Actor": "ci.tester"}
 
-# 与 samples/test_alias_variants.csv 的第一行学号相同，另加一行新学号
-MIXED_CSV = "学号,姓名\nA2026001,张三\nZ2026009,新同学\n".encode("utf-8")
+# 与 samples/test_alias_variants.csv 的第一行学号相同，另加一行新学号。
+# 必须带「入学年份」：缺该列时入学年份是 pd.NA，提交会 500（见 TestOptionalColumn）
+MIXED_CSV = "学号,姓名,入学年份\nA2026001,张三,2026\nZ2026009,新同学,2026\n".encode("utf-8")
+
+# 最小名单：只有学号与姓名，没有任何可选列
+MINIMAL_CSV = "学号,姓名\nM2026001,新同学\n".encode("utf-8")
 
 
 def preview(client, name: str, content: bytes, target: str = "students"):
@@ -133,3 +137,24 @@ class TestConcurrentWindow:
         assert committed["inserted_rows"] == 1
         assert committed["skipped_rows"] == [{"row_number": 2, "reason": "学号已存在，未写入"}]
         assert table_count("students") == 3
+
+
+class TestOptionalColumn:
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "已知缺陷：名单里没有「入学年份」列时，_pre_coerce 把该列转成 Int64，"
+            "缺失值是 pandas 的 pd.NA，而 commit_batch 直接把它交给 psycopg，"
+            "报 cannot adapt type 'NAType' 并整体回滚（HTTP 500）。"
+            "也就是说任何只含学号+姓名的最小名单都无法提交。"
+            "修复时应像 _cell 一样把 pd.NA/NaT 归一成 None，届时请移除本标记"
+        ),
+    )
+    def test_缺少可选列时提交应正常写入(self, db_client) -> None:
+        batch_id = preview(db_client, "minimal.csv", MINIMAL_CSV).json()["batch_id"]
+        assert validate(db_client, batch_id)["invalid_rows"] == 0
+
+        committed = commit(db_client, batch_id)
+
+        assert committed["inserted_rows"] == 1
+        assert table_count("students") == 1

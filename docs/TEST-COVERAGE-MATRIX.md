@@ -155,6 +155,7 @@
 | 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py:182-186` | 至少对替换字符出现的情况给 warning |
 | 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py:74` | 捕获 openpyxl 异常转 `ServiceError` |
 | 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py:57`、`:84` | 删除，避免误判为已覆盖 |
+| 6 | **缺少「入学年份」等可选列时提交 500**：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚。任何只含学号+姓名的最小名单都提交不了 | `service.py:116`（`_pre_coerce`）、`service.py:733-751`（取值直接入库） | 取值处按 `_cell` 的规则把 `pd.NA`/`NaT` 归一成 `None`；已由 `test_commit_conflict.py::TestOptionalColumn` 以 xfail 固化 |
 
 ---
 
