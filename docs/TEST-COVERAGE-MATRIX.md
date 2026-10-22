@@ -19,7 +19,7 @@
 | `test_db_integration.py` | 14 | 真库：全链路、状态机、幂等、审计、行号偏移 |
 | `conftest.py` | — | 夹具：`samples/` 读取、`api_client`、`db_session`/`clean_db`/`db_client` |
 
-夹具：`samples/` 12 个文件。盘点时 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 零引用**（前者仅出现在 `docs/archive/IMPORT-MAPPING-TEST.md` 手工场景 7）；**§12 已全部纳入自动化用例**。
+夹具：`samples/` 12 个文件。盘点时 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 零引用**（前者仅出现在 [`docs/archive/IMPORT-MAPPING-TEST.md`](archive/IMPORT-MAPPING-TEST.md) 手工场景 7，归档前路径为 `docs/IMPORT-MAPPING-TEST.md`）；**§12 已全部纳入自动化用例**。
 
 ---
 
@@ -153,7 +153,7 @@
 > 其中第 1、2、3、5 条属于「先定行为再补测」，四张决策单见
 > [`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md)（D-1 ~ D-4，含选项、成本与验证方式）。
 > **第 1、2、3、5 条均已实施**（D-1 ~ D-4），第 4 条（损坏 xlsx 应 400）随 D-3 一并修掉；
-> 第 6 条（#23）已由 PR-C 修复，对应 xfail 已转为正式断言。
+> 本表 6 条全部闭环：第 6 条（#23）已由 PR-C 修复，对应 xfail 已转为正式断言。
 
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|

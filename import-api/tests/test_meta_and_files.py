@@ -328,7 +328,8 @@ class TestConflictFixture:
         }
         assert "学号" in overridden["unmapped_columns"]
 
-    # Issue #23 已由 PR-C 修复：该夹具缺少「入学年份」列，提交阶段不再 500。
+    # Issue #23 已由 PR-C 修复：该夹具缺少「入学年份」列，提交阶段不再 500；
+    # 原 xfail(strict) 标记移除，转为正式断言。
     def test_手动指定后提交应成功(self, db_client, load_sample) -> None:
         content = load_sample("test_conflict_columns.csv")
         batch_id = preview(
