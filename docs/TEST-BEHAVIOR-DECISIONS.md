@@ -21,7 +21,7 @@
 
 推荐结论：**四项全做**。D-4 与 D-1 是无争议的清理；D-2 与 D-3 都是「把静默错误改成显式报错」，方向一致——宁可让用户当场重存文件，也不要让他三天后发现学号是乱码。
 
-> 进度：**四项均已实施**（D-1 的存量清理脚本除外）。D-3 在实施时发现原判断不全——旧代码的两次解码是「覆盖」而非「兜底」，详见 D-3 段。
+> 进度：**四项全部实施完毕**（含 D-1 的存量清理脚本与其回归自检）。D-3 在实施时发现原判断不全——旧代码的两次解码是「覆盖」而非「兜底」，详见 D-3 段。
 
 ---
 
@@ -58,7 +58,10 @@
 
 ## D-1 sidecar `.mapping.json` 残留
 
-**状态：部分实施。** 提交路径已改为 `_remove_staged()`（同删暂存文件与 sidecar，`test_staging.py::TestSidecarCleanup` 由 xfail 转为正式断言，`test_parsing_edge.py::TestStagedCleanup` 补 3 条纯 FS 用例）。**孤儿文件的一次性清理脚本未做**——存量环境仍需要 `find UPLOAD_DIR -name '*.mapping.json' -delete` 手动清一次。
+**状态：已实施（A + B 都做完）。**
+
+- A：提交路径已改为 `_remove_staged()`（同删暂存文件与 sidecar，`test_staging.py::TestSidecarCleanup` 由 xfail 转为正式断言，`test_parsing_edge.py::TestStagedCleanup` 补 3 条纯 FS 用例）。
+- B：`scripts/cleanup-orphan-sidecars.sh`，支持 `--dry-run`（默认）/ `--apply` / `--path <目录>`。不带 `--path` 时进容器 `import-api` 扫 `UPLOAD_DIR`。孤儿判定＝**同名的暂存文件不存在**（sidecar 命名是「暂存文件去扩展名 + `.mapping.json`」）。**不要**用 `find UPLOAD_DIR -name '*.mapping.json' -delete` 代替它——那样会把**在用的** sidecar 一起删掉。
 
 **现状**
 
@@ -81,7 +84,9 @@
 
 **验证**：现有 `test_staging.py` 里那条 `xfail(strict=True)`（`test_提交成功后sidecar应一并清理`）会 XPASS → 删标记转正式断言。这正是当初写 strict 的目的。
 
-**未实测**：清理脚本在「暂存文件已被手工删除、只剩 sidecar」时的行为，需要真库/真实目录跑一次；脚本需支持 `--dry-run`。
+**已实测**（本机 + 真实容器两个分支都跑过）：造 `IMPT-1.csv`（有伴，判为在用）、`IMPT-2/3`（无伴）、`IMPT-4.xlsx.mapping.json`（文件名里本来就带点号）与一个真实批次（也有伴），dry-run 精确报出后 3 个，`--apply` 只删这 3 个，两个在用的 sidecar 原样保留。
+
+**回归保护**：`scripts/selfcheck-cleanup-orphan-sidecars.sh`（5 项断言，CI 里跑）。它抓的是那个最阴的退化——判定写成 `ls "$stem."*` 时通配符会命中 sidecar 自己，于是**一个孤儿都识别不出来**，而脚本照样打印「没有发现孤儿 sidecar」、退出 0，看上去完全正常。已用变异测试确认自检会拦下它。
 
 ---
 
@@ -193,6 +198,6 @@ except UnicodeDecodeError:
 1. **D-4**（纯删除）→ 可与任意阶段并行，最小、最快。
 2. **D-1**（清理）→ 紧随 D-4，同一 PR 亦可（都属"实现疏漏"）。
 3. **D-2 → D-3** → 用户可见行为变更，建议各自独立 PR，PR 说明里必须写「行为变更」与前端提示是否同步。
-4. 四项都完成后，`docs/TEST-COVERAGE-MATRIX.md` §10 只剩第 6 条（#23）仍开放，即可关闭 issue #8。
+4. 四项都已完成（`docs/TEST-COVERAGE-MATRIX.md` §10 的第 6 条 #23 也已关闭），**issue #8 可以收尾了**。
 
 **边界声明**：本文档只做决策登记，不含代码改动；每项实施前请在对应 issue 下确认「批准的选项」，避免实现中途改判导致用例反复。

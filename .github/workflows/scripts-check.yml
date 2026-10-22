@@ -1,0 +1,33 @@
+name: 运维脚本
+
+# 单独一个 workflow，不并入 ci.yml：这些脚本不依赖 Python / Node / 数据库，
+# 跑起来只要一个 bash，几秒就结束，没必要拖进那条要装依赖、起数据库的长链路。
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  scripts:
+    name: 脚本语法与孤儿清理自检
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 语法检查（scripts/ 下所有 .sh）
+        # 只扫 scripts/*.sh：dev/ 下都是 .ps1，没有 .sh，
+        # 把 scripts/dev/*.sh 也写进去的话 glob 落空会退化成字面量，反而误报。
+        run: |
+          status=0
+          for f in scripts/*.sh; do
+            if ! bash -n "$f"; then
+              echo "::error file=$f::bash -n 未通过"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: 孤儿 sidecar 清理脚本自检
+        run: bash scripts/selfcheck-cleanup-orphan-sidecars.sh
