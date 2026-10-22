@@ -142,6 +142,8 @@ services:
       GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD}
       GATEWAY_REDIS_PASSWORD: ${GATEWAY_REDIS_PASSWORD}
       INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET:?INTERNAL_HMAC_SECRET 未设置}
+      # Sa-Token JWT 签名密钥：缺失即启动/登录失败（fail-closed），不得写死在镜像里
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY 未设置}
     # 启动参数优先级最高：直接指向容器内服务名，避免 profile 配置差异
     command:
       - "--spring.datasource.dynamic.datasource.master.driverClassName=org.postgresql.Driver"
@@ -158,6 +160,13 @@ services:
       - "--api-decrypt.enabled=false"
     ports:
       - "127.0.0.1:9190:9180"
+    healthcheck:
+      # 轻量存活探针：仅验证进程可响应 HTTP，不依赖 Actuator Basic Auth
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9180/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       gateway-db:
         condition: service_healthy
