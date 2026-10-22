@@ -85,10 +85,10 @@ def test_matrix_缺对应权限一律403(db_client, method, path, perm, kind):
 
 
 @pytest.mark.parametrize("method,path,perm,kind", IMPORT_ROUTES)
-def test_matrix_导入接口管理员硬限制(db_client, method, path, perm, kind):
-    # WHO_COLLEGE 持全部 import:batch:*，但仍非管理员 → 403
+def test_matrix_导入接口非管理员不再被硬限制(db_client, method, path, perm, kind):
+    # PR-C 已解除管理员限制；非管理员持权限点时不得因"非管理员"统一返回 403
     response = _send(db_client, method, path, kind, who=H.WHO_COLLEGE)
-    assert response.status_code == 403, f"{method} {path} 应受 PR-C 前的管理员限制"
+    assert response.status_code != 403, f"{method} {path} 不应再被管理员硬限制拦截"
 
 
 @pytest.mark.parametrize("method,path,perm,kind", DATA_ROUTES)

@@ -65,7 +65,7 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 | `GET /students`、`/students/{no}` | `student:list` | `college_name = 签名学院`；越界筛选 → 空集；详情越界 → 403 |
 | `PUT /students/{no}` | `student:write` | 同上（WHERE 内含范围） |
 | `GET /meta/filters`、`/stats/overview` | `student:list` | 聚合按 `ANY(colleges)`；非管理员不返回批次字段 |
-| 导入 7 路由 | `import:batch:list/detail/upload/remap/validate/commit` | **PR-C**：`created_dept_id` 快照 + 逐行校验；**PR-C 前管理员硬限制** |
+| 导入 7 路由 | `import:batch:list/detail/upload/remap/validate/commit` | **PR-C 已实施**：`created_dept_id` 批次范围 + 逐行学院校验 + 批次审计；管理员硬限制已解除 |
 
 ---
 

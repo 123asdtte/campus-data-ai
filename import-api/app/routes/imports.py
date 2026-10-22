@@ -11,9 +11,9 @@ from .. import service
 from ..internal_auth import (
     Who,
     identity,
-    require_import_admin,
     require_perm,
     resolve_actor,
+    scope_colleges,
 )
 from ._shared import decode_base64, handle, parse_mapping
 
@@ -50,7 +50,6 @@ def preview_import(
     x_actor: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     require_perm(current, "import:batch:upload")
-    require_import_admin(current)
     data = file.file.read()
     overrides = parse_mapping(mapping)
     try:
@@ -59,6 +58,7 @@ def preview_import(
             file.filename or "upload.xlsx",
             target_type,
             resolve_actor(current, x_actor),
+            created_dept_id=current.dept_id if current else None,
             sheet_name=sheet_name,
             header_row=header_row,
             overrides=overrides,
@@ -74,7 +74,6 @@ def preview_import_base64(
     x_actor: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     require_perm(current, "import:batch:upload")
-    require_import_admin(current)
     try:
         data = decode_base64(payload.content_base64)
     except Exception as exc:  # noqa: BLE001
@@ -87,6 +86,7 @@ def preview_import_base64(
             payload.filename,
             payload.target_type,
             resolve_actor(current, x_actor),
+            created_dept_id=current.dept_id if current else None,
             sheet_name=payload.sheet_name,
             header_row=payload.header_row,
             overrides=payload.mapping,
@@ -103,7 +103,6 @@ def remap_import(
     x_actor: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     require_perm(current, "import:batch:remap")
-    require_import_admin(current)
     try:
         return service.remap_batch(
             batch_id,
@@ -111,6 +110,7 @@ def remap_import(
             sheet_name=payload.sheet_name,
             header_row=payload.header_row,
             overrides=payload.mapping,
+            dept_id=current.dept_id if current else None,
         )
     except service.ServiceError as exc:
         raise handle(exc) from exc
@@ -123,9 +123,12 @@ def validate_import(
     x_actor: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     require_perm(current, "import:batch:validate")
-    require_import_admin(current)
     try:
-        return service.validate_batch(batch_id, resolve_actor(current, x_actor))
+        return service.validate_batch(
+            batch_id,
+            resolve_actor(current, x_actor),
+            dept_id=current.dept_id if current else None,
+        )
     except service.ServiceError as exc:
         raise handle(exc) from exc
 
@@ -137,9 +140,14 @@ def commit_import(
     x_actor: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     require_perm(current, "import:batch:commit")
-    require_import_admin(current)
     try:
-        return service.commit_batch(batch_id, resolve_actor(current, x_actor))
+        scope = scope_colleges(current)
+        return service.commit_batch(
+            batch_id,
+            resolve_actor(current, x_actor),
+            dept_id=current.dept_id if current else None,
+            allowed_colleges=set(scope) if scope is not None else None,
+        )
     except service.ServiceError as exc:
         raise handle(exc) from exc
     except DatabaseError as exc:
@@ -153,9 +161,8 @@ def get_import(
     current: Optional[Who] = Depends(identity),
 ) -> Dict[str, Any]:
     require_perm(current, "import:batch:detail")
-    require_import_admin(current)
     try:
-        return service.get_batch(batch_id)
+        return service.get_batch(batch_id, dept_id=current.dept_id if current else None)
     except service.ServiceError as exc:
         raise handle(exc) from exc
 
@@ -166,5 +173,4 @@ def list_imports(
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     require_perm(current, "import:batch:list")
-    require_import_admin(current)
-    return service.list_batches(limit)
+    return service.list_batches(limit, dept_id=current.dept_id if current else None)

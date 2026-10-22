@@ -179,6 +179,7 @@ def main() -> int:
         run_psql_script(conn, SQL_DIR / "003_roles.sql",
                         {"app_password": args.app_password, "ro_password": args.ro_password})
         apply_sql_file(conn, SQL_DIR / "004_internal_auth.sql")
+        apply_sql_file(conn, SQL_DIR / "006_import_scope.sql")
 
         if args.with_demo:
             apply_sql_file(conn, SQL_DIR / "002_seed_demo.sql")
