@@ -6,6 +6,12 @@
     只做检查，不改任何东西。任何一项 FAIL 都会让退出码为 1，
     up-main.ps1 会先跑它，失败即停，避免带着缺口启动再出现难懂的报错。
 
+    2026-10-22 对齐统一入口（PR-D 之后）：
+      - 宿主不再发布 8010（import-api 只能经网关访问）；
+      - Appsmith 已下线，改为检查网关相关端口；
+      - 网关要求 JWT_SECRET_KEY / GATEWAY_DB_PASSWORD / GATEWAY_REDIS_PASSWORD /
+        INTERNAL_HMAC_SECRET 全部非空（缺失时 compose 直接拒绝启动）。
+
 .EXAMPLE
     .\scripts\dev\check-prereqs.ps1
 #>
@@ -45,13 +51,17 @@ else {
     else { Assert FAIL 'docker compose 不可用' }
 }
 
-# --- 2. 端口占用（主栈 55432/8010/8081/8443，前端 8082） ---
+# --- 2. 端口占用 ---
+# 主栈：业务库 55432、网关认证库 55434、网关 Redis 6382、网关 HTTP 9190；
+# 前端独立编排（docker-compose.web.yml）：8082。
+# 8010 / 8081 / 8443 不再属于本栈：8010 是已关闭的 import-api 直连口，
+# 8081/8443 是已下线的 Appsmith。它们被占用不代表冲突，因此不再检查。
 $ports = @{
-    55432 = 'PostgreSQL'
-    8010  = 'Import API'
-    8081  = 'Appsmith(HTTP)'
-    8443  = 'Appsmith(HTTPS)'
-    8082  = '前端静态站'
+    55432 = 'PostgreSQL 业务库'
+    55434 = 'PostgreSQL 网关认证库'
+    6382  = 'Redis 网关缓存'
+    9190  = 'Java 网关（统一入口）'
+    8082  = '前端静态站（独立 compose）'
 }
 foreach ($p in ($ports.Keys | Sort-Object)) {
     $busy = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
@@ -72,14 +82,23 @@ if (-not (Test-Path $envFile)) {
 else {
     Assert PASS '.env 已存在'
     $envText = Get-Content $envFile -Raw
-    $required = @('POSTGRES_PASSWORD', 'APP_DB_PASSWORD', 'RO_DB_PASSWORD',
-        'APPSMITH_ENCRYPTION_PASSWORD', 'APPSMITH_ENCRYPTION_SALT')
+    # 业务库两个角色密码 + 网关三件套（认证库 / Redis / HMAC）+ Sa-Token JWT。
+    # compose 对这些键使用 ${VAR:?} 语法，缺任何一个都会直接拒绝启动。
+    $required = @(
+        'POSTGRES_PASSWORD',
+        'APP_DB_PASSWORD',
+        'RO_DB_PASSWORD',
+        'GATEWAY_DB_PASSWORD',
+        'GATEWAY_REDIS_PASSWORD',
+        'INTERNAL_HMAC_SECRET',
+        'JWT_SECRET_KEY'
+    )
     foreach ($key in $required) {
         if ($envText -notmatch "(?m)^$key=") {
             Assert FAIL ".env 缺少 $key"
         }
         elseif ($envText -match "(?m)^$key=(__CHANGE_ME.*)?$") {
-            Assert FAIL ".env 的 $key 仍是占位符，未填写"
+            Assert FAIL ".env 的 $key 仍是占位符或空值，未填写"
         }
     }
 }

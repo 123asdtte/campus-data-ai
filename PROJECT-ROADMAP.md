@@ -1,8 +1,8 @@
 # PROJECT-ROADMAP — 校园数据 AI 项目总路线图
 
-- **版本**：v1.3（2026-10-22 合并后更新：7 个 PR 已按序合并至 `122a0ba`，状态/测试/运行态按实测刷新）
+- **版本**：v1.4（2026-10-22 二次合并后更新：新增 7 个 PR 合入 + 开发脚本对齐，main 至 `63ccc4d`）
 - **地位**：本项目唯一总路线图。安全迁移细节见 `docs/SECURITY-MIGRATION-EXECUTION-PLAN.md`（专项细化，阶段定义以本文为准）。
-- **审批状态**：PR #17/#18/#19/#21/#22/#25/#26 已获批准并按序合并；当前无开放 PR。正式库迁移、正式开启认证、正式流量切换**仍未批准、未执行**。
+- **审批状态**：14 个 PR 已合并（原 7 个 + 决策日志、恢复修复、孤儿清理、demo 移除、网关加固、预检、配置卫生）；本次开发脚本对齐作为第 15 个 PR 合入（见 `docs/DECISION-LOG.md` D-007）。正式库迁移、正式开启认证、正式流量切换**仍未批准、未执行**。
 - **本轮边界**：合并后只读验收 + 开发/隔离环境准备；未改正式库、未开启认证、未切换流量。
 
 ---
@@ -24,22 +24,23 @@
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 主分支 | `122a0ba`（#17→#26 已合并）；开关 `INTERNAL_AUTH_ENABLED=false` | `git log` / 容器 env |
-| 规划分支 | 7 条堆叠分支均已合并，保留未删除 | `gh pr list` |
-| 开放 PR | **0** | `gh pr list --state open` |
-| 合并方式 | 逐个 merge commit；#18 起先重定向 base 到 `main` 再合并 | GitHub |
-| 未提交改动 | **无**（`backups/` 被 `.gitignore` 忽略） | `git status` |
+| 主分支 | `63ccc4d`（原 7 个 + 新增 7 个 PR 已合并）；开关 `INTERNAL_AUTH_ENABLED=false` | `git log` / 容器 env |
+| 规划分支 | 全部堆叠分支已合并，保留未删除 | `gh pr list` |
+| 开放 PR | **0**（开发脚本对齐 PR 合并后） | `gh pr list --state open` |
+| 合并方式 | 逐个 merge commit；#33 为单提交，使用 squash | GitHub |
+| 未提交改动 | 当前分支为 `chore/dev-env-align`（开发脚本 + 文档） | `git status` |
 | 认证基础设施 | 已合入并验证（`internal_auth.py`、11 个 `X-Internal-*` 头、14 段 canonical、`sql/004`）；**正式库是否执行 004：未核验** | 代码 + 测试 |
 | 业务路由 | 关闭态 11 业务路由 + 2 健康端点（`PUT /students` 不注册）；开启态 12 个 | `routes/*.py` |
 | 正式库角色 | **未核验**（无正式库访问）；开发/测试库含 `campus_app`/`campus_ro` | 未验证 |
-| 审计 | 开发库 `operation_logs` = 555 条（备份恢复演练实测）；正式库计数**未核验** | 恢复演练 |
-| Appsmith | 容器 `campus-appsmith` Exited (137)；8081/8443 无监听；compose 无服务；卷 `campus_appsmith_stacks` 保留（弃用配置有意保留） | `docker ps -a` / compose |
+| 审计 | 开发库 `operation_logs` = 555+ 条（含本轮冒烟导入）；正式库计数**未核验** | 恢复演练 / 日常测试 |
+| Appsmith | 已下线：服务移出 compose、容器不启动、卷 `campus_appsmith_stacks` 保留 | `docker compose config` |
 | 前端 | React（`web/`），nginx 仅 `/gw/*` 反代网关；旧 `/api/*` 直连已移除 | `web/nginx.conf` |
 | POC 远程 | `origin` = `campus-ruoyi-poc`；工作分支 `feat/import-api-security` @ `563e400`，工作树干净，无开放 PR | `git status` / `gh pr list` |
-| 测试 | 关闭态 **195 passed / 102 skipped / 1 xfailed**；开启态 **120 passed** | 本轮实测 |
-| SQL 脚本 | `001`–`006` 齐全；开发/测试库已应用 004/006；**正式库未执行 004/006（未核验）** | `sql/` / 迁移演练 |
+| 测试 | 关闭态 **195 passed / 102 skipped / 1 xfailed**；开启态 **120 passed**；权限 **11/11 PASS** | 本轮实测 |
+| 上线预检 | `scripts/preflight.py` 16 项中 **3 FAIL**：监控组件、TLS 入口、默认 dev 构建的镜像配置卫生 | `python scripts/preflight.py` |
+| SQL 脚本 | `001`–`006` 齐全；开发/测试库已应用 004/006，`up-main.ps1` 会在 003 后自动重放；**正式库未执行 004/006（未核验）** | `sql/` / 迁移演练 |
 
-**核心判断**：网关已进入主项目，文档双轨已治理，PR 链功能与安全控制已合并。当前风险集中在正式环境准备：正式库迁移与恢复流程、认证开启、TLS/监控/密钥、RuoYi 裁剪与许可审计；不再是代码合并风险。
+**核心判断**：代码与安全控制已全部合并，主线可复现验收。当前风险集中在正式环境准备：正式库迁移与恢复流程、认证开启、TLS/监控/密钥、RuoYi 裁剪与许可审计；不再是代码合并风险。开发脚本已与统一入口对齐，新同事可按 `docs/DEVELOPMENT-ENVIRONMENT.md` 从零启动并冒烟。
 
 ### 1.1 审计匿名基线（D4 固化，历史基线）
 
@@ -66,6 +67,28 @@
 6. **R2 未收尾**：容器与 compose 已处理，但改动未提交、README/文档仍描述 Appsmith 在运行、"业务方确认无依赖"未核实。
 7. **POC 本地滞后**：静态审读基于 `origin/main f1c2856`（正确），但本地 `main` 落后 10 个提交，后续操作前需 `git fetch`。
 
+### 1.3 v1.4 核对记录（2026-10-22 二次合并）
+
+本轮在原 7 个 PR 之后又合并 7 个（均经 diff 审查、CI 全绿、合并后复验）：
+
+| PR | 内容 | 合并提交 |
+|---|---|---|
+| #32 | 建立 `docs/DECISION-LOG.md`（D-001~D-006） | `33df853` |
+| #34 | `restore.sh` 固定重放 003→004→006，防权限回退 | `cbcc64b` |
+| #33 | 孤儿 `.mapping.json` 清理脚本（同事，squash） | `f7b322d` |
+| #35 | 移除 RuoYi demo 模块与示例路由 | `9ca6c1f` |
+| #36 | 网关加固：JWT 外部化、Actuator 收口、非 root、`/healthz` | `4281e31` |
+| #38 | `scripts/preflight.py` 只读 16 项上线预检 | `aa5ebe6` |
+| #37 | `-Pprod` 排除本地配置 + 渲染/挂载生产配置 | `63ccc4d` |
+
+本轮发现的真实问题与处理：
+
+1. **恢复后权限回退**：恢复只重放 003 会让 `campus_app` 重新获得 `import_issues` 的 DELETE；改为重放 004/006 并断言 `DELETE=f`、函数数 2。
+2. **JWT 密钥并非“未使用”**：移除后登录 500（`SaJwtException`），证明其参与签发；改为 `JWT_SECRET_KEY` 必填并由 compose fail-closed。
+3. **prod 构建丢过滤**：自定义 `<resources>` 覆盖根 pom 后 `@profiles.active@` 未被替换；补齐 `filtering=true` 并清理增量产物后 `active: prod`。
+4. **开发脚本与统一入口脱节**：`scripts/dev/*` 仍指向 Appsmith/8010，且只跑 003；已在本轮分支 `chore/dev-env-align` 全部对齐（见 D-007）。
+5. **预检剩余 3 FAIL**：监控组件、TLS 入口、默认 dev 构建的镜像配置卫生；前两项属环境/运维待办，第三项用 `-Pprod` 构建可转 PASS。
+
 ---
 
 ## 2. 总览表（含状态、变更边界与依赖）
@@ -78,6 +101,7 @@
 | **PR-C 导入域** | ✅ 已合并（PR #22 @ `fd6e59f`） | 导入无批次范围/逐行校验/批次审计 | `created_dept_id` + 逐行学院校验 + 语句级审计触发器；解除管理员硬限制 | `sql/006`、`import-api/app/service.py`/`queries.py`、导入测试；**禁止**改网关端点/前端入口 | 跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；审计计数与 POC 一致 | PR-B | 正式库需执行 006（先备份）；POC 审计串设计脆弱 |
 | **PR-D 正式入口** | ✅ 已合并（PR #25 @ `e45dd35`） | 8010 宿主可直连；前端多入口 | 网关补导入 7 端点；前端导入页切登录；**关闭宿主 8010 发布** | 网关 `InternalProxyController`、`web/nginx.conf`/前端、compose 端口；**禁止**改业务 SQL | ①前端经网关访问全部必需接口（学生3+聚合2+导入7）均 200；②宿主 `curl 8010` 被拒；③容器内 `campus-web`→`import-api:8000` 不受影响；④网关→内网链路正常 | PR-C | multipart 过网关内存峰值；误关容器内链路 |
 | **PR-E 整体验收** | ✅ 已合并（PR #26 @ `122a0ba`） | 四项未验证项 + 正式库迁移不可逆 | 四项专项测试 + 004/005/006 迁移与回退演练 + Go/No-Go | 测试/脚本/演练报告；另附带修复验收发现的审计 actor 缺失与 nonce 周期清理两处缺口 | 无 P0/P1；回退 ≤5 分钟；近期匿名新增=0；迁移前后数据一致 | B/C/D | 演练环境与正式环境差异 |
+| **H 上线准备与开发体验（阶段 5）** | 🚧 进行中 | 备份恢复、密钥、预检、生产构建、开发脚本与真实拓扑脱节 | `restore.sh` 重放修复、JWT 外部化、Actuator 收口、非 root、预检 16 项、`-Pprod` 配置卫生、开发脚本对齐统一入口 | `scripts/**`、`gateway/**`（仅加固）、`docker-compose*.yml`、`.env.example`、`docs/**`；**禁止**正式库迁移/认证开启/流量切换 | 恢复后 `DELETE=f`；缺失 JWT 即失败；预检除环境项外全 PASS；新同事按文档可启动并冒烟 | PR-E | 正式库与演练环境差异；监控/TLS 未就绪 |
 
 > **对原 PR-B/C/D/E 的调整声明**（不静默扩范围）：
 > 1. **PR-B 吸收"网关最小切片"**：无网关则签名无从产生，只能停在测试桩；因此网关**提前并缩小**（仅登录 + 学生 3 端点），原 PR-D 剩余部分（导入接入 + 前端导入页 + 关 8010）保持为 PR-D。

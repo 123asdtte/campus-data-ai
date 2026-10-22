@@ -1,11 +1,16 @@
 ﻿<#
 .SYNOPSIS
-    启动主系统（PostgreSQL + Appsmith + Import API）。
+    启动主系统（PostgreSQL + 网关认证库 + Redis + Java 网关 + Import API）。
 
 .DESCRIPTION
     依次完成：环境自检 → 补齐 .env（占位符自动生成随机密钥）→ 必要时拉取离线 wheel
-    → compose up → 等待健康检查。Appsmith 首次启动慢（start_period 180s），
-    超过等待窗口只报 WARN，不阻断——它不参与导入链路。
+    → compose up → 等待健康检查 → 建最小权限角色并补齐 004/006。
+
+    2026-10-22 对齐统一入口（PR-D 之后）：
+      - Appsmith 已下线，不再等待 campus-appsmith；
+      - 8010 宿主发布已移除，业务请求统一经网关 http://127.0.0.1:9190；
+      - 网关需要 JWT_SECRET_KEY / GATEWAY_DB_PASSWORD / GATEWAY_REDIS_PASSWORD /
+        INTERNAL_HMAC_SECRET，缺失时 compose 直接拒绝启动。
 
 .PARAMETER SkipWheels
     跳过 wheel 拉取（已有 wheels 或你自行处理时使用）。
@@ -38,12 +43,15 @@ if (-not (Test-Path $envFile)) {
     Write-Status INFO '.env 不存在，已从 .env.example 复制'
 }
 $envText = Get-Content $envFile -Raw
+# 业务库两角色 + 网关认证库 / Redis / HMAC + Sa-Token JWT。
+# 与 docker-compose.yml 的 ${VAR:?} 必填项保持一致；空值也视为未填写。
 foreach ($key in 'POSTGRES_PASSWORD', 'APP_DB_PASSWORD', 'RO_DB_PASSWORD',
-    'APPSMITH_ENCRYPTION_PASSWORD', 'APPSMITH_ENCRYPTION_SALT') {
+    'GATEWAY_DB_PASSWORD', 'GATEWAY_REDIS_PASSWORD',
+    'INTERNAL_HMAC_SECRET', 'JWT_SECRET_KEY') {
     if ($envText -match "(?m)^$key=(__CHANGE_ME.*)?$") {
         $secret = New-RandomSecret
         $envText = $envText -replace "(?m)^$key=.*$", "$key=$secret"
-        Write-Status INFO "$key 仍是占位符，已替换为随机 32 位密钥"
+        Write-Status INFO "$key 仍是占位符或空值，已替换为随机 32 位密钥"
     }
     elseif ($envText -notmatch "(?m)^$key=") {
         $secret = New-RandomSecret
@@ -85,15 +93,18 @@ if ($code -ne 0) { Write-Status FAIL 'compose up 失败，见上方输出'; exit
 
 # --- 5. 等健康检查 ---
 Write-Host ''
-Write-Status INFO '等待健康检查（数据库与导入 API）...'
+Write-Status INFO '等待健康检查（业务库、网关认证库、Redis、导入 API、网关）...'
 $dbOk = Wait-ContainerHealthy -Name 'campus-db' -TimeoutSeconds 180
 if ($dbOk) { Write-Status PASS 'campus-db 健康' } else { Write-Status FAIL 'campus-db 未进入 healthy'; }
 
-# 建最小权限角色（003 不在 initdb 里，缺了它 import-api 会崩溃重启）
+# 建最小权限角色并补齐 004/006（003 不在 initdb 里，缺了它 import-api 会崩溃重启；
+# 004 建 nonce 表，006 建导入范围与审计函数——两者都不在 initdb 中，必须显式重放）
+$rolesOk = $false
 if ($dbOk) {
-    Write-Status INFO '执行 sql/003_roles.sql（建 campus_app / campus_ro）'
-    if (Initialize-DbRoles) {
-        Write-Status PASS '最小权限角色已就位'
+    Write-Status INFO '执行 sql/003_roles.sql + 重放 004/006（建 campus_app / campus_ro、nonce、导入审计）'
+    $rolesOk = Initialize-DbRoles
+    if ($rolesOk) {
+        Write-Status PASS '最小权限角色与 004/006 已就位'
         # 角色的密码若与 import-api 启动时缓存的连接不同，需重启一次让它重连
         $apiState = & docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' campus-import-api 2>$null
         if ($apiState -ne 'healthy') {
@@ -101,20 +112,32 @@ if ($dbOk) {
             Invoke-Compose restart import-api | Out-Null
         }
     }
-    else { Write-Status FAIL '003_roles.sql 执行失败，import-api 将无法连库' }
+    else { Write-Status FAIL '003/004/006 执行失败，import-api 将无法连库或导入审计缺失' }
 }
 
 $apiOk = Wait-ContainerHealthy -Name 'campus-import-api' -TimeoutSeconds 240
 if ($apiOk) { Write-Status PASS 'campus-import-api 健康' } else { Write-Status FAIL 'campus-import-api 未进入 healthy（看日志：docker compose logs import-api）' }
 
-$appsmithOk = Wait-ContainerHealthy -Name 'campus-appsmith' -TimeoutSeconds 300
-if ($appsmithOk) { Write-Status PASS 'campus-appsmith 健康' }
-else { Write-Status WARN 'campus-appsmith 仍在启动（首次约 3-5 分钟），不影响导入链路' }
+# 网关依赖认证库与 Redis；两者健康后网关才开始连库，超时窗口按网关启动期（start_period 60s）留足
+$gwDbOk = Wait-ContainerHealthy -Name 'campus-gateway-db' -TimeoutSeconds 180
+if ($gwDbOk) { Write-Status PASS 'campus-gateway-db 健康' } else { Write-Status FAIL 'campus-gateway-db 未进入 healthy' }
+
+$gwRedisOk = Wait-ContainerHealthy -Name 'campus-gateway-redis' -TimeoutSeconds 120
+if ($gwRedisOk) { Write-Status PASS 'campus-gateway-redis 健康' } else { Write-Status FAIL 'campus-gateway-redis 未进入 healthy' }
+
+$gwOk = Wait-ContainerHealthy -Name 'campus-gateway' -TimeoutSeconds 300
+if ($gwOk) { Write-Status PASS 'campus-gateway 健康' }
+else {
+    Write-Status FAIL 'campus-gateway 未进入 healthy（看日志：docker compose logs gateway；常见原因：JWT_SECRET_KEY 为空或认证库初始化失败）'
+}
 
 Write-Host ''
 Write-Host '访问地址：' -ForegroundColor Cyan
-Write-Host '  Import API   http://127.0.0.1:8010/docs'
-Write-Host '  Appsmith     http://127.0.0.1:8081'
-Write-Host '  PostgreSQL   127.0.0.1:55432'
+Write-Host '  统一入口（网关）  http://127.0.0.1:9190    （前端经 nginx /gw 也走这里）'
+Write-Host '  Import API        仅容器内 http://import-api:8000（宿主 8010 已关闭）'
+Write-Host '  PostgreSQL        127.0.0.1:55432'
+Write-Host '  网关认证库        127.0.0.1:55434'
+Write-Host '  网关 Redis        127.0.0.1:6382'
+Write-Host '  前端静态站        http://127.0.0.1:8082（需单独启动 docker-compose.web.yml）'
 Write-Host '下一步：.\scripts\dev\smoke-test.ps1'
-exit $(if ($dbOk -and $apiOk) { 0 } else { 1 })
+exit $(if ($dbOk -and $rolesOk -and $apiOk -and $gwOk) { 0 } else { 1 })

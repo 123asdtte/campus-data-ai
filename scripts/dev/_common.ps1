@@ -8,6 +8,12 @@ $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 # 接口返回的中文会变成乱码，ConvertFrom-Json 也会跟着失败。
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# 把字符串通过管道喂给 native 命令时的编码。Windows PowerShell 5.1 默认是
+# ASCII：SQL / JSON 里的中文会变成 "?"，还会吞掉换行，导致 psql 收到的脚本
+# 行号错位、报出莫名其妙的 syntax error（实测：004 的 DO 块被判语法错误）。
+# PowerShell 7 默认已是 UTF-8，这里显式设置对两者都安全。
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+
 function Get-RepoRoot {
     return $script:RepoRoot
 }
@@ -81,12 +87,39 @@ function Read-EnvFile {
     return $map
 }
 
-# 建最小权限角色。
+# 用 psql 执行一份 SQL 文件（内容经 stdin 传入，避免 Windows 路径映射问题）。
+# 返回 @{ Code = 退出码; Output = 合并后的输出 }，调用方据此判断并打印错误。
+# 注意：PowerShell 5.1 下 $LASTEXITCODE 必须在管道结束后立刻取值，
+# 否则会被后续 cmdlet 覆盖（实测踩过：004 明明成功却被判失败）。
+function Invoke-PsqlFile {
+    param(
+        [string]$Path,
+        [hashtable]$Variables = @{}
+    )
+    $psqlArgs = @(
+        'compose', 'exec', '-T', 'campus-db', 'psql',
+        '-U', $script:DbUser, '-d', $script:DbName, '-v', 'ON_ERROR_STOP=1'
+    )
+    foreach ($key in ($Variables.Keys | Sort-Object)) {
+        $psqlArgs += @('-v', "$key=$($Variables[$key])")
+    }
+    $psqlArgs += @('-f', '/dev/stdin')
+
+    # 必须显式 -Encoding UTF8：Windows PowerShell 5.1 的 Get-Content 默认按系统
+    # ANSI(GBK) 解码，UTF-8 的 SQL 注释会变成乱码并吞掉换行，psql 收到的脚本
+    # 行号错位，最终报出 “syntax error at or near campus_nonce_cleaner” 这种
+    # 与真实内容无关的错误（实测踩过）。
+    $content = Get-Content -Path $Path -Raw -Encoding UTF8
+    $output = ($content | & docker @psqlArgs 2>&1) |
+        ForEach-Object { $_.ToString() }
+    return @{ Code = $LASTEXITCODE; Output = ($output -join "`n") }
+}
+
+# 建最小权限角色并补齐 004/006。
 # 必须做这一步的原因：docker-compose.yml 只把 001/002 挂进 initdb，
-# 003_roles.sql 需要 psql 变量（app_password / ro_password），
-# 不在容器初始化里执行。不跑它，import-api 会一直
-# 「password authentication failed for user campus_app」并崩溃重启。
-# 003 本身幂等（CREATE 带 WHERE NOT EXISTS + ALTER），重复执行安全。
+# 003/004/006 需要 psql 变量或不在 initdb 中执行。不跑 003，import-api 会一直
+# 「password authentication failed for user campus_app」；不跑 006，导入审计函数缺失。
+# 003/004/006 均幂等，重复执行安全。
 function Initialize-DbRoles {
     $envMap = Read-EnvFile (Join-Path $script:RepoRoot '.env')
     $user = $envMap['POSTGRES_USER']
@@ -100,12 +133,32 @@ function Initialize-DbRoles {
     $sqlPath = Join-Path $script:RepoRoot 'sql/003_roles.sql'
     if (-not (Test-Path $sqlPath)) { Write-Status FAIL "找不到 $sqlPath"; return $false }
 
+    # Invoke-PsqlFile 依赖这两个脚本级变量（只在本次调用期间有效）
+    $script:DbUser = $user
+    $script:DbName = $db
+
     Push-Location $script:RepoRoot
     try {
-        $sql = Get-Content $sqlPath -Raw
-        $sql | & docker compose exec -T campus-db psql -U $user -d $db `
-            -v ON_ERROR_STOP=1 -v app_password=$app -v ro_password=$ro -f /dev/stdin 2>&1 | Out-Null
-        return ($LASTEXITCODE -eq 0)
+        $result = Invoke-PsqlFile -Path $sqlPath -Variables @{ app_password = $app; ro_password = $ro }
+        if ($result.Code -ne 0) {
+            Write-Status FAIL "003_roles.sql 执行失败（exit=$($result.Code)）"
+            $result.Output.Split("`n") | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" }
+            return $false
+        }
+
+        # 003 之后必须重放 004/006：004 建 nonce 表与清理函数，006 建导入范围、
+        # 审计函数并收回 import_issues 的 DELETE。两者都幂等，重复执行安全。
+        foreach ($name in @('004_internal_auth.sql', '006_import_scope.sql')) {
+            $path = Join-Path $script:RepoRoot "sql/$name"
+            if (-not (Test-Path $path)) { Write-Status FAIL "找不到 $path"; return $false }
+            $result = Invoke-PsqlFile -Path $path
+            if ($result.Code -ne 0) {
+                Write-Status FAIL "$name 执行失败（exit=$($result.Code)）"
+                $result.Output.Split("`n") | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" }
+                return $false
+            }
+        }
+        return $true
     }
     finally { Pop-Location }
 }
