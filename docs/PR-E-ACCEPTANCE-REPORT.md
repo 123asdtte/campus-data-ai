@@ -73,7 +73,7 @@ pytest -q tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_p
 
 ### 2.6 CI
 
-PR #21、#22、#25 的 CI 全部 SUCCESS（后端语法、接口测试、网关构建、前端构建、AI 评审）。
+PR #21、#22、#25、#26 的 CI 全部 SUCCESS（后端语法、接口测试、网关构建、前端构建、AI 评审）。其中 #26 的开启态步骤已纳入 PR-C/PR-E 安全用例（`test_import_scope`、`test_student_write`、`test_pr_e_hardening`）。
 
 ---
 
