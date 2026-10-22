@@ -333,6 +333,12 @@ curl "${AUTH[@]}" -X POST "$BASE/imports/$BATCH/commit"
 
 部署或迁移前务必先备份，并核对备份内行数与当前库一致。
 
+恢复脚本在导入备份后会依次重放 `003_roles.sql` → `004_internal_auth.sql` → `006_import_scope.sql`：
+`003` 是历史授权基线（含 `import_issues` 的 DELETE），`006` 必须最后执行以收回该权限并恢复
+受控审计函数；脚本末尾会校验 `campus_app` 不可直接 DELETE，以及两个审计函数存在，校验失败即退出。
+恢复演练必须在隔离实例进行，禁止直接对正式库执行恢复。
+
+
 ---
 
 ## 12. 常用运维命令
