@@ -454,6 +454,8 @@ def create_batch(
             batch_id = cur.fetchone()["id"]
 
             _insert_issues(cur, batch_id, issues)
+            # 首次解析的异常也写一条摘要，保持“每次重写都有摘要”的一致性
+            cur.execute("SELECT campus.record_import_issues(%s, 'preview')", (batch_id,))
 
     preview_rows = []
     for idx, row in mapped.head(20).iterrows():
@@ -607,7 +609,8 @@ def remap_batch(
                 """,
                 (len(mapped), status, "缺少必需列" if missing else None, batch_id),
             )
-            cur.execute("DELETE FROM campus.import_issues WHERE batch_id = %s", (batch_id,))
+            # 删除收口：旧明细只能经受控函数删除，函数内先写摘要再删
+            cur.execute("SELECT campus.clear_import_issues(%s, 'remap')", (batch_id,))
 
             issues: List[Issue] = []
             if missing:
@@ -616,6 +619,8 @@ def remap_batch(
                     Issue(MAX_TEXT_ISSUE_ROW, "COLUMN_MAPPING_REQUIRED", f"缺少必需列：{labels}")
                 )
                 _insert_issues(cur, batch_id, issues)
+            # 每次重写都留一条摘要，包括“重写后 0 条异常”
+            cur.execute("SELECT campus.record_import_issues(%s, 'remap')", (batch_id,))
 
     preview_rows = []
     for idx, row in mapped.head(20).iterrows():
@@ -670,8 +675,10 @@ def validate_batch(batch_id: int, actor: str, dept_id: Optional[int] = None) -> 
 
             mapped, issues, mapping = _revalidate(cur, batch)
 
-            cur.execute("DELETE FROM campus.import_issues WHERE batch_id = %s", (batch_id,))
+            # 删除收口 + 重写后摘要（两条摘要，均只有一行，不再是逐行噪声）
+            cur.execute("SELECT campus.clear_import_issues(%s, 'validate')", (batch_id,))
             _insert_issues(cur, batch_id, issues)
+            cur.execute("SELECT campus.record_import_issues(%s, 'validate')", (batch_id,))
 
             error_rows = _row_has_error(issues)
             total = len(mapped)
@@ -826,6 +833,10 @@ def commit_batch(
                         inserted += 1
                     else:
                         skipped.append({"row_number": row_no, "reason": "学生不存在，未写入"})
+
+            if skipped:
+                # 提交阶段新增的重复学号警告同样只写一条摘要
+                cur.execute("SELECT campus.record_import_issues(%s, 'commit')", (batch_id,))
 
             cur.execute(
                 "UPDATE campus.import_batches SET valid_rows = %s, invalid_rows = %s WHERE id = %s",

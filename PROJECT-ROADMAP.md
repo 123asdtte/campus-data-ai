@@ -174,23 +174,23 @@ INTERNAL_AUTH_ENABLED=true pytest tests/test_internal_auth.py tests/test_route_m
 **为什么**：导入是唯一批量写学生数据的入口，当前 `IMPORT_ADMIN_ONLY=True` 只是临时措施。
 
 **具体实现**：
-- `sql/006_import_scope.sql`：`import_batches.created_dept_id` + 索引 + `import_batches`/`import_issues` 语句级审计触发器（SECURITY DEFINER + 专用属主）；
+- `sql/006_import_scope.sql`：`import_batches.created_dept_id` + 索引；`import_batches` 行级审计触发器（每次状态跃迁一行）；`import_issues` 采用 **方案 C**——不逐行审计，改由 `clear_import_issues()` / `record_import_issues()` 写 JSON 摘要，并收回 `campus_app` 的 DELETE（删除只能经受控函数）；
 - `service.create_batch(created_dept_id=)`、`commit_batch(allowed_colleges=)`、`list_batches(dept_id=)`、`_assert_batch_scope()`；
 - 批次范围：详情 / 字段映射 / 校验 / 提交均校验批次归属部门；历史 `created_dept_id IS NULL` 的批次仅管理员可见；
 - `commit` 逐行学院校验：**任一有效行学院不在授权范围内即整批拒绝（403），不写入任何学生数据**；
 - 解除 `IMPORT_ADMIN_ONLY`，改为权限点 + 批次范围 + 逐行校验；
-- 相关安全用例按主项目表名/角色重写为 `tests/test_import_scope.py`（8 项）。
+- 相关安全用例：`tests/test_import_scope.py`（8 项）+ `tests/test_import_audit_summary.py`（3 项审计摘要/删除收口）。
 
 **变更边界**：`sql/006`、`import-api/app/service.py`/`routes/imports.py`/`internal_auth.py`、导入测试；**禁止**改网关端点、前端入口、关闭 8010。
 
 **测试命令**：
 ```bash
-INTERNAL_AUTH_ENABLED=true pytest tests/test_import_scope.py   # 8 passed
-python -m pytest                                               # 关闭态全量：130 passed
+INTERNAL_AUTH_ENABLED=true pytest tests/test_import_scope.py tests/test_import_audit_summary.py tests/test_db_privileges.py
+python -m pytest                                               # 关闭态全量
 ```
-**验收**：跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；审计计数与 POC 一致；历史 NULL 批次仅管理员可见。
+**验收**：跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；异常明细每次重写只写摘要、无逐行噪声；直接 DELETE 被拒绝；历史 NULL 批次仅管理员可见。
 
-**实施结果**：代码与测试已完成；关闭态全量 `130 passed, 90 skipped, 1 xfailed`；开启态专项 `105 passed`；006 仅在测试库执行，正式库未执行。
+**实施结果（2026-10-22）**：代码与测试完成；关闭态全量为新增用例后的全量通过；开启态专项 `120 passed`；006 仅在测试库与演练库执行，正式库未执行。审计方案已按同事 Issue #10 设计（`docs/IMPORT-AUDIT-DESIGN.md`）收敛为方案 C。
 
 **回退**：开关关闭 + `git revert`；正式库迁移前必须 `pg_dump`。
 
