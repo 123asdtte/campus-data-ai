@@ -49,6 +49,7 @@
 | [API-MIGRATION-INVENTORY.md](API-MIGRATION-INVENTORY.md) | ✅ | 现有 12 个接口的完整盘点与安全边界（迁移依据） |
 | [IMPORT-API-SECURITY-INVENTORY.md](IMPORT-API-SECURITY-INVENTORY.md) | ✅ | 导入 7 接口的逐条安全取证：全部无认证，commit 写学生表（Issue #9） |
 | [IMPORT-API-SECURITY-PLAN.md](IMPORT-API-SECURITY-PLAN.md) | 📐 | 导入 7 接口的统一认证/权限/范围/审计整改设计（未实施） |
+| [POC-IMPORT-API-PR3-REVIEW.md](POC-IMPORT-API-PR3-REVIEW.md) | 🔍 | POC PR #3 代码审查与复审：5 项 P1 修复证据、48/48 + 12/12 |
 
 ## 五、RuoYi POC 验收记录（隔离环境，仓库之外）
 
