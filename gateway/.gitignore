@@ -1,0 +1,59 @@
+######################################################################
+# Build Tools
+
+.gradle
+/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+######################################################################
+# IDE
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### VS CODE ###
+.vscode
+
+### JRebel ###
+rebel.xml
+
+### NetBeans ###
+nbproject/private/
+build/*
+nbbuild/
+nbdist/
+.nb-gradle/
+
+######################################################################
+# Others
+*.log
+*.log.gz
+*.xml.versionsBackup
+*.swp
+
+!*/build/*.java
+!*/build/*.html
+!*/build/*.xml
+
+.flattened-pom.xml
+
+application-local.yml
+application-ga.yml
+# PR-B：POC 遗留的真实第三方配置（含 client-secret / 外部服务凭据），
+# 只保留在本机；仓库只提交脱敏模板 gateway/.env.example。
+ruoyi-admin/src/main/resources/application-dev.yml
+ruoyi-admin/src/main/resources/application-prod.yml
