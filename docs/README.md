@@ -1,6 +1,6 @@
 # 文档索引
 
-> **2026-10-22 文档治理完成**：`docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
+> **2026-10-22 文档治理完成**：治理时 `docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；此后同事新增 `IMPORT-AUDIT-DESIGN.md`（#24）、`TEST-BEHAVIOR-DECISIONS.md`（#28），PR-E 新增验收报告，现为 **17 + 26 = 43** 份。根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
 >
 > **唯一年有效认证方案**：RuoYi 登录会话 → Java 网关 `X-Internal-*` 签名 → FastAPI 二次验签。任何 pwdlib/PyCasbin 或"不迁移若依"的旧方案都只在 `archive/` 中作历史追溯，**不得作为实施依据**。
 
@@ -8,7 +8,7 @@
 
 ---
 
-## 一、现行规范（docs/ 14 份）
+## 一、现行规范（docs/ 17 份）
 
 ### 入口与路线
 
@@ -26,6 +26,7 @@
 |---|---|---|
 | [ARCHITECTURE-AND-SECURITY-PLAN.md](ARCHITECTURE-AND-SECURITY-PLAN.md) | 🏛️ | 现状拓扑、可信身份链路、安全边界、数据库边界（基线 `d10946f`） |
 | [INTERNAL-AUTH-SPEC.md](INTERNAL-AUTH-SPEC.md) | 🔐 | **内部认证唯一契约**：14 段 canonical、11 个头、金标向量 |
+| [IMPORT-AUDIT-DESIGN.md](IMPORT-AUDIT-DESIGN.md) | ✅ | 导入审计方案 C：批次行级 + 异常摘要 + 删除收口（PR-C 已落地） |
 | [SECURITY-CHECKLIST.md](SECURITY-CHECKLIST.md) | 📐 | 安全检查项：数据、身份、权限、密钥、网络、备份、导入 |
 
 ### 接口、数据与测试
@@ -35,7 +36,9 @@
 | [IMPORT-API.md](IMPORT-API.md) | ✅ | 导入接口契约：请求、响应、状态机、幂等、双模式认证 |
 | [DATA-DICTIONARY.md](DATA-DICTIONARY.md) | ✅ | 表结构、字段、枚举、约束 |
 | [TEST-COVERAGE-MATRIX.md](TEST-COVERAGE-MATRIX.md) | 📐 | 覆盖矩阵与缺口分析（基线 `c28ec94`，待更新为 `d10946f`） |
+| [TEST-BEHAVIOR-DECISIONS.md](TEST-BEHAVIOR-DECISIONS.md) | ✅ | D-1~D-4 行为决策单：sidecar、后缀白名单、严格解码、死代码 |
 | [ADR-001-import-mapping.md](ADR-001-import-mapping.md) | ✅ | 表头识别与字段映射采用规则而非大模型 |
+| [PR-E-ACCEPTANCE-REPORT.md](PR-E-ACCEPTANCE-REPORT.md) | ✅ | 全量回归、并发/大文件/nonce、迁移回退演练与 Go/No-Go |
 
 ### 盘点、部署与协作
 

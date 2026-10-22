@@ -1,5 +1,7 @@
 # import-api 测试覆盖矩阵
 
+> **2026-10-22 更新（PR-E）**：现行用例总数为 **关闭态 130 passed / 开启态 116 passed**（另 101 skipped、1 xfailed）；本矩阵正文是 `c28ec94` 的 112 用例基线，缺口描述已部分被 PR-A/B/C/E 关闭，详见 `PR-E-ACCEPTANCE-REPORT.md`。
+>
 > Issue #8 第一步交付物（盘点，不改任何测试代码）。
 > 基线：`main` @ `c28ec94`；用例数统计口径：`grep -c "def test_"` + 参数化展开，共 **112 个用例**（111 passed / 1 xfailed）。
 > 盘点方式：逐行比对 7 个测试文件与 `import-api/app/` 全部源码，对照本矩阵 7 类场景。
@@ -151,7 +153,7 @@
 > 其中第 1、2、3、5 条属于「先定行为再补测」，四张决策单见
 > [`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md)（D-1 ~ D-4，含选项、成本与验证方式）。
 > **第 1、2、3、5 条均已实施**（D-1 ~ D-4），第 4 条（损坏 xlsx 应 400）随 D-3 一并修掉；
-> 本表 6 条全部闭环：第 6 条（#23）由 PR-C 修复。
+> 本表 6 条全部闭环：第 6 条（#23）已由 PR-C 修复，对应 xfail 已转为正式断言。
 
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|
@@ -160,7 +162,7 @@
 | 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py` 的 `_read_raw_rows` / `load_frame` | **已修复**：`_decode_text()` 严格解码；**实测发现比「替换字符」更严重的问题**——旧实现先用 UTF-8 解一份、再用 GBK 严格解一次并覆盖，`学号,姓名\n2026001,\n` 这类「中文表头 + ASCII 数据」的 UTF-8 文件整份恰好能被 GBK 解出，表头变成「瀛﹀彿,濮撳悕」，映射全失配后表现为「200 + failed / 缺少必需列」 |
 | 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py` 的 `_open_workbook` | **已修复**：openpyxl / pandas 的异常统一收成 `parsing.WorkbookError`，由 `service._prepare` 转 `ServiceError`（400） |
 | 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py`（原 `:57`、`:84`） | **已删除**（D-4），随之移除未使用的 `import io` |
-| 6 | **缺少「入学年份」等可选列时提交 500**：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚。任何只含学号+姓名的最小名单都提交不了 | `service.py:116`（`_pre_coerce`）、`service.py:733-751`（取值直接入库） | **已修复**（PR-C，Issue #23）：取值处按 `_cell` 的规则把 `pd.NA`/`NaT` 归一成 `None`；原 xfail(strict) 标记已移除，`test_commit_conflict.py::TestOptionalColumn` 与 `test_meta_and_files.py::TestConflictFixture` 转为正式断言 |
+| 6 | ~~**缺少「入学年份」等可选列时提交 500**~~：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚 | `service.py:116`、`:733-751` | **已修复（PR-C）**：取值统一经 `_cell()` 把 `pd.NA`/`NaT` 归一成 `None`；`TestOptionalColumn` 与 `TestConflictFixture` 已转为正式断言 |
 
 ---
 
@@ -219,7 +221,7 @@ sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides
 | `TestMetaFilters` | 3 | `GET /meta/filters` 从零行为覆盖到：学院/班级去重、停用学生剔除、空库零值 |
 | `TestOverview` | 3 | `GET /stats/overview`：`students_active` 与 `students_total` 口径差异、`pending_review`、`change_type_counts` 排序、`recent_batches` 最多 5 条且最新在前、空库边界 |
 | `TestAbnormalFileOverHttp` | 5 | §3 在 HTTP 层：坏表头、仅表头 xlsx、未知后缀、`.xlsm`、损坏 xlsx |
-| `TestConflictFixture` | 2 | §4 冲突场景端到端：`test_conflict_columns.csv` 上传 → 冲突提示 → 手动指定解除（提交环节被 #23 阻断，另设 xfail 用例固化） |
+| `TestConflictFixture` | 2 | §4 冲突场景端到端：`test_conflict_columns.csv` 上传 → 冲突提示 → 手动指定解除 → 提交成功（#23 已由 PR-C 修复） |
 | `TestDemoFixture` | 1 | `students_demo.xlsx` 的文档口径（15 行 / 10 有效 / 5 异常）变成可执行断言 |
 
 ### 新发现
@@ -231,10 +233,9 @@ sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides
 固化；是否要给 contains 命中加 warning，需先定行为（并入 §10 的待定项一起评估）。
 
 **#23 的第二个复现入口：`test_conflict_columns.csv`。** 这份夹具同样没有「入学年份」列，
-于是「冲突 → 手动指定 → 校验通过 → 提交」这条完整链路在提交环节 500（`cannot adapt type
-'NAType'`），与 #23 完全同因。校验阶段仍返回 `valid_rows=1`，用户的体感是「校验通过却提交
-失败」。已由 `TestConflictFixture::test_手动指定后提交应成功` 以 `xfail(strict=True)` 固化——
-这说明 #23 不是「某一份样例文件的偶发问题」，而是**所有缺可选列的名单**都会踩到。
+当时「冲突 → 手动指定 → 校验通过 → 提交」在提交环节 500（`cannot adapt type 'NAType'`），
+与 #23 完全同因。**PR-C 已修复**：`_cell()` 统一归一 `pd.NA/NaT`，该用例已转为正式断言；
+这也说明 #23 不是某份样例的偶发问题，而是所有缺可选列的名单都会踩到。
 
 ### 口径说明
 

@@ -162,4 +162,5 @@ signature = 9d934c4c8c41c5430d040f99bd142ba815b5b85bf738d7c309da80be4f42500a
 - `campus.internal_nonce(nonce PK, seen_at, expires_at)`；
 - `campus_app` 只有 `SELECT/INSERT`，**不能删除**任何 nonce；
 - 过期清理仅能调用 `campus.cleanup_internal_nonce()`（`SECURITY DEFINER`，属主 `campus_nonce_cleaner`，只删 `expires_at < now()`）；
-- 应用启动时调用一次清理；失败只告警，不影响启动。
+- 应用启动时调用一次清理；开启态另启动后台任务每 3600 秒清理一次（失败只告警，不影响请求）；
+- PR-E 实测：1000 条 nonce 占 216 KiB（`pg_total_relation_size`），过期行可被受控函数删除且可重复执行。

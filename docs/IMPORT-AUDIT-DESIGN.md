@@ -1,5 +1,7 @@
 # 导入批次与异常表的审计覆盖方案（设计）
 
+> **实施状态（2026-10-22，PR-C）**：方案 C 已落地——`import_batches` 行级触发器；`import_issues` 由 `clear_import_issues()`（删前摘要）与 `record_import_issues()`（重写后摘要）各写一行 JSON 摘要；`campus_app` 的 `import_issues` DELETE 已收回。与本文的差异：保留了 `import_issues` INSERT（预览/提交仍由应用写入明细），未新增 `validate_seq` 软删除。
+
 > Issue #10 交付物。**只做设计评估**：不创建触发器、不改表结构、不改权限、不迁移数据。
 > 取证基线：`main` @ `d10946f`（PR #16 内部认证合并后）。
 

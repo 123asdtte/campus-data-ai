@@ -117,7 +117,7 @@ campus-gateway
 | 7 | 网络边界 | ✅ PR-D 已执行 | 移除宿主 8010；浏览器仅 `/gw` |
 | 8 | Appsmith 可写账号 | 🟢 已停服务（R2） | 容器停止、compose 移除、卷保留；账号仍存在，留待后续账号治理 |
 | 9 | 密钥管理 | 🟡 仅 env，未接入 secrets | `INTERNAL_HMAC_SECRET` 不得入库/前端/日志 |
-| 10 | 备份/迁移演练 | 🔴 未做 | PR-E |
+| 10 | 备份/迁移演练 | 🟢 PR-E 演练通过 | 004/005/006 在一次性隔离库升级+回退；正式库未执行 |
 | 11 | RuoYi 认证库隔离 | ✅ PR-B 已建（待评审） | 独立库 `campus_gateway` + `gw_app`/`gateway_dba`（对 `campus` schema 零权限） |
 | 12 | 文档双轨 | 🟢 G 已完成（PR #18） | 26 份历史文档已归档 + 索引两节 |
 
@@ -171,7 +171,7 @@ campus-gateway
 ## 7. 未验证声明
 
 - 本文档的运行态断言基于 2026-10-22 的容器与数据库实查；Appsmith 停止状态基于同日 `docker ps -a`、端口监听与 compose diff。
-- `auth-gateway` 的 RuoYi 精简可行性未经裁剪验证（PR-B 首周验证项）。
-- Appsmith 内部页面与数据源配置未逐项检查；**R2 的"业务方确认无依赖"尚未完成**，compose 改动未提交、未推送。
+- `auth-gateway` 的 RuoYi 精简可行性未经裁剪验证（当前用完整 RuoYi 构建）。
+- Appsmith 内部页面与数据源配置未逐项检查；**R2 的"业务方确认无依赖"仍未完成**；compose 改动已提交（PR #19），卷保留。
 - POC 审查基于 `origin/main f1c2856` 的静态审读；本地 `main` 落后 origin 10 个提交。
-- 测试数字以 CI 日志为准；`TEST-COVERAGE-MATRIX` 的 112 用例基线（`c28ec94`）已过时。
+- PR-E 全量回归、并发/大文件/nonce 与迁移回退演练已完成，详见 `PR-E-ACCEPTANCE-REPORT.md`；`TEST-COVERAGE-MATRIX` 的 112 用例基线（`c28ec94`）已过时。

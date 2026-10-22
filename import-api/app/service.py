@@ -849,6 +849,9 @@ def commit_batch(
             _remove_staged(staged)
         with pool.connection() as conn:
             with conn.cursor() as cur:
+                # 清理是独立事务，仍必须注入可信 actor；
+                # 否则 006 的批次审计会多出一条无操作人的 update 记录。
+                _set_actor(cur, actor)
                 cur.execute(
                     "UPDATE campus.import_batches SET staged_path = NULL WHERE id = %s", (batch_id,)
                 )

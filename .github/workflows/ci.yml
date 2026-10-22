@@ -93,4 +93,4 @@ jobs:
         working-directory: import-api
         env:
           INTERNAL_AUTH_ENABLED: 'true'
-        run: python -m pytest tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_privileges.py
+        run: python -m pytest tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_privileges.py tests/test_import_scope.py tests/test_student_write.py tests/test_pr_e_hardening.py tests/test_import_audit_summary.py

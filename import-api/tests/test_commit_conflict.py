@@ -156,8 +156,8 @@ class TestConcurrentWindow:
 
 
 class TestOptionalColumn:
-    # Issue #23 已由 PR-C 修复：commit_batch 取值时把 pd.NA/NaT 归一为 None，
-    # 原本的 xfail(strict) 标记在修复后转为正式断言（XPASS 即视为失败）。
+    # Issue #23 已由 PR-C 修复：commit_batch 对 pd.NA/NaT 统一走 _cell() 归一为 None；
+    # 原 xfail(strict) 标记随之移除，本用例转为正式断言。
     def test_缺少可选列时提交应正常写入(self, db_client) -> None:
         batch_id = preview(db_client, "minimal.csv", MINIMAL_CSV).json()["batch_id"]
         assert validate(db_client, batch_id)["invalid_rows"] == 0
