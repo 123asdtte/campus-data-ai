@@ -15,10 +15,10 @@
 ## 2. 开发环境验证
 
 ```bash
-# 1) 生成自签名证书（Git Bash 自带 openssl）
+# 1) 生成自签名证书（Git Bash 自带 openssl；已存在时需 --force 才覆盖）
 ./scripts/gen-dev-cert.sh
 
-# 2) 重建前端镜像（nginx-common.conf 已打进镜像）并启用 8443
+# 2) 重建前端镜像（nginx-common.conf 已打进镜像，构建期执行 nginx -t）并启用 8443
 docker compose -p campus-web -f docker-compose.web.yml -f docker-compose.tls.yml up -d --build
 
 # 3) 验证

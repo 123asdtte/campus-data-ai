@@ -217,7 +217,10 @@ def check_tls() -> None:
     模板存在不等于可以上线：证书、域名与流量切换仍需人工授权。
     """
     def has_tls(text: str) -> bool:
-        return "listen" in text and "443" in text and "ssl_certificate" in text
+        # 用正则而不是子串：避免注释里的 "443"/"ssl_certificate" 造成误判
+        return bool(re.search(r"listen\s+[^;]*\b443\b", text)) and bool(
+            re.search(r"ssl_certificate\s+\S+", text)
+        )
 
     conf = ROOT / "web/nginx.conf"
     text = conf.read_text(encoding="utf-8") if conf.exists() else ""

@@ -30,6 +30,9 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # 公共 location 片段：HTTP 与 HTTPS 两个 server 共用
 COPY nginx-common.conf /etc/nginx/snippets/campus-common.conf
 
+# 构建期校验：include 路径或语法错误在这里暴露，而不是等到容器运行期 crash loop
+RUN nginx -t
+
 # 构建产物
 COPY --from=build /build/dist /usr/share/nginx/html
 
