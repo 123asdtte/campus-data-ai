@@ -21,7 +21,7 @@
 | D-005 | 2026-10-22 | 生产构建排除本地配置 + 配置渲染/挂载 | Verified（已合并 `63ccc4d`） | `ops/gateway-config-hygiene` | 构建、密钥、部署 |
 | D-006 | 2026-10-22 | 上述分支的合并顺序与执行方式 | Verified（实际顺序见正文） | — | 发布流程 |
 | D-007 | 2026-10-22 | 开发脚本对齐统一入口与全新建库流程 | Verified（本分支 `chore/dev-env-align`） | `chore/dev-env-align` | 新同事启动、冒烟、文档 |
-| D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Accepted（先合 #39，再叠加本分支） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
+| D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Verified（#39 已合并 `146548d`；本分支叠加后实测通过） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
 
 ---
 
@@ -219,7 +219,7 @@
 
 ## D-008 整合同事 PR #39，并修正其“网关不可启动”前提
 
-- **状态**：Accepted（先合并 #39，再叠加本分支修正）
+- **状态**：Verified（#39 已合并；本分支叠加后双模式实测通过）
 - **Decision owner**：AI
 - **问题与背景**：PR #39（`fix/env-sync-with-example`，同事）与本分支 `chore/dev-env-align` 修改同一组 5 个文件，且都针对“#31 的脚本未跟上 R2/PR-D”。两边不能各自合并，必须先确定整合顺序与取舍。
 - **证据**：
@@ -244,5 +244,11 @@
 - **安全风险与权衡**：内嵌直连模式只用于“网关未构建”的降级路径，且会显式提示未覆盖统一入口，避免把降级测试误当成安全边界验证。
 - **涉及文件**：`scripts/dev/_common.ps1`、`check-prereqs.ps1`、`up-main.ps1`、`smoke-test.ps1`、`docs/DEVELOPMENT-ENVIRONMENT.md`、`.env.example`、`docs/DECISION-LOG.md`。
 - **验证方法**：合并 #39 后在其 main 上复跑一次脚本；叠加本分支后再跑完整流程（check / up / smoke / down / up），并分别在“有 jar（网关路径）”与“无 jar（降级路径）”两种状态下验证。
+- **实施结果（2026-10-22）**：
+  - #39 已合并为 `146548d`；本分支把该 main 合入，5 个文件各有一处冲突，按上述规则全部解决；
+  - `Sync-EnvFile` 保留，并增加 `Test-SecretKey` / `Get-FillValue`：只有密钥类键在空值或占位符时才随机化，普通开关（如 `KEEP_UPLOAD_FILES`）沿用 `.env.example` 默认值；引号清洗与 `Read-EnvFile` 统一（回应 #39 AI 评审的建议 1、2）；
+  - `up-main.ps1`：jar 存在 → 启动 5 个容器；临时移走 jar → 只启动核心栈并提示 Maven 命令，退出码 0；
+  - `smoke-test.ps1`：网关模式连续 3 次 `FAIL=0`；`-ForceContainer` 降级模式 `FAIL=0`（10 行导入，按唯一学号检索）；
+  - `check-prereqs.ps1`：`FAIL=0 / WARN=5`（栈运行中），并新增网关 jar 状态检查。
 - **回退**：先 revert 本分支的叠加提交可回到 #39 行为；再 revert #39 的 merge commit 可回到 #31 脚本。
 - **授权**：PR 整合顺序属 B 类；#39 本身只改脚本与文档，不涉及正式库、认证开关或流量切换（C 类）。

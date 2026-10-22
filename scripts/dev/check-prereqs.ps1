@@ -52,15 +52,16 @@ else {
 }
 
 # --- 2. 端口占用 ---
-# 主栈：业务库 55432、网关认证库 55434、网关 Redis 6382、网关 HTTP 9190；
+# 主栈：业务库 55432；网关侧 55434（认证库）/ 6382（Redis）/ 9190（统一入口）；
 # 前端独立编排（docker-compose.web.yml）：8082。
 # 8010 / 8081 / 8443 不再属于本栈：8010 是已关闭的 import-api 直连口，
 # 8081/8443 是已下线的 Appsmith。它们被占用不代表冲突，因此不再检查。
+# 网关三件套只有构建出 ruoyi-admin jar 后才会启动；未构建时它们空闲属正常。
 $ports = @{
     55432 = 'PostgreSQL 业务库'
-    55434 = 'PostgreSQL 网关认证库'
-    6382  = 'Redis 网关缓存'
-    9190  = 'Java 网关（统一入口）'
+    55434 = 'PostgreSQL 网关认证库（需网关 jar）'
+    6382  = 'Redis 网关缓存（需网关 jar）'
+    9190  = 'Java 网关（统一入口，需网关 jar）'
     8082  = '前端静态站（独立 compose）'
 }
 foreach ($p in ($ports.Keys | Sort-Object)) {
@@ -74,31 +75,30 @@ foreach ($p in ($ports.Keys | Sort-Object)) {
     }
 }
 
-# --- 3. .env 与必填项 ---
+# --- 3. .env 与必填项（以 .env.example 为准） ---
 $envFile = Join-Path $repo '.env'
 if (-not (Test-Path $envFile)) {
     Assert FAIL '.env 不存在：up-main.ps1 会从 .env.example 自动生成，也可先手动 cp .env.example .env'
 }
 else {
-    Assert PASS '.env 已存在'
-    $envText = Get-Content $envFile -Raw
-    # 业务库两个角色密码 + 网关三件套（认证库 / Redis / HMAC）+ Sa-Token JWT。
-    # compose 对这些键使用 ${VAR:?} 语法，缺任何一个都会直接拒绝启动。
-    $required = @(
-        'POSTGRES_PASSWORD',
-        'APP_DB_PASSWORD',
-        'RO_DB_PASSWORD',
-        'GATEWAY_DB_PASSWORD',
-        'GATEWAY_REDIS_PASSWORD',
-        'INTERNAL_HMAC_SECRET',
-        'JWT_SECRET_KEY'
-    )
-    foreach ($key in $required) {
-        if ($envText -notmatch "(?m)^$key=") {
-            Assert FAIL ".env 缺少 $key"
+    $gaps = Get-EnvFileGaps
+    if (-not $gaps.HasExample) {
+        Assert FAIL '.env.example 不存在，无法判断 .env 是否齐全'
+    }
+    elseif (($gaps.Missing | Measure-Object).Count -eq 0 -and
+            ($gaps.Placeholder | Measure-Object).Count -eq 0 -and
+            ($gaps.Empty | Measure-Object).Count -eq 0) {
+        Assert PASS '.env 与 .env.example 对齐：无缺失、无占位符、无空值'
+    }
+    else {
+        foreach ($m in $gaps.Missing) {
+            Assert FAIL ".env 缺少 $($m.Key)（.env.example 里有）——compose 会报 missing a value"
         }
-        elseif ($envText -match "(?m)^$key=(__CHANGE_ME.*)?$") {
-            Assert FAIL ".env 的 $key 仍是占位符或空值，未填写"
+        foreach ($k in $gaps.Placeholder) {
+            Assert FAIL ".env 的 $k 仍是占位符，未填写"
+        }
+        foreach ($k in $gaps.Empty) {
+            Assert FAIL ".env 的 $k 是空值——compose 把空值也算缺失，会报 missing a value"
         }
     }
 }
@@ -117,6 +117,17 @@ if (Test-Path (Join-Path $repo 'web/dist')) {
 }
 else {
     Assert WARN 'web/dist 不存在：前端栈（docker-compose.web.yml）需要它，主栈不受影响'
+}
+
+# 网关镜像只 COPY 宿主构建好的 jar（gateway/Dockerfile），target/ 不入库。
+# 没有 jar 时 up-main 只启动核心栈；要验证统一入口，先构建：
+#   cd gateway; mvn -B -DskipTests -pl ruoyi-admin -am package
+$gatewayJar = Join-Path $repo 'gateway/ruoyi-admin/target/ruoyi-admin.jar'
+if (Test-Path $gatewayJar) {
+    Assert PASS '网关 jar 已就绪：up-main 会一并启动网关（统一入口 9190）'
+}
+else {
+    Assert WARN '网关 jar 不存在：up-main 只启动核心栈；需要统一入口时先构建 ruoyi-admin（见文档第 2 节）'
 }
 
 # --- 5. 磁盘 ---
