@@ -17,7 +17,7 @@
 | `test_db_integration.py` | 14 | 真库：全链路、状态机、幂等、审计、行号偏移 |
 | `conftest.py` | — | 夹具：`samples/` 读取、`api_client`、`db_session`/`clean_db`/`db_client` |
 
-夹具：`samples/` 12 个文件。其中 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 在测试中零引用**（前者仅出现在 `docs/IMPORT-MAPPING-TEST.md` 手工场景 7）。
+夹具：`samples/` 12 个文件。盘点时 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 零引用**（前者仅出现在 `docs/IMPORT-MAPPING-TEST.md` 手工场景 7）；**§12 已全部纳入自动化用例**。
 
 ---
 
@@ -194,8 +194,37 @@ sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides
 
 ### 仍未覆盖（按 §9 顺序，建议后续处理）
 
-1. 异常文件的 **API 层**行为（`test_parsing_edge.py` 只覆盖了解析层；「损坏 xlsx 返回 500」
-   要在 HTTP 层固化，得先按 §10-4 定行为）
-2. `get_overview` / `get_filters`（`queries.py` 另两个只读函数，零行为覆盖）
-3. `samples/` 中 `bad_headers.xlsx`、`students_demo.xlsx` 仍零引用
+1. ~~异常文件的 **API 层**行为~~ → §12 已补
+2. ~~`get_overview` / `get_filters`~~ → §12 已补
+3. ~~`samples/` 中 `bad_headers.xlsx`、`students_demo.xlsx` 仍零引用~~ → §12 已补
 4. §10-2、§10-3、§10-5 三项（扩展名白名单、编码替换、死代码）需先定行为再补测
+
+---
+
+## 12. 第三步补测（2026-10-22）
+
+补 §11「仍未覆盖」的第 1、2、3 项，并顺带补掉 §4 的夹具缺口。新增 1 个文件、14 个用例，
+全部是真库用例（`CAMPUS_TEST_DATABASE_URL` 未设置时跳过）。
+
+| 类 | 用例数 | 补的缺口 |
+|---|---|---|
+| `TestMetaFilters` | 3 | `GET /meta/filters` 从零行为覆盖到：学院/班级去重、停用学生剔除、空库零值 |
+| `TestOverview` | 3 | `GET /stats/overview`：`students_active` 与 `students_total` 口径差异、`pending_review`、`change_type_counts` 排序、`recent_batches` 最多 5 条且最新在前、空库边界 |
+| `TestAbnormalFileOverHttp` | 5 | §3 在 HTTP 层：坏表头、仅表头 xlsx、未知后缀、`.xlsm`、损坏 xlsx |
+| `TestConflictFixture` | 2 | §4 冲突场景端到端：`test_conflict_columns.csv` 上传 → 冲突提示 → 手动指定解除 → 校验 → 提交 |
+| `TestDemoFixture` | 1 | `students_demo.xlsx` 的文档口径（15 行 / 10 有效 / 5 异常）变成可执行断言 |
+
+### 新发现
+
+**`bad_headers.xlsx` 不会触发「缺少必需列」。** 这份夹具的表头是「编号 / 名字」，
+其中「名字」按别名精确命中 `student_name`，「编号」靠 contains 模糊命中 `student_no`
+（置信度 0.78），于是表头明显不规范的名单被 `status=uploaded` 正常接收，用户收不到任何提示。
+现状已由 `test_meta_and_files.py::TestAbnormalFileOverHttp::test_无可识别表头被包含匹配接受`
+固化；是否要给 contains 命中加 warning，需先定行为（并入 §10 的待定项一起评估）。
+
+### 口径说明
+
+`recent_batches` 的「最新在前」不能靠 `preview` 连续调用来验证：同一测试里的多次写入
+落在同一事务瞬间，`created_at` 完全相同，断言顺序等于赌数据库物理行序。用例显式把
+`created_at` 改写成按 `id` 递增的时间戳后再断言，结论才是确定的。
+
