@@ -93,10 +93,8 @@
         </dependency>
 
         <!--  demo模块  -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-demo</artifactId>
-        </dependency>
+        <!-- 校园平台不使用 RuoYi demo 示例接口；移除依赖以缩小生产暴露面。
+             如需再次启用，请恢复本依赖、ruoyi-modules 的 module 声明与 Knife4j 扫描分组。 -->
 
         <!--  工作流模块  -->
         <dependency>

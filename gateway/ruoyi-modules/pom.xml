@@ -16,7 +16,7 @@
     </description>
 
     <modules>
-        <module>ruoyi-demo</module>
+        <!-- demo 模块已从校园平台移除（含示例密钥与 /demo/** 演示接口） -->
         <module>ruoyi-gen</module>
         <module>ruoyi-job</module>
         <module>ruoyi-system</module>
