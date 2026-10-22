@@ -85,8 +85,9 @@ PR #21、#22、#25、#26 的 CI 全部 SUCCESS（后端语法、接口测试、�
 | #20 | 覆盖矩阵第二步：6 个测试文件（commit 冲突、parsing 边界、queries、remap、staging） | **A** | 全部保留；在本方分支复跑，48 项通过 |
 | #24 | `IMPORT-AUDIT-DESIGN.md`：方案 C 设计（只读） | **B** | 设计成立；据此把 PR-C 的 006 从“逐行审计异常表”收敛为“批次行级 + 异常摘要 + 删除收口” |
 | #27 | 覆盖矩阵第三步：`test_meta_and_files.py`（聚合/筛选/异常文件/冲突夹具） | **A**（含 2 处标记需调整） | 保留；其两处 `#23 strict xfail` 因 PR-C 修复而 XPASS，已改为正式断言 |
+| #29（open） | D-4 删死代码 + D-1 sidecar 与暂存文件同删 | **B** | 质量与 CI 通过；但与 PR-C 同改 `service.py`，且覆盖 `test_staging.py`/`test_parsing_edge.py`。建议 #22 合并后由作者 rebase，暂不合并；合并后文档计数将变为 17+26=43 |
 
-重叠面只有 `docs/TEST-COVERAGE-MATRIX.md`（已合并双方内容）；测试文件与业务代码无冲突。同事成果没有依赖未合并的前置改动，也未触及认证、数据库权限或密钥。
+已合并三个 PR 的重叠面只有 `docs/TEST-COVERAGE-MATRIX.md`（已合并双方内容）；`#29` 另与 PR-C 在 `service.py` 及两个测试文件上重叠，按 B 类暂缓。同事成果没有依赖未合并的前置改动，也未触及认证、数据库权限或密钥。
 
 ---
 
