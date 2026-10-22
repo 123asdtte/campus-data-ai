@@ -50,10 +50,10 @@
 
 ## 阶段 3（PR-C）：导入链路范围与审计 —— 已实施（独立 PR 待评审）
 
-- `sql/006_import_scope.sql`：`import_batches.created_dept_id` + 索引 + 审计触发器（语句级，`SECURITY DEFINER`）。
+- `sql/006_import_scope.sql`：`import_batches.created_dept_id` + 索引；批次行级审计；异常明细采用摘要 + 删除收口（方案 C，依据 `IMPORT-AUDIT-DESIGN.md`）。
 - `service.create_batch(created_dept_id=)`、`commit_batch(allowed_colleges=)`、`list_batches(dept_id=)`、`_assert_batch_scope()`。
 - 解除 `IMPORT_ADMIN_ONLY`，改为权限点 + 批次范围 + 逐行校验；批次内任一有效行越权即整批 403 且不落库。
-- **验收（实测）**：`test_import_scope.py` 8 passed；关闭态全量 130 passed；开启态专项 105 passed；历史 NULL 批次仅管理员可见；006 仅在测试库执行。
+- **验收（实测）**：`test_import_scope.py` 8 passed + `test_import_audit_summary.py` 3 passed；关闭态全量通过；开启态专项 120 passed；历史 NULL 批次仅管理员可见；006 仅在测试库执行。
 - **与计划的差异**：POC 的 48 项导入安全用例未逐条 1:1 移植，按主项目语义重写为 8 项批次范围用例 + 既有导入安全用例（`test_import_security` 系列）；该差异在 PR 说明中披露。
 
 ---
