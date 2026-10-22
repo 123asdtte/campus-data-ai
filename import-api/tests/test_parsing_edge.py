@@ -42,6 +42,9 @@ class TestEncodingFallback:
         """现状固化（矩阵 §10-3）：非法字节静默替换，乱码学号可以一路走到入库。
 
         期望行为至少是给出 warning。改为报错或告警时，本用例需同步更新。
+
+        注：这里固化的是 pandas 当前的 decode 策略（`errors="replace"`），
+        pandas 大版本升级若改变该行为，本用例会无故失败，届时按需调整预期。
         """
         broken = b"\x80\x81\xe5\xa7\x93\xe5\x90\x8d\nS001\xfe\xfe\n"
 

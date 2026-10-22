@@ -3,8 +3,9 @@
 矩阵 §8 的空白：这层是 React 前端实际在读的接口，此前只有 422 参数校验，
 零行为断言——分页算错、范围过滤失效这类问题在 CI 里完全不可见。
 
-审计提醒：直接 INSERT 会触发审计触发器，但 `campus.actor_user_id` 未设置，
-操作人记为 NULL；本文件只关心查询结果，不据此断言审计。
+审计说明：这里直接 INSERT 造数据，因此显式设置事务级 GUC
+`campus.actor_user_id`，让测试数据也走正常审计路径——既避免留下 actor 为 NULL
+的噪声，也能在触发器被意外禁用时暴露出来。
 
 启用条件同 test_db_integration.py：需要 CAMPUS_TEST_DATABASE_URL。
 """
@@ -33,6 +34,7 @@ def insert_student(
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT set_config('campus.actor_user_id', %s, true)", ("ci.tester",))
             cur.execute(
                 """
                 INSERT INTO campus.students
@@ -50,6 +52,7 @@ def insert_change(student_id: int, change_type: str, effective: date) -> None:
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT set_config('campus.actor_user_id', %s, true)", ("ci.tester",))
             cur.execute(
                 """
                 INSERT INTO campus.student_changes

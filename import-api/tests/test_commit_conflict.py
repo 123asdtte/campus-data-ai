@@ -56,7 +56,12 @@ def commit(client, batch_id: int) -> dict:
     return response.json()
 
 
+# 表名只允许取自这里：不给「拼接表名没问题」留示范
+ALLOWED_TABLES = ("students", "student_changes", "import_batches", "import_issues")
+
+
 def table_count(table: str) -> int:
+    assert table in ALLOWED_TABLES, f"表名只允许取自 {ALLOWED_TABLES}，收到 {table!r}"
     from app.db import pool
 
     with pool.connection() as conn:
@@ -105,9 +110,20 @@ class TestConcurrentWindow:
 
     @pytest.fixture(autouse=True)
     def blind_to_existing(self, monkeypatch) -> None:
+        """让校验阶段看不到已存在的学号。
+
+        这是**结果级**而非时序级模拟：真实窗口是「校验通过之后、INSERT 之前被别的
+        事务插入同学号」，要真测时序得用两个连接交错事务。这里直接让 known 为空，
+        验证的是 ON CONFLICT 被命中**之后**的行为（跳过 + 记警告）。
+
+        若生产代码换了取已知学号的函数，本 fixture 会静默失效、用例变成假通过，
+        因此显式断言替换生效。
+        """
         from app import service
 
+        original = service._fetch_known_students
         monkeypatch.setattr(service, "_fetch_known_students", lambda cur, numbers: set())
+        assert service._fetch_known_students is not original
 
     def test_两行全部撞冲突时跳过并记为警告(self, db_client, load_sample) -> None:
         commit_first_batch(db_client, load_sample)
