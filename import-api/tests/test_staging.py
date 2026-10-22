@@ -107,15 +107,9 @@ class TestStagedFileLifecycle:
         assert response.status_code == 409
 
 
-class TestSidecarDefect:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "已知缺陷（矩阵 §10-1）：提交成功后只删暂存文件，sidecar 的 .mapping.json "
-            "永久残留，每次导入都会在上传目录留下一个孤儿文件。"
-            "修复时应连同 sidecar 一起清理，届时请移除本标记"
-        ),
-    )
+class TestSidecarCleanup:
+    """矩阵 §10-1 已修复：提交成功后连同 sidecar 一起清理。"""
+
     def test_提交成功后sidecar应一并清理(self, db_client, load_sample) -> None:
         content = load_sample("test_alias_variants.csv")
         batch_id = preview(db_client, "test_alias_variants.csv", content).json()["batch_id"]
