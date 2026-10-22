@@ -1,5 +1,8 @@
 # 文档索引
 
+> 2026-10-22 起处于**文档治理过渡期**：总路线图见根目录 `PROJECT-ROADMAP.md`；
+> 26 份历史文档将移入 `docs/archive/`（方案见 DOCUMENTATION-AUDIT.md，获批后执行）。
+
 本目录存放全部设计、方案与验收记录。**先读状态标记，再看内容**——不同文档的结论适用范围不同。
 
 图例：✅ 已完成并生效 ｜ 🧪 仅在隔离 POC 成立 ｜ 📐 方案/决策（未实施） ｜ 📜 历史记录
@@ -52,6 +55,9 @@
 | [POC-IMPORT-API-PR3-REVIEW.md](POC-IMPORT-API-PR3-REVIEW.md) | 🔍 | POC PR #3 代码审查与复审：5 项 P1 修复证据、48/48 + 12/12 |
 | [INTERNAL-AUTH-SPEC.md](INTERNAL-AUTH-SPEC.md) | 🔐 | 内部请求认证规范：14 段 canonical、11 个头、金标向量 |
 | [SECURITY-MIGRATION-EXECUTION-PLAN.md](SECURITY-MIGRATION-EXECUTION-PLAN.md) | 🗺️ | 安全迁移总路线（阶段 0–5、依赖、验收、回退） |
+| [ARCHITECTURE-AND-SECURITY-PLAN.md](ARCHITECTURE-AND-SECURITY-PLAN.md) | 🏛️ | 现状架构、可信身份链路、安全边界清单（基线 d10946f） |
+| [EXECUTION-PROTOCOL.md](EXECUTION-PROTOCOL.md) | ⚙️ | 执行协议：两种任务模式、PR 流程、自主/批准边界、中断恢复 |
+| [DOCUMENTATION-AUDIT.md](DOCUMENTATION-AUDIT.md) | 🗂️ | 37 份文档审计：A4/B7/C26、矛盾清单与治理方案（待批准执行） |
 
 ## 五、RuoYi POC 验收记录（隔离环境，仓库之外）
 

@@ -1,7 +1,8 @@
 # 安全迁移总执行计划（阶段 0–5）
 
-- **状态**：阶段 1（PR-A）实施中；正式开关保持关闭
-- **关联**：`INTERNAL-AUTH-SPEC.md`、`IMPORT-API-SECURITY-PLAN.md`、`RUOYI-S1S3-MERGE-PLAN.md`
+- **状态**：阶段 1（PR-A）**已完成**——合并于 PR #16（merge `d10946f`），开关保持关闭；阶段 2（PR-B）待启动
+- **地位**：安全迁移**专项细化**；总路线图与阶段定义以根目录 `PROJECT-ROADMAP.md` 为准（含 PR-B/D 职责调整与文档治理阶段），冲突时以 PROJECT-ROADMAP 为准
+- **关联**：`INTERNAL-AUTH-SPEC.md`、`PROJECT-ROADMAP.md`、`docs/ARCHITECTURE-AND-SECURITY-PLAN.md`
 
 ---
 
