@@ -1,6 +1,6 @@
 # 文档索引
 
-> **2026-10-22 文档治理完成**：治理时 `docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；此后同事新增 `IMPORT-AUDIT-DESIGN.md`（#24）、`TEST-BEHAVIOR-DECISIONS.md`（#28），PR-E 新增验收报告，现为 **17 + 26 = 43** 份。根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
+> **2026-10-22 文档治理完成**：治理时 `docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；此后同事新增 `IMPORT-AUDIT-DESIGN.md`（#24）、`TEST-BEHAVIOR-DECISIONS.md`（#28），PR-E 新增验收报告，本轮新增工程决策日志，现为 **18 + 26 = 44** 份。根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
 >
 > **唯一年有效认证方案**：RuoYi 登录会话 → Java 网关 `X-Internal-*` 签名 → FastAPI 二次验签。任何 pwdlib/PyCasbin 或"不迁移若依"的旧方案都只在 `archive/` 中作历史追溯，**不得作为实施依据**。
 
@@ -8,14 +8,15 @@
 
 ---
 
-## 一、现行规范（docs/ 17 份）
+## 一、现行规范（docs/ 18 份）
 
 ### 入口与路线
 
 | 文档 | 状态 | 内容 |
 |---|---|---|
 | [README.md](README.md) | ✅ | 本索引 |
-| [`../PROJECT-ROADMAP.md`](../PROJECT-ROADMAP.md) | ✅ | **唯一总路线图**（根目录，不计入 docs 14）：G/R/PR-B/C/D/E、变更边界、停止条件、自主执行边界 |
+| [DECISION-LOG.md](DECISION-LOG.md) | ✅ | **工程决策唯一索引**：D-001~D-006，含证据、方案对比、回退与授权边界 |
+| [`../PROJECT-ROADMAP.md`](../PROJECT-ROADMAP.md) | ✅ | **唯一总路线图**（根目录，不计入 docs 18）：G/R/PR-B/C/D/E、变更边界、停止条件、自主执行边界 |
 | [SECURITY-MIGRATION-EXECUTION-PLAN.md](SECURITY-MIGRATION-EXECUTION-PLAN.md) | 🗺️ | 安全迁移专项细化（阶段 0–5），冲突时以总路线图为准 |
 | [EXECUTION-PROTOCOL.md](EXECUTION-PROTOCOL.md) | ⚙️ | 执行协议：两种任务模式、PR 流程、自主/批准边界、中断恢复 |
 | [DOCUMENTATION-AUDIT.md](DOCUMENTATION-AUDIT.md) | 🗂️ | 文档分类、计数口径、归档方案与 POC 审查 |
