@@ -251,19 +251,23 @@ class TestAbnormalFileOverHttp:
         assert response.status_code == 400
         assert "没有可导入的数据行" in response.json()["detail"]
 
-    def test_未知后缀按内容识别(self, db_client) -> None:
-        """现状固化（矩阵 §10-2）：扩展名白名单实际未生效。
+    def test_未知后缀被拒绝并说明原因(self, db_client) -> None:
+        """矩阵 §10-2 已修复：入口白名单拒 `.txt`，并给出可操作的原因。
 
-        `.txt` 只要内容是 CSV 就会被正常导入；`service._read_frame` 里那句
-        「仅支持 .xlsx / .csv」是不可达的死代码。若改为拒绝未知后缀，改用例。
+        旧行为是按内容识别——`.txt` 也能导入。问题不在「放行了 .txt」，
+        而在 `.pdf`/`.xls`/`.txt` 的失败都被收敛成同一句「没有可导入的数据行」，
+        用户看不出该换格式。现在格式问题在入口就被拦下。
         """
         response = preview(db_client, "名单.txt", "学号,姓名\nS001,甲\n".encode())
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "uploaded"
+        assert response.status_code == 400
+        assert "仅支持" in response.json()["detail"]
+        assert ".txt" in response.json()["detail"]
+        # 拒绝发生在落盘与建批次之前
+        assert table_count("import_batches") == 0
 
     def test_xlsm后缀按Excel解析(self, db_client) -> None:
-        """`_is_xlsx` / `create_batch` / `_read_frame` 都列了 `.xlsm`，但无任何用例。"""
+        """`_is_xlsx` / `create_batch` 都列了 `.xlsm`，但无任何用例。"""
         content = make_xlsx([["学号", "姓名"], ["M001", "甲"]])
 
         response = preview(db_client, "名单.xlsm", content)
@@ -271,16 +275,8 @@ class TestAbnormalFileOverHttp:
         assert response.status_code == 200
         assert response.json()["total_rows"] == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "已知缺陷（矩阵 §10-4）：扩展名是 .xlsx 但内容不是 zip 包时，"
-            "openpyxl 的异常直接冒到 FastAPI，用户拿到 500 而不是 400。"
-            "修复后本用例会 XPASS，请删掉这个标记转为正式断言。"
-        ),
-    )
     def test_损坏的xlsx应返回400(self, db_client) -> None:
-        """期望 400，当前 500——openpyxl 的异常没被转成 `ServiceError`（矩阵 §10-4）。
+        """矩阵 §10-4 已修复：解析层收成 `WorkbookError`，service 转 `ServiceError`。
 
         `TestClient` 默认把服务端异常抛出来，这里关掉才能断言「用户看到的状态码」，
         否则用例会变成一个与生产行为无关的 raise 断言。新 client 复用同一个 `app`
@@ -296,6 +292,7 @@ class TestAbnormalFileOverHttp:
         response = preview(client, "broken.xlsx", b"this is definitely not a zip archive")
 
         assert response.status_code == 400
+        assert "无法读取 Excel" in response.json()["detail"]
 
 
 # ------------------------------------------------------------------ 冲突夹具端到端

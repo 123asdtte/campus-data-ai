@@ -21,7 +21,7 @@
 
 推荐结论：**四项全做**。D-4 与 D-1 是无争议的清理；D-2 与 D-3 都是「把静默错误改成显式报错」，方向一致——宁可让用户当场重存文件，也不要让他三天后发现学号是乱码。
 
-> 进度：**D-4 已实施；D-1 已实施（孤儿文件清理脚本除外）**；D-2、D-3 待实施。
+> 进度：**四项均已实施**（D-1 的存量清理脚本除外）。D-3 在实施时发现原判断不全——旧代码的两次解码是「覆盖」而非「兜底」，详见 D-3 段。
 
 ---
 
@@ -87,6 +87,8 @@
 
 ## D-2 扩展名白名单未生效
 
+**状态：已实施。** `service._require_supported_extension()` 在 `create_batch` 入口按 `.xlsx/.xlsm/.csv` 拦截，文案区分「扩展名不符」「没有扩展名」；`test_parsing_edge.py::TestExtensionHandling` 与 `test_meta_and_files.py::test_未知后缀被拒绝并说明原因` 覆盖，后者断言拒绝发生在建批次之前。
+
 **现状**
 
 - `parsing._is_xlsx()`（`:65`）只判断是否 `.xlsx/.xlsm`；`load_frame()`（`:158`）据此二分：是 Excel 走 `read_excel`，**其余一切**走 `read_csv`。
@@ -122,6 +124,20 @@
 ---
 
 ## D-3 编码非法时静默替换
+
+**状态：已实施，且实施时发现本单原判断不全。** `parsing._decode_text()` 严格解码（UTF-8 → GBK，失败即 `WorkbookError`）。
+
+实施时实测出**比「替换字符」更严重的一层**：旧代码的两次解码不是「兜底」而是「覆盖」——
+
+```python
+raw = data.decode("utf-8-sig", errors="replace")   # 先解一份
+try:
+    raw = data.decode("gbk")                       # 再严格解一次，成功就覆盖掉上面
+except UnicodeDecodeError:
+    pass
+```
+
+于是「中文表头 + ASCII 数据」的 UTF-8 文件（如 `学号,姓名\n2026001,\n`）整份字节恰好能被 GBK 解出，表头变成「瀛﹀彿,濮撳悕」，映射全失配，用户看到的是「200 + status=failed / 缺少必需列」，而 `test_parsing_edge.py::test_中文表头加ASCII数据不被GBK覆盖` 已把这条固化成回归用例。这解释了为什么「编码问题」在现场常被误报成「表头不规范」。
 
 **现状**
 
