@@ -264,3 +264,17 @@ preview（上传 + 解析 + 预览）
 - 无论置信度多高，提交前都必须展示映射结果。
 - 必填字段缺失或存在映射冲突时，`validate` 与 `commit` 均被禁止。
 - 字段映射只解决列名差异，不改变数据校验规则：非法枚举、重复学号、日期错误照常报错。
+
+---
+
+## 9. 内部请求认证（可选，默认关闭）
+
+| 开关 | 行为 |
+|---|---|
+| `INTERNAL_AUTH_ENABLED=false`（默认） | 与历史行为一致；`PUT /students/{no}` 不注册（同路径 GET 存在 → 405） |
+| `INTERNAL_AUTH_ENABLED=true` | 所有业务路由要求 `X-Internal-*` 签名；`PUT` 注册；`X-Actor` 被忽略 |
+
+- 公开端点：`GET /health`（liveness，仅 `{"status":"ok"}`）、`GET /health/ready`（数据库就绪，503 时不暴露细节）。
+- 错误码：401（缺头/摘要不符/时间戳越界/签名错误）、403（权限不足/缺学院声明/导入接口非管理员）、409（nonce 重放）。
+- **PR-C 前的临时限制**：7 个导入接口仅允许管理员；非管理员即使持有全部 `import:batch:*` 也返回 403。
+- 完整规范（14 段 canonical、11 个头、金标向量）见 `docs/INTERNAL-AUTH-SPEC.md`。

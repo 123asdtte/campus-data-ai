@@ -152,7 +152,13 @@ docker compose up -d --build             # db / appsmith / import-api（镜像�
 docker compose exec -T campus-db psql -U campus_dba -d campus \
   -v app_password="$APP_DB_PASSWORD" -v ro_password="$RO_DB_PASSWORD" \
   -q -f - < sql/003_roles.sql          # 最小权限账号（只做一次）
+docker compose exec -T campus-db psql -U campus_dba -d campus \
+  -q -f - < sql/004_internal_auth.sql  # 内部认证 nonce 表（可重复执行）
 ```
+
+> 初始化顺序是 **001 → 003 → 004**；`002_seed_demo.sql` 是本地演示数据，
+> 且会宽范围删除审计记录，**不要用于测试库或生产库**。
+> 测试库一键初始化：`python scripts/init-test-db.py --admin-dsn <DSN> --verify`。
 
 前端（独立栈，同样容器内构建，**无需宿主机 Node**）：
 
@@ -172,6 +178,25 @@ docker compose -p campus-web -f docker-compose.web.yml up -d --build
 | Import API | http://127.0.0.1:8010 （`/health` 探活） |
 | Appsmith（历史方案） | http://127.0.0.1:8081 |
 | PostgreSQL | 127.0.0.1:55432（库 `campus`） |
+
+### 6.3 内部认证开关（默认关闭）
+
+| 开关 | 行为 |
+|---|---|
+| `INTERNAL_AUTH_ENABLED=false`（默认） | 11 个业务接口保持旧行为；`PUT /students/{no}` **不注册**（405） |
+| `INTERNAL_AUTH_ENABLED=true` | 所有业务接口要求 `X-Internal-*` 签名；`PUT` 注册 |
+
+```bash
+# 生成密钥（≥32 字符），同时写入网关与服务端
+openssl rand -hex 32
+# .env: INTERNAL_AUTH_ENABLED=true / INTERNAL_HMAC_SECRET=<同一个值>
+docker compose up -d --force-recreate import-api
+```
+
+- 开关在进程导入期定型，修改后必须重建容器；
+- 开启前先执行 `sql/004_internal_auth.sql`，否则启动即失败；
+- 健康检查：`/health` 为 liveness（只返回 `{"status":"ok"}`），`/health/ready` 为数据库就绪探针；
+- 规范见 `docs/INTERNAL-AUTH-SPEC.md`，迁移路线见 `docs/SECURITY-MIGRATION-EXECUTION-PLAN.md`。
 
 ### 6.4 日志、停止与恢复
 
