@@ -131,3 +131,43 @@ def test_授权回归_只读与删除边界(admin_conn):
                 "SELECT has_table_privilege('campus_app', %s, %s)", (table, privilege)
             )
             assert cur.fetchone()[0] is expected, f"{table} {privilege} 授权与预期不符"
+
+def test_清理函数属主与执行权限(admin_conn):
+    """审查项：专用 NOLOGIN 属主、固定 search_path、PUBLIC 不可执行。"""
+    with admin_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT pg_get_userbyid(p.proowner) AS owner,
+                   r.rolcanlogin AS can_login,
+                   coalesce(array_to_string(p.proconfig, ','), '') AS config,
+                   coalesce(array_to_string(p.proacl, ','), '-') AS acl
+              FROM pg_proc p
+              JOIN pg_roles r ON r.oid = p.proowner
+             WHERE p.proname = 'cleanup_internal_nonce'
+            """
+        )
+        owner, can_login, config, acl = cur.fetchone()
+
+    assert owner == "campus_nonce_cleaner"
+    assert can_login is False, "清理函数属主必须是 NOLOGIN"
+    assert "search_path=campus, pg_temp" in config
+    assert ",=X/" not in acl and not acl.startswith("=X/"), f"PUBLIC 不应可执行：{acl}"
+
+    with admin_conn.cursor() as cur:
+        cur.execute(
+            "SELECT has_function_privilege('campus_app', 'campus.cleanup_internal_nonce()', 'EXECUTE')"
+        )
+        assert cur.fetchone()[0] is True
+
+
+def test_清理函数属主不能触达业务表(admin_conn):
+    with admin_conn.cursor() as cur:
+        for table, privilege in [
+            ("campus.students", "SELECT"),
+            ("campus.students", "DELETE"),
+            ("campus.operation_logs", "INSERT"),
+            ("campus.import_batches", "UPDATE"),
+        ]:
+            cur.execute("SELECT has_table_privilege('campus_nonce_cleaner', %s, %s)",
+                        (table, privilege))
+            assert cur.fetchone()[0] is False, f"{table} {privilege} 不应授予清理属主"

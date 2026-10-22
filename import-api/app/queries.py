@@ -141,6 +141,13 @@ def update_student(
     if unknown:
         raise ServiceError(f"不允许修改的字段：{', '.join(unknown)}", 422)
 
+    if "student_name" in fields:
+        name = (fields["student_name"] or "").strip()
+        if not name:
+            # 数据库有 NOT NULL + 非空白 CHECK，先在应用层拒绝，避免 500
+            raise ServiceError("student_name 不能为空", 422)
+        fields["student_name"] = name
+
     if "student_status" in fields and fields["student_status"] not in STUDENT_STATUS_VALUES:
         raise ServiceError(
             f"student_status 非法：{fields['student_status']}，可选 {', '.join(STUDENT_STATUS_VALUES)}",
