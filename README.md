@@ -27,19 +27,26 @@
   │  http://127.0.0.1:8082
   ▼
 campus-web        nginx 1.29 + React 静态产物   （独立 Compose 栈）
-  │  /api/* 反向代理（剥前缀）
+  │  /gw/* 反向代理（登录 + 全部业务接口）
   ▼
-campus-import-api FastAPI + pandas/openpyxl     解析 / 校验 / 入库 / 审计上下文
+campus-gateway    RuoYi-Vue-Plus（Sa-Token）     登录 / 权限点 / 学院范围 / HMAC 签名
+  │  内网 X-Internal-*（14 段 canonical）
+  ▼
+campus-import-api FastAPI + pandas/openpyxl     验签 / 解析 / 校验 / 入库 / 审计上下文
   │  psycopg + 事务级 set_config('campus.actor_user_id')
   ▼
 campus-db         PostgreSQL 16.15               业务表 + 审计触发器
                     │
                     └─ operation_logs（触发器写入，与业务同事务）
 
+campus-gateway-db PostgreSQL 16.15               独立认证库 campus_gateway（sys_* 表）
+campus-gateway-redis Redis 7.4                   Sa-Token 会话缓存
+
 campus-appsmith   Appsmith CE v2.5.0            低代码界面（历史方案，**已于 2026-10-22 R2 下线**）
 ```
 
 - 所有端口只绑定 `127.0.0.1`，不对局域网/公网暴露。
+- **PR-D 起浏览器不再有 `/api` 直连入口**：`import-api` 无宿主端口，只能由网关在容器网络内按服务名调用。
 - 业务表位于 `campus` schema，审计由数据库触发器保证「业务变更与审计同事务」。
 
 ### 2.2 独立 POC：RuoYi-Vue-Plus 验证环境（独立私有仓库）
@@ -73,19 +80,21 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | 数据权限专项 | 🧪 POC 通过 | 框架 Mapper 与实际业务路径**分别**取证 | [RUOYI-POC-DATA-PERMISSION.md](docs/archive/RUOYI-POC-DATA-PERMISSION.md) |
 | 学生管理切片 S1–S3 | 🧪 POC 通过 | 列表/详情/修改 + 12 项测试 | [RUOYI-POC-STUDENT-SLICE.md](docs/archive/RUOYI-POC-STUDENT-SLICE.md) |
 | 配套 React 前端 | 🧪 POC 通过 | 生产构建成功、真实登录、动态菜单 | [RUOYI-POC-AUTH-RESULTS.md](docs/archive/RUOYI-POC-AUTH-RESULTS.md) §13.2 |
-| **正式迁移** | ❌ **未开始** | S1–S3 的**实现代码尚未进入主项目**，仓库内只有验收文档 | [API-MIGRATION-INVENTORY.md](docs/API-MIGRATION-INVENTORY.md) |
-| 认证与权限（主系统） | 🟡 基础设施已合入 | PR #16 已合入验签与范围（默认关闭）；正式网关与学生域迁移未开始；关闭态 `X-Actor` 仍可伪造 | [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md) |
-| 学生域网关（PR-B） | 🟡 PR 待评审 | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计 actor；端到端已通过，PR 未合并 | PR 描述 |
+| **正式迁移** | 🟡 **PR-B/C/D 已实现，待评审** | 网关、学生域、导入域与统一入口均已进入主项目并通过端到端验证；PR 未合并 | [PROJECT-ROADMAP.md](PROJECT-ROADMAP.md) |
+| 认证与权限（主系统） | 🟡 默认关闭 | 验签 + 权限点 + 学院范围已实现；`INTERNAL_AUTH_ENABLED=false` 保持关闭，正式切换需人工批准 | [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md) |
+| 学生域网关（PR-B） | 🟡 PR 待评审 | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计 actor | PR #21 |
+| 导入域隔离（PR-C） | 🟡 PR 待评审 | 批次归属部门 + 逐行学院校验 + 批次/异常表审计；管理员硬限制已解除 | PR #22 |
+| 统一入口（PR-D） | 🟡 PR 待评审 | 学生/聚合/导入全部经 `/gw`；移除 `/api` 与宿主 8010；multipart 经网关签名 | PR 描述 |
 | AI 能力（Dify 等） | ❌ 未开始 | 按计划排在认证与权限之后 | [ADR-001-import-mapping.md](docs/ADR-001-import-mapping.md) |
 
 🧪 = 结论仅在隔离 POC 成立，**不代表生产环境已具备同等保护**。
 
 ### 3.1 已知未完成 / 未验证
 
-- 关闭态（默认）接口保持旧行为、无认证；开启态已有 HMAC 验签 + 权限点 + 学院范围（仅在测试库验证），**正式迁移尚未开始**；
-- `import_batches`、`import_issues` **无审计触发器**（PR-C）；
+- 关闭态（默认）接口保持旧行为、无认证；开启态已有 HMAC 验签 + 权限点 + 学院范围；
+- 正式库尚未执行 `004`、`005`、`006`，迁移与回退演练属 PR-E；
 - 现行认证契约见 [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md)，阶段与顺序见 [PROJECT-ROADMAP.md](PROJECT-ROADMAP.md)；旧认证方案已归档，禁止作为实施依据；
-- 边界项：数据库异常注入回滚、并发修改、nonce 表 TTL 清理均未验证（PR-E）。
+- 边界项：并发修改、大文件内存、nonce 表 TTL 清理、数据库异常注入回滚均未验证（PR-E）。
 
 ---
 
@@ -99,7 +108,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | Docker | Docker Desktop，固定版本标签 | Engine 29.2.0 / Compose v5.0.2 |
 | 内存 | 建议 8 GB 以上（当前主栈 db/api/web 实测约 1–2 GB） | 31.8 GB |
 | 磁盘 | 项目盘剩余 ≥ 15 GB | Z: 141 GB 可用（代码）/ F: 27 GB 可用（镜像与数据卷） |
-| 端口 | 55432、8010、8082 未被占用（8081/8443 随 Appsmith 下线已释放） | 已确认（5432/8000/8080 被其他服务占用，故整体避开） |
+| 端口 | 8082、55432、55434、6382、9190 未被占用（8010 已随 PR-D 取消宿主发布；8081/8443 随 Appsmith 下线已释放） | 已确认（5432/8000/8080 被其他服务占用，故整体避开） |
 | PostgreSQL | 16.15（镜像 `postgres:16.15-alpine`） | 容器内 |
 | JDK / Maven | 21 / 3.9+（仅构建 gateway） | 已安装（`C:\Program Files\Java\jdk-21`） |
 | Python | 3.12（镜像 `python:3.12-slim`） | 仅构建期；运行时在容器内 |
@@ -122,8 +131,8 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 
 ```text
 campus-data-ai/
-├─ gateway/                   # PR-B：RuoYi 网关最小切片（JDK 21 + Maven）
-├─ docker-compose.yml          # 主栈：campus-db / import-api（Appsmith 已下线）
+├─ gateway/                   # RuoYi 网关（登录、权限点、学生/聚合/导入签名代理）
+├─ docker-compose.yml          # 主栈：campus-db / import-api / gateway(-db/-redis)（Appsmith 已下线）
 ├─ docker-compose.web.yml      # 前端独立栈（campus-web）
 ├─ import-api/                 # FastAPI 服务（含 wheels 离线依赖）
 ├─ web/                        # React + TypeScript + Ant Design 前端
@@ -157,9 +166,13 @@ docker compose exec -T campus-db psql -U campus_dba -d campus \
   -q -f - < sql/003_roles.sql          # 最小权限账号（只做一次）
 docker compose exec -T campus-db psql -U campus_dba -d campus \
   -q -f - < sql/004_internal_auth.sql  # 内部认证 nonce 表（可重复执行）
+docker compose exec -T campus-db psql -U campus_dba -d campus \
+  -q -f - < sql/006_import_scope.sql   # 导入批次归属 + 批次审计（可重复执行）
 ```
 
-> 初始化顺序是 **001 → 003 → 004**；`002_seed_demo.sql` 是本地演示数据，
+> 初始化顺序是 **001 → 003 → 004 → 006**；`005_gateway_bootstrap.sql` 只用于独立认证库
+> `campus_gateway`（由 gateway-db 容器首次启动时自动执行），**不要**在业务库执行。
+> `002_seed_demo.sql` 是本地演示数据，
 > 且会宽范围删除审计记录，**不要用于测试库或生产库**。
 > 测试库一键初始化：`python scripts/init-test-db.py --admin-dsn <DSN> --verify`。
 
@@ -169,14 +182,14 @@ docker compose exec -T campus-db psql -U campus_dba -d campus \
 docker compose -p campus-web -f docker-compose.web.yml up -d --build
 ```
 
-网关（PR-B，需要 JDK 21 + Maven；首次构建约 2–3 分钟）：
+网关（需要 JDK 21 + Maven；首次构建约 2–3 分钟）：
 
 ```bash
 cd gateway
 mvn -B -DskipTests -pl ruoyi-admin -am package
 cd ..
 docker compose up -d gateway-db gateway-redis     # 独立认证库 + 会话缓存
-docker compose up -d --build gateway              # 登录 + 学生域签名代理
+docker compose up -d --build gateway              # 登录 + 学生/聚合/导入签名代理
 ```
 
 > 2026-10-21 起前端改为多阶段构建（node:22-alpine 容器内 npm ci + vite build），
@@ -187,9 +200,9 @@ docker compose up -d --build gateway              # 登录 + 学生域签名代�
 
 | 服务 | 地址 |
 |---|---|
-| React 前端 | http://127.0.0.1:8082 |
-| Import API | http://127.0.0.1:8010 （`/health` 探活） |
-| Gateway（PR-B） | http://127.0.0.1:9190 （登录 + 学生域代理） |
+| React 前端 | http://127.0.0.1:8082 （统一入口；业务请求经 `/gw/`） |
+| Gateway | http://127.0.0.1:9190 （登录 + 学生/聚合/导入代理） |
+| Import API | **仅容器内网** `import-api:8000`（PR-D 起无宿主端口） |
 | Gateway DB / Redis | 127.0.0.1:55434 / 6382（独立于业务库） |
 | Appsmith（历史方案，已下线） | 不再提供（2026-10-22 R2：容器停止、compose 移除、卷保留） |
 | PostgreSQL | 127.0.0.1:55432（库 `campus`） |
@@ -275,14 +288,23 @@ CAMPUS_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/campus_test \
 ## 9. 导入接口速览
 
 ```bash
-BASE=http://127.0.0.1:8010
+# 先登录网关获得 token（账号需具备 import:batch:* 权限点）
+TOKEN=$(curl -s -X POST http://127.0.0.1:8082/gw/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"clientId":"e5cd7e4891bf95d1d19206ce24a7b32e","grantType":"password","username":"admin","password":"admin123","tenantId":"000000"}' \
+  | python -c 'import sys,json;print(json.load(sys.stdin)["data"]["access_token"])')
+
+BASE=http://127.0.0.1:8082/gw/internal/proxy
+AUTH=(-H "Authorization: Bearer $TOKEN" -H "clientid: e5cd7e4891bf95d1d19206ce24a7b32e")
 # 1) 预览：识别工作表/表头/字段映射，返回 batch_id
-curl -X POST "$BASE/imports/preview" -F "file=@samples/students_clean.xlsx" -F "target_type=students"
+curl "${AUTH[@]}" -X POST "$BASE/imports/preview" -F "file=@samples/students_clean.xlsx" -F "target_type=students"
 # 2) 校验：写入异常明细，返回有效/异常行数
-curl -X POST "$BASE/imports/$BATCH/validate"
+curl "${AUTH[@]}" -X POST "$BASE/imports/$BATCH/validate"
 # 3) 提交：事务写入；重复提交返回 409
-curl -X POST "$BASE/imports/$BATCH/commit"
+curl "${AUTH[@]}" -X POST "$BASE/imports/$BATCH/commit"
 ```
+
+> PR-D 起 FastAPI 无宿主端口，以上命令必须经 `/gw`；直接访问 `127.0.0.1:8010` 会被拒绝。
 
 完整说明见 [IMPORT-API.md](docs/IMPORT-API.md)。
 
@@ -290,12 +312,13 @@ curl -X POST "$BASE/imports/$BATCH/commit"
 
 ## 10. 操作审计
 
-- 业务表 `students` / `student_changes` 上挂了 `trg_*_audit` 触发器；
+- 业务表 `students` / `student_changes` 与导入批次表 `import_batches` / `import_issues` 均挂审计触发器；
 - 操作人来自事务级 `set_config('campus.actor_user_id', ...)`，与业务写入**同一事务**——回滚时审计一并回滚；
 - 审计表同时记录**数据库连接账号**（`actor_db_role`）与业务操作人（`actor_user_id`）；
 - 敏感字段在写入审计前被剔除（`audit_payload()`）。
 
-> ⚠️ 关闭态（默认）：操作人来自客户端可伪造的 `X-Actor`，**只具备演示价值**；开启态：操作人来自验签通过的 `X-Internal-User`，正式网关链路待 PR-B。
+> ⚠️ 默认关闭态：操作人来自客户端可伪造的 `X-Actor`，**只具备演示价值**；
+> 开启态：操作人来自验签通过的 `X-Internal-User`，PR-B/C/D 已完成端到端验证，正式切换待人工批准。
 
 ---
 

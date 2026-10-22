@@ -13,8 +13,11 @@
 | 服务 | 镜像 | 端口（仅 127.0.0.1） | 数据卷 | 健康检查 |
 |---|---|---|---|---|
 | `campus-db` | postgres:16.15-alpine | 55432→5432 | `campus_pgdata` + `./sql` 初始化挂载 | pg_isready |
-| `appsmith` | appsmith-ce:v2.5.0 | 8081→80, 8443→443 | `campus_appsmith_stacks` | 自带 |
-| `campus-import-api` | `campus-import-api:0.1.0`（本地构建） | 8010→8000 | `campus_uploads` + `./samples` 只读 | HTTP /health |
+| `campus-import-api` | `campus-import-api:0.1.0`（本地构建） | **无宿主端口**（仅容器内网 8000；PR-D） | `campus_uploads` + `./samples` 只读 | HTTP /health |
+| `campus-gateway` | `campus-gateway:0.1.0`（本地构建） | 9190→9180 | 无 | 无 |
+| `campus-gateway-db` | postgres:16.15-alpine | 55434→5432 | `gateway_pgdata` + `sql/005` 初始化 | pg_isready |
+| `campus-gateway-redis` | redis:7.4-alpine | 6382→6379 | `gateway_redis` | redis-cli ping |
+| ~~appsmith~~ | ~~appsmith-ce:v2.5.0~~ | ~~8081/8443~~ | 卷 `campus_appsmith_stacks` 保留 | 已于 2026-10-22 R2 下线 |
 
 网络：`campus-net`（bridge，显式命名）。日志轮转 json-file 10m×3。
 
@@ -24,7 +27,7 @@
 |---|---|---|---|
 | `campus-web` | `campus-data-web:0.1.0`（本地构建，nginx 1.29-alpine） | 8082→80 | 无（独立于主栈网络） |
 
-构建上下文 `web/`，`Dockerfile.web` 只 `COPY dist`——**前提是宿主机已执行 `npm run build`**。
+构建上下文 `web/`，`Dockerfile.web` 为多阶段构建（node:22-alpine 内 `npm ci && npm run build` → nginx:1.29-alpine 复制 `dist`），宿主机无需 Node。
 
 ### 1.3 POC `Z:\ai\本地部署\ruoyi-plus-poc\docker-compose.poc.yml`（项目名 `ruoyi-poc`，仓库之外）
 

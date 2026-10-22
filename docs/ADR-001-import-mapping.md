@@ -25,7 +25,7 @@
 
 | 类型 | 是否使用 | 说明 |
 |---|---|---|
-| **业务 API**（系统自己的 FastAPI） | **使用** | React 页面通过 `/api/*` 调用预览、校验、提交接口，这些是内部后端，不是外部 AI 服务 |
+| **业务 API**（系统自己的 FastAPI） | **使用** | React 页面通过 `/gw/internal/proxy/*`（Java 网关签名）调用预览、校验、提交接口，这些是内部后端，不是外部 AI 服务 |
 | **AI 模型 API**（OpenAI / DeepSeek / Dify 等） | **不使用** | 解析过程中没有任何出网请求 |
 
 已验证：`import-api/app` 与 `import-api/scripts` 中不存在 `requests`、`httpx`、`aiohttp`、`openai`、`dify` 等调用；依赖清单仅为 fastapi、uvicorn、pandas、openpyxl、pandera、psycopg、python-multipart、pydantic。
@@ -56,7 +56,7 @@
 3. **成本与运行依赖低**：毫秒级完成，零调用费用；部署时不需要额外模型服务、显存或网络出口。
 4. **学生数据不必因字段识别而外发**：表头与数据都留在本地。系统中已出现含身份证号、联系电话、家庭住址的表格，任何外部调用都会扩大数据暴露面。
 
-补充说明：不接模型**不等于**系统没有 API。业务功能仍由内部 FastAPI 提供，前端通过 `/api` 代理访问，只是不调用外部大模型服务。
+补充说明：不接模型**不等于**系统没有 API。业务功能仍由内部 FastAPI 提供，前端统一经 Java 网关 `/gw` 访问，只是不调用外部大模型服务。
 
 ---
 

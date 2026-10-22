@@ -6,11 +6,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.system.api.model.LoginUser;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -91,6 +96,120 @@ public class InternalProxyController {
         return call(HttpMethod.PUT, "/students/" + studentNo, Map.of(), body);
     }
 
+    // ------------------------------------------------------------------ 聚合（PR-D）
+
+    @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/meta/filters")
+    public ResponseEntity<String> getFilters() {
+        return call(HttpMethod.GET, "/meta/filters", Map.of(), new byte[0]);
+    }
+
+    @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/stats/overview")
+    public ResponseEntity<String> getOverview() {
+        return call(HttpMethod.GET, "/stats/overview", Map.of(), new byte[0]);
+    }
+
+    // ------------------------------------------------------------------ 导入域（PR-D）
+
+    /**
+     * multipart 上传：签名覆盖文件内容 SHA-256 与除 file 外的全部表单字段。
+     * 网关收到浏览器上传后整体读入内存再转发；大文件内存峰值由 PR-E 压测。
+     */
+    @SaCheckPermission(value = "import:batch:upload", orRole = SUPER_ADMIN_ROLE)
+    @PostMapping(value = "/imports/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<String> previewImport(
+        @RequestParam("file") MultipartFile file,
+        @RequestParam("target_type") String targetType,
+        @RequestParam(value = "sheet_name", required = false) String sheetName,
+        @RequestParam(value = "header_row", required = false) Integer headerRow,
+        @RequestParam(value = "mapping", required = false) String mapping) {
+        try {
+            byte[] data = file.getBytes();
+            // 非文件字段：与 Python 端 form.multi_items() 排除 file 后按键排序拼接一致
+            Map<String, String> metaFields = new TreeMap<>();
+            metaFields.put("target_type", targetType);
+            if (sheetName != null && !sheetName.isBlank()) {
+                metaFields.put("sheet_name", sheetName);
+            }
+            if (headerRow != null) {
+                metaFields.put("header_row", String.valueOf(headerRow));
+            }
+            if (mapping != null && !mapping.isBlank()) {
+                metaFields.put("mapping", mapping);
+            }
+
+            String signPath = "/imports/preview";
+            HttpHeaders headers = internalHeaders(HttpMethod.POST, signPath, "",
+                sha256(data), normalize(metaFields));
+
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            String originalName = file.getOriginalFilename() == null ? "upload.xlsx" : file.getOriginalFilename();
+            builder.part("file", new ByteArrayResource(data) {
+                @Override
+                public String getFilename() {
+                    return originalName;
+                }
+            });
+            metaFields.forEach(builder::part);
+
+            String response = RestClient.create()
+                .post()
+                .uri(importApiBase + signPath)
+                .headers(h -> h.addAll(headers))
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(builder.build())
+                .retrieve()
+                .body(String.class);
+            return ResponseEntity.ok(response);
+        } catch (RestClientResponseException ex) {
+            return upstreamError(ex);
+        } catch (Exception ex) {
+            return unreachable("POST", "/imports/preview", ex);
+        }
+    }
+
+    @SaCheckPermission(value = "import:batch:upload", orRole = SUPER_ADMIN_ROLE)
+    @PostMapping("/imports/preview-base64")
+    public ResponseEntity<String> previewImportBase64(@RequestBody Map<String, Object> payload) {
+        return call(HttpMethod.POST, "/imports/preview-base64", Map.of(), Json.write(payload));
+    }
+
+    @SaCheckPermission(value = "import:batch:remap", orRole = SUPER_ADMIN_ROLE)
+    @PostMapping("/imports/{batchId}/remap")
+    public ResponseEntity<String> remapImport(@PathVariable("batchId") Long batchId,
+                                              @RequestBody Map<String, Object> payload) {
+        return call(HttpMethod.POST, "/imports/" + batchId + "/remap", Map.of(), Json.write(payload));
+    }
+
+    @SaCheckPermission(value = "import:batch:validate", orRole = SUPER_ADMIN_ROLE)
+    @PostMapping("/imports/{batchId}/validate")
+    public ResponseEntity<String> validateImport(@PathVariable("batchId") Long batchId) {
+        return call(HttpMethod.POST, "/imports/" + batchId + "/validate", Map.of(), new byte[0]);
+    }
+
+    @SaCheckPermission(value = "import:batch:commit", orRole = SUPER_ADMIN_ROLE)
+    @PostMapping("/imports/{batchId}/commit")
+    public ResponseEntity<String> commitImport(@PathVariable("batchId") Long batchId) {
+        return call(HttpMethod.POST, "/imports/" + batchId + "/commit", Map.of(), new byte[0]);
+    }
+
+    @SaCheckPermission(value = "import:batch:detail", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/imports/{batchId}")
+    public ResponseEntity<String> getImport(@PathVariable("batchId") Long batchId) {
+        return call(HttpMethod.GET, "/imports/" + batchId, Map.of(), new byte[0]);
+    }
+
+    @SaCheckPermission(value = "import:batch:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/imports")
+    public ResponseEntity<String> listImports(@RequestParam(value = "limit", required = false) Integer limit) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (limit != null) {
+            query.put("limit", String.valueOf(limit));
+        }
+        return call(HttpMethod.GET, "/imports", query, new byte[0]);
+    }
+
     // ------------------------------------------------------------------ 内部
 
     /**
@@ -99,8 +218,44 @@ public class InternalProxyController {
      */
     private ResponseEntity<String> call(HttpMethod method, String signPath,
                                         Map<String, String> query, byte[] jsonBody) {
-        if (hmacSecret == null || hmacSecret.isBlank()) {
+        String normQuery = normalize(query);
+        HttpHeaders headers;
+        try {
+            headers = internalHeaders(method, signPath, normQuery, sha256(jsonBody), "");
+        } catch (IllegalStateException ex) {
             return ResponseEntity.status(500).body("{\"detail\":\"INTERNAL_HMAC_SECRET 未配置\"}");
+        }
+
+        String url = importApiBase + signPath + (normQuery.isEmpty() ? "" : "?" + normQuery);
+        RestClient.RequestBodySpec spec = RestClient.create()
+            .method(method)
+            .uri(url)
+            .headers(h -> h.addAll(headers));
+
+        try {
+            spec = spec.contentType(MediaType.APPLICATION_JSON);
+            String response = (jsonBody.length == 0 ? spec.body(new byte[0]) : spec.body(jsonBody))
+                .retrieve()
+                .body(String.class);
+            return ResponseEntity.ok(response);
+        } catch (RestClientResponseException ex) {
+            return upstreamError(ex);
+        } catch (Exception ex) {
+            return unreachable(method.name(), signPath, ex);
+        }
+    }
+
+    /**
+     * 生成 11 个内部签名头。
+     *
+     * @param normQuery 已规范化的查询串（无参数为空串）
+     * @param payloadSha 请求体或文件内容的 SHA-256
+     * @param meta      multipart 非文件字段的规范化串（JSON 请求为空串）
+     */
+    private HttpHeaders internalHeaders(HttpMethod method, String signPath, String normQuery,
+                                        String payloadSha, String meta) {
+        if (hmacSecret == null || hmacSecret.isBlank()) {
+            throw new IllegalStateException("INTERNAL_HMAC_SECRET 未配置");
         }
         LoginUser loginUser = LoginHelper.getLoginUser();
         String user = "ry:" + LoginHelper.getUsername();
@@ -120,48 +275,42 @@ public class InternalProxyController {
         String collegesHeader = admin ? "" : collegeHeader;
         String adminHeader = admin ? "true" : "false";
 
-        String normQuery = normalize(query);
-        String payloadSha = sha256(jsonBody);
         String timestamp = String.valueOf(Instant.now().getEpochSecond());
         String nonce = IdUtil.simpleUUID();
 
         String canonical = String.join("\n",
-            method.name(), signPath, normQuery, timestamp, nonce, payloadSha, "",
+            method.name(), signPath, normQuery, timestamp, nonce, payloadSha, meta,
             user, role, collegeHeader, collegesHeader, deptId, adminHeader, permsHeader);
         String signature = hmacHex(hmacSecret, canonical);
 
-        String url = importApiBase + signPath + (normQuery.isEmpty() ? "" : "?" + normQuery);
-        RestClient.RequestBodySpec spec = RestClient.create()
-            .method(method)
-            .uri(url)
-            .header("X-Internal-User", user)
-            .header("X-Internal-Role", role)
-            .header("X-Internal-College", collegeHeader)
-            .header("X-Internal-Colleges", collegesHeader)
-            .header("X-Internal-Dept", deptId)
-            .header("X-Internal-Admin", adminHeader)
-            .header("X-Internal-Perms", permsHeader)
-            .header("X-Internal-Timestamp", timestamp)
-            .header("X-Internal-Nonce", nonce)
-            .header("X-Internal-Payload-Sha256", payloadSha)
-            .header("X-Internal-Signature", signature);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Internal-User", user);
+        headers.set("X-Internal-Role", role);
+        headers.set("X-Internal-College", collegeHeader);
+        headers.set("X-Internal-Colleges", collegesHeader);
+        headers.set("X-Internal-Dept", deptId);
+        headers.set("X-Internal-Admin", adminHeader);
+        headers.set("X-Internal-Perms", permsHeader);
+        headers.set("X-Internal-Timestamp", timestamp);
+        headers.set("X-Internal-Nonce", nonce);
+        headers.set("X-Internal-Payload-Sha256", payloadSha);
+        headers.set("X-Internal-Signature", signature);
+        return headers;
+    }
 
-        try {
-            spec = spec.contentType(MediaType.APPLICATION_JSON);
-            String response = (jsonBody.length == 0 ? spec.body(new byte[0]) : spec.body(jsonBody))
-                .retrieve()
-                .body(String.class);
-            return ResponseEntity.ok(response);
-        } catch (RestClientResponseException ex) {
-            return ResponseEntity.status(ex.getStatusCode())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ex.getResponseBodyAsString());
-        } catch (Exception ex) {
-            log.error("内部代理调用失败 {} {}", method, signPath, ex);
-            return ResponseEntity.status(502)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"detail\":\"上游不可达：" + ex.getClass().getSimpleName() + "\"}");
-        }
+    /** FastAPI 返回 4xx/5xx：原样透传状态码与 JSON 错误体。 */
+    private static ResponseEntity<String> upstreamError(RestClientResponseException ex) {
+        return ResponseEntity.status(ex.getStatusCode())
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(ex.getResponseBodyAsString());
+    }
+
+    /** 网关到 FastAPI 的链路异常：502，不泄露内部地址。 */
+    private static ResponseEntity<String> unreachable(String method, String path, Exception ex) {
+        log.error("内部代理调用失败 {} {}", method, path, ex);
+        return ResponseEntity.status(502)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body("{\"detail\":\"上游不可达：" + ex.getClass().getSimpleName() + "\"}");
     }
 
     /** 与 Python 端 _norm_pairs 完全一致：键排序 + 逐字节 percent-encoding。 */

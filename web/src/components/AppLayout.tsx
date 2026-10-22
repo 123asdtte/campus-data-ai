@@ -1,7 +1,7 @@
 import { Layout } from 'antd';
-import { AppstoreOutlined, CloudUploadOutlined, TeamOutlined } from '@ant-design/icons';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { actorName } from '../api/client';
+import { AppstoreOutlined, CloudUploadOutlined, LogoutOutlined, TeamOutlined } from '@ant-design/icons';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { getLoginUser, logout } from '../api/auth';
 import BrandMark from './BrandMark';
 
 const { Sider, Content } = Layout;
@@ -20,8 +20,16 @@ const TITLE: Record<string, string> = {
 
 export default function AppLayout() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const active = NAV.find((item) => (item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)));
-  const initials = actorName.slice(0, 1).toUpperCase();
+  // 显示的是网关登录账号，不再使用前端自填的 X-Actor 展示名
+  const username = getLoginUser() ?? '未知用户';
+  const initials = username.slice(0, 1).toUpperCase();
+
+  const onLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
 
   return (
     <Layout className="app-shell">
@@ -69,8 +77,12 @@ export default function AppLayout() {
           <div className="app-header-right">
             <span className="app-actor">
               <span className="app-actor-avatar">{initials}</span>
-              {actorName}（未认证）
+              {username}（已登录）
             </span>
+            <button type="button" className="app-nav-item" style={{ width: 'auto' }} onClick={onLogout}>
+              <LogoutOutlined />
+              <span>退出</span>
+            </button>
           </div>
         </header>
 

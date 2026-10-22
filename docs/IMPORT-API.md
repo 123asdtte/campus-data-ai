@@ -1,8 +1,8 @@
 # Import API 接口契约
 
-**版本：** 0.1.0　**服务：** `campus-import-api`　**地址：** `http://127.0.0.1:8010`
+**版本：** 0.2.0　**服务：** `campus-import-api`　**地址：** 仅容器内网 `http://import-api:8000`（PR-D 起无宿主端口；浏览器经 `http://127.0.0.1:8082/gw/internal/proxy/*`）
 
-职责边界：只做「解析 → 列映射 → 校验 → 事务提交」。不做权限判定、不做审批、不调用 AI。
+职责边界：只做「解析 → 列映射 → 校验 → 事务提交」；身份验签、权限点与学院范围由 `require_internal` + `scope_colleges` 强制。
 
 ---
 

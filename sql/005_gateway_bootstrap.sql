@@ -1387,3 +1387,19 @@ ON CONFLICT (menu_id) DO NOTHING;
 INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT 1763000000000000001, menu_id FROM sys_menu WHERE perms IN ('student:list', 'student:write')
 ON CONFLICT DO NOTHING;
+
+-- 导入域权限点（PR-D：导入 7 端点接入网关）
+INSERT INTO sys_menu (menu_id, menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type, visible, status, perms, icon, create_time)
+VALUES (1763000000000000903, '导入批次查询', 1, 92, '#', NULL, 1, 0, 'F', '0', '0', 'import:batch:list', '#', now()),
+       (1763000000000000904, '导入批次详情', 1, 93, '#', NULL, 1, 0, 'F', '0', '0', 'import:batch:detail', '#', now()),
+       (1763000000000000905, '导入上传预览', 1, 94, '#', NULL, 1, 0, 'F', '0', '0', 'import:batch:upload', '#', now()),
+       (1763000000000000906, '导入字段映射', 1, 95, '#', NULL, 1, 0, 'F', '0', '0', 'import:batch:remap', '#', now()),
+       (1763000000000000907, '导入校验', 1, 96, '#', NULL, 1, 0, 'F', '0', '0', 'import:batch:validate', '#', now()),
+       (1763000000000000908, '导入提交', 1, 97, '#', NULL, 1, 0, 'F', '0', '0', 'import:batch:commit', '#', now())
+ON CONFLICT (menu_id) DO NOTHING;
+
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT 1763000000000000001, menu_id FROM sys_menu
+WHERE perms IN ('import:batch:list', 'import:batch:detail', 'import:batch:upload',
+                'import:batch:remap', 'import:batch:validate', 'import:batch:commit')
+ON CONFLICT DO NOTHING;

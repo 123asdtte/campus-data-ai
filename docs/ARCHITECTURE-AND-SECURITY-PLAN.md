@@ -12,13 +12,15 @@
 浏览器
   │ http
   ▼
-campus-web (nginx:8082)  ──/api/*──►  import-api (uvicorn:8000，宿主 127.0.0.1:8010)
+campus-web (nginx:8082)  ──/gw/*──►  campus-gateway (Sa-Token:9180)
+                                          │ X-Internal-*（HMAC）
+                                          ▼
+                                      import-api (uvicorn:8000，仅容器内网)
                                           │ psycopg (campus_app)
                                           ▼
                                       campus-db (PG16, schema campus)
 ~~campus-appsmith ── campus_app 可写账号 ──►~~  （已停止：R2，2026-10-22）
-campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
-  │ Sa-Token 会话
+campus-gateway
   ├─ campus-gateway-db（RuoYi sys_*，独立库）
   └─ campus-gateway-redis（会话/缓存）
 ```
@@ -26,14 +28,14 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 | 组件 | 说明 | 端口 |
 |---|---|---|
 | `campus-db` | PG16，schema `campus`，角色 `campus_dba`(super)/`campus_app`(业务读写)/`campus_ro`(只读) | 内部 5432 |
-| `import-api` | FastAPI，11 业务路由 + 2 健康端点 | 127.0.0.1:8010 → 容器 8000 |
-| `campus-web` | React 静态 + nginx 反代 `/api/` → `import-api:8000` | 127.0.0.1:8082 |
+| `import-api` | FastAPI，11 业务路由 + 2 健康端点 | **仅容器内网 8000**（PR-D 起无宿主端口） |
+| `campus-web` | React 静态 + nginx 反代 `/gw/` → `gateway:9180` | 127.0.0.1:8082 |
 | `campus-appsmith` | 历史低代码平台，**已停止（R2，2026-10-22）**：容器 Exited、compose 服务已移除、8081/8443 无监听；数据卷 `campus_appsmith_stacks` 保留 | 不再发布 |
-| `campus-gateway` | PR-B 已实现：RuoYi 最小切片 + `X-Internal-*` 签名代理（学生域 3 端点） | 127.0.0.1:9190 → 容器 9180 |
+| `campus-gateway` | RuoYi + `X-Internal-*` 签名代理（学生 3 + 聚合 2 + 导入 7 = 12 端点） | 127.0.0.1:9190 → 容器 9180 |
 | `campus-gateway-db` | 独立认证库 `campus_gateway`（`sys_*`），账号 `gateway_dba` | 127.0.0.1:55434 |
 | `campus-gateway-redis` | 网关会话缓存 | 127.0.0.1:6382 |
 
-**注意**：`8010` 当前对宿主回环发布——任何本机进程可绕过 nginx 直连。PR-D 将移除该发布。
+**网络边界（PR-D 已实施）**：`8010` 宿主发布已移除，本机进程无法直连 FastAPI；浏览器只能经 `/gw` 携带登录 token 访问业务接口。
 
 ---
 
@@ -79,7 +81,7 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 | 学院清单来源 | POC 用 `sys_dept` 直查（`sql/07:196` 给了 `campus_app` SELECT）→ **不可移植**：独立库下业务账号不可达 | 改为**网关在签名声明中下发学院集合**（`X-Internal-Colleges`），FastAPI 只用声明，不再查框架表 |
 | 框架表泄漏面 | 主项目 `campus_app` **不授予** `sys_*` 任何权限 | POC 的 `GRANT SELECT ON sys_dept TO campus_app` 是需避免的反面样本 |
 
-## 2.4 关闭 8010 的前置条件（D5 固化）
+## 2.4 关闭 8010 的前置条件（PR-D 已执行）
 
 关闭顺序不可颠倒：
 
@@ -89,7 +91,7 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 4. **容器内通信不受影响**：`campus-web` → `import-api:8000`（按**服务名**解析，与 8010 无关）；`campus-web` healthcheck 仍 healthy；
 5. 网关 → import-api 内网签名链路正常。
 
-> 误关风险：若把 8010 当作容器间路径使用，关闭会切断 nginx→import-api。本项目 nginx 使用服务名，因此 8010 仅是"宿主直连入口"。
+**执行结果（2026-10-22）**：开启态（`INTERNAL_AUTH_ENABLED=true`）下 26 项网关 E2E 全通过后移除端口；关闭后宿主 `8010` 连接失败、容器内 `import-api:8000/health` 200、网关学生/导入/总览仍 200。验证完成后开发栈恢复为 `INTERNAL_AUTH_ENABLED=false`。
 
 ## 2.5 审计匿名基线（D4 固化）
 
@@ -109,15 +111,15 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 | 1 | 网关会话 → 内部签名 | ✅ PR-B 已实现（待评审） | `campus-gateway` 登录后签发 14 段签名；规范见 `INTERNAL-AUTH-SPEC.md` |
 | 2 | FastAPI 验签 + nonce 防重放 | ✅ 已实现（开启态生效） | 60s 窗口、nonce 主键原子消费 |
 | 3 | 权限点 | ✅ 声明链路已实现 | 权限点的**发放**（sys_menu + 网关）在 PR-B |
-| 4 | 学院数据范围 | ✅ 学生/聚合已强制；导入 PR-C | fail-closed：空声明 → 403 |
-| 5 | 审计 | 🟡 触发器在、actor 93% 匿名 | 开启态写路径会带真实 actor；存量匿名行为历史数据 |
+| 4 | 学院数据范围 | ✅ 学生/聚合/导入均已强制（PR-C/D） | fail-closed：空声明 → 403；导入逐行校验 |
+| 5 | 审计 | ✅ 触发器在；开启态写路径带真实 actor | 存量匿名属历史数据，不回填 |
 | 6 | nonce 表 | ✅ 代码已合入 | **正式库未执行 004**；`campus_app` 无 DELETE，清理走受控函数 |
-| 7 | 网络边界 | 🔴 8010 宿主可直连 | PR-D 移除发布 |
-| 8 | Appsmith 可写账号 | 🟢 已停服务（R2） | 容器停止、compose 移除、卷保留；账号仍存在，留待 PR-B 账号治理 |
+| 7 | 网络边界 | ✅ PR-D 已执行 | 移除宿主 8010；浏览器仅 `/gw` |
+| 8 | Appsmith 可写账号 | 🟢 已停服务（R2） | 容器停止、compose 移除、卷保留；账号仍存在，留待后续账号治理 |
 | 9 | 密钥管理 | 🟡 仅 env，未接入 secrets | `INTERNAL_HMAC_SECRET` 不得入库/前端/日志 |
 | 10 | 备份/迁移演练 | 🔴 未做 | PR-E |
 | 11 | RuoYi 认证库隔离 | ✅ PR-B 已建（待评审） | 独立库 `campus_gateway` + `gw_app`/`gateway_dba`（对 `campus` schema 零权限） |
-| 12 | 文档双轨 | 🔴 26 份历史文档在正文 | G：归档 + 索引两节 |
+| 12 | 文档双轨 | 🟢 G 已完成（PR #18） | 26 份历史文档已归档 + 索引两节 |
 
 ---
 
@@ -157,11 +159,11 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 
 | 缺口 | 归属 |
 |---|---|
-| 网关未进主项目（签名无从产生） | PR-B |
-| 导入批次范围 / 逐行校验 / 批次审计 | PR-C |
-| 导入未接网关、8010 未关闭 | PR-D |
+| ~~网关未进主项目~~ | ✅ PR-B 已实现（PR #21） |
+| ~~导入批次范围 / 逐行校验 / 批次审计~~ | ✅ PR-C 已实现（PR #22） |
+| ~~导入未接网关、8010 未关闭~~ | ✅ PR-D 已实现 |
 | PUT 并发写、审计差异、大文件、nonce 增长四项专项 | PR-E |
-| Appsmith 可写账号 | 独立任务 |
+| Appsmith 可写账号 | 独立任务（账号保留，待评估） |
 | plus-ui 许可（仅当采用其界面） | Issue #11 |
 
 ---
