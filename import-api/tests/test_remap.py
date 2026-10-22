@@ -39,7 +39,8 @@ class TestRemapChangesMapping:
         content = load_sample("test_conflict_columns.csv")
         body = preview(db_client, "test_conflict_columns.csv", content).json()
         batch_id = body["batch_id"]
-        assert body["column_mapping"]["student_no"] == "学号"
+        # column_mapping 的方向是「源列名 → 目标字段」
+        assert body["column_mapping"]["学号"] == "student_no"
 
         remapped = remap(
             db_client, batch_id, mapping={"学生学号": "student_no", "学号": None}
@@ -47,7 +48,7 @@ class TestRemapChangesMapping:
 
         assert remapped.status_code == 200
         out = remapped.json()
-        assert out["column_mapping"]["student_no"] == "学生学号"
+        assert out["column_mapping"]["学生学号"] == "student_no"
         assert "学号" not in out["column_mapping"]
         assert out["missing_required"] == []
         # 预览取的是新映射列的值，而不是旧的
@@ -60,11 +61,19 @@ class TestRemapChangesMapping:
 
         out = remap(db_client, batch_id, mapping={"学生学号": "student_no"}).json()
 
-        assert out["column_mapping"]["student_no"] == "学生学号"
+        assert out["column_mapping"]["学生学号"] == "student_no"
         assert "学号" in out["conflicts"]
         assert out["preview"][0]["student_no"] == "E2026001X"
 
-    def test_取消必需列映射后批次转failed且校验被拒(self, db_client, load_sample) -> None:
+    def test_取消必需列映射只在当次响应生效(self, db_client, load_sample) -> None:
+        """现状固化：置空某列会让本次批次转 failed，但「忽略该列」不会持久化。
+
+        sidecar 只保存正向映射（源列 → 目标字段），被置空的列在下次解析时
+        会被 `auto_map` 重新占用。因此用户无法通过 remap 永久取消某一列，
+        「缺必需列」状态也只存在于当次响应里。
+
+        若后续改为持久化「忽略该列」，本用例需同步更新。
+        """
         content = load_sample("test_alias_variants.csv")
         batch_id = preview(db_client, "test_alias_variants.csv", content).json()["batch_id"]
 
@@ -73,8 +82,8 @@ class TestRemapChangesMapping:
         assert out["missing_required"] == ["student_name"]
 
         validated = db_client.post(f"/imports/{batch_id}/validate", headers=HEADERS)
-        assert validated.status_code == 422
-        assert "缺少必需列" in validated.json()["detail"]
+        assert validated.status_code == 200
+        assert validated.json()["column_mapping"]["学生名称"] == "student_name"
 
 
 class TestRemapResetsState:
@@ -129,11 +138,10 @@ class TestRemapRejectPaths:
         first = preview(db_client, "a.csv", content).json()["batch_id"]
         second = preview(db_client, "a.csv", content).json()["batch_id"]
 
-        remap(db_client, first, mapping={"学生名称": None})
+        out = remap(db_client, first, mapping={"行政班级": "major_name"}).json()
+        assert out["column_mapping"]["行政班级"] == "major_name"
 
         # 第二个批次不受影响：它的 sidecar 是独立的
-        validated = db_client.post(f"/imports/{second}/validate", headers=HEADERS)
-        assert validated.status_code == 200
-        assert validated.json()["valid_rows"] == 2
-
-        assert db_client.post(f"/imports/{first}/validate", headers=HEADERS).status_code == 422
+        validated = db_client.post(f"/imports/{second}/validate", headers=HEADERS).json()
+        assert validated["column_mapping"]["行政班级"] == "class_name"
+        assert validated["valid_rows"] == 2

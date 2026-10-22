@@ -40,6 +40,18 @@ def preview(client, name: str, content: bytes, target: str = "students"):
     )
 
 
+def validate(client, batch_id: int) -> dict:
+    response = client.post(f"/imports/{batch_id}/validate", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def commit(client, batch_id: int) -> dict:
+    response = client.post(f"/imports/{batch_id}/commit", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def table_count(table: str) -> int:
     from app.db import pool
 
@@ -62,8 +74,8 @@ def issue_codes(batch_id: int) -> list[str]:
 
 def commit_first_batch(client, load_sample) -> None:
     batch_id = preview(client, "a.csv", load_sample("test_alias_variants.csv")).json()["batch_id"]
-    assert client.post(f"/imports/{batch_id}/validate", headers=HEADERS).status_code == 200
-    committed = client.post(f"/imports/{batch_id}/commit", headers=HEADERS).json()
+    validate(client, batch_id)
+    committed = commit(client, batch_id)
     assert committed["inserted_rows"] == 2
 
 
@@ -73,10 +85,10 @@ class TestNormalPath:
         commit_first_batch(db_client, load_sample)
 
         second = preview(db_client, "a.csv", load_sample("test_alias_variants.csv")).json()["batch_id"]
-        validated = db_client.post(f"/imports/{second}/validate", headers=HEADERS).json()
+        validated = validate(db_client, second)
         assert validated["invalid_rows"] == 2
 
-        committed = db_client.post(f"/imports/{second}/commit", headers=HEADERS).json()
+        committed = commit(db_client, second)
 
         assert committed["inserted_rows"] == 0
         assert committed["invalid_rows_excluded"] == 2
@@ -97,11 +109,9 @@ class TestConcurrentWindow:
         commit_first_batch(db_client, load_sample)
 
         second = preview(db_client, "a.csv", load_sample("test_alias_variants.csv")).json()["batch_id"]
-        assert db_client.post(f"/imports/{second}/validate", headers=HEADERS).json()[
-            "invalid_rows"
-        ] == 0
+        assert validate(db_client, second)["invalid_rows"] == 0
 
-        committed = db_client.post(f"/imports/{second}/commit", headers=HEADERS).json()
+        committed = commit(db_client, second)
 
         assert committed["inserted_rows"] == 0
         assert committed["invalid_rows_excluded"] == 0
@@ -116,11 +126,9 @@ class TestConcurrentWindow:
         commit_first_batch(db_client, load_sample)
 
         second = preview(db_client, "mixed.csv", MIXED_CSV).json()["batch_id"]
-        assert db_client.post(f"/imports/{second}/validate", headers=HEADERS).json()[
-            "invalid_rows"
-        ] == 0
+        assert validate(db_client, second)["invalid_rows"] == 0
 
-        committed = db_client.post(f"/imports/{second}/commit", headers=HEADERS).json()
+        committed = commit(db_client, second)
 
         assert committed["inserted_rows"] == 1
         assert committed["skipped_rows"] == [{"row_number": 2, "reason": "学号已存在，未写入"}]
