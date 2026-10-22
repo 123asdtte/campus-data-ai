@@ -1,0 +1,81 @@
+# AI 助手 POC：独立编排，不加入主栈、不连接业务库
+#
+# 启动：
+#   docker compose -f docker-compose.ai-poc.yml up -d --build
+#
+# 隔离边界：
+#   - 独立数据库 campus_ai_poc（55435）与独立网络 campus-ai-net；
+#   - 主业务库 campus-db 不在本网络内，服务无法访问真实学生数据；
+#   - 所有数据为虚构样例（见 ai-assistant/sql/001_schema.sql）。
+name: campus-ai-poc
+
+services:
+  ai-db:
+    image: postgres:16.15-alpine
+    container_name: campus-ai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: campus_ai_poc
+      POSTGRES_USER: ai_dba
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD:?AI_DB_PASSWORD 未设置}
+      # 供初始化脚本创建两个最小权限角色
+      AI_RO_PASSWORD: ${AI_RO_PASSWORD:?AI_RO_PASSWORD 未设置}
+      AI_AUDIT_PASSWORD: ${AI_AUDIT_PASSWORD:?AI_AUDIT_PASSWORD 未设置}
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:55435:5432"
+    volumes:
+      - ai_pgdata:/var/lib/postgresql/data
+      # 先由 init 脚本创建角色（带 psql 变量），再执行 schema/seed
+      - ./ai-assistant/sql/001_schema.sql:/opt/ai-sql/001_schema.sql:ro
+      - ./ai-assistant/sql/init.sh:/docker-entrypoint-initdb.d/001_init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - ai-net
+
+  ai-assistant:
+    build:
+      context: ./ai-assistant
+    image: campus-ai-assistant:0.1.0
+    container_name: campus-ai-assistant
+    restart: unless-stopped
+    environment:
+      AI_RO_DSN: postgresql://ai_ro:${AI_RO_PASSWORD}@ai-db:5432/campus_ai_poc
+      AI_AUDIT_DSN: postgresql://ai_audit_writer:${AI_AUDIT_PASSWORD}@ai-db:5432/campus_ai_poc
+      AI_POC_TOKEN: ${AI_POC_TOKEN:?AI_POC_TOKEN 未设置}
+      # 默认规则 planner，不访问外网；llm 模式需显式配置 base_url
+      AI_PLANNER: ${AI_PLANNER:-rule}
+      AI_LLM_BASE_URL: ${AI_LLM_BASE_URL:-}
+      AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
+      AI_LLM_MODEL: ${AI_LLM_MODEL:-gpt-4o-mini}
+      AI_MAX_ROWS: ${AI_MAX_ROWS:-20}
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8100:8100"
+    depends_on:
+      ai-db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/healthz', timeout=3).status==200 else 1)\""
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - ai-net
+
+volumes:
+  ai_pgdata:
+    name: campus_ai_pgdata
+
+networks:
+  ai-net:
+    name: campus-ai-net
+    driver: bridge

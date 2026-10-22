@@ -127,6 +127,19 @@ curl -k --noproxy '*' https://127.0.0.1:8443/healthz
 - Windows 下可用 `.\scripts\dev\smoke-test.ps1 -BaseUrl https://127.0.0.1:8443/gw -Insecure` 验证完整链路。
 - **正式证书、域名、443 对外与流量切换属 C 类**，清单见 [TLS.md](TLS.md)。
 
+### AI 校园助手原型（隔离，可选）
+
+```powershell
+docker compose -f docker-compose.ai-poc.yml up -d --build
+docker compose -f docker-compose.ai-poc.yml ps
+```
+
+- 独立库 `campus_ai_poc`（55435）与独立网络 `campus-ai-net`，**无法访问主业务库**；
+- 数据全部为虚构样例；默认规则 planner，不访问外网；
+- 服务地址 `http://127.0.0.1:8100`，调用需 `X-AI-User` + `X-AI-Token`（`.env` 的 `AI_POC_TOKEN`）；
+- 测试：在 `ai-assistant/` 目录用安装了 `import-api/requirements-dev.txt` 的 Python 执行 `pytest`（需先启动 POC 栈）。
+- 权限矩阵、API 示例与验证证据见 [AI-ASSISTANT-POC.md](AI-ASSISTANT-POC.md)。
+
 ### 停止与清理（红线）
 
 - **日常停止只用 `down-main.ps1`**，等价于 `compose down`，**不带 `-v`**，数据卷保留。
