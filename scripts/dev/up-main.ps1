@@ -3,8 +3,9 @@
     启动主系统（PostgreSQL + Appsmith + Import API）。
 
 .DESCRIPTION
-    依次完成：环境自检 → 补齐 .env（占位符自动生成随机密钥）→ 必要时拉取离线 wheel
-    → compose up → 等待健康检查。Appsmith 首次启动慢（start_period 180s），
+    依次完成：环境自检 → 对齐 .env（以 .env.example 为准，缺键补、空值填）→
+    必要时拉取离线 wheel → compose up（只起主系统三个服务）→ 等待健康检查 →
+    补齐迁移 003/004/006。Appsmith 首次启动慢（start_period 180s），
     超过等待窗口只报 WARN，不阻断——它不参与导入链路。
 
 .PARAMETER SkipWheels
@@ -32,26 +33,9 @@ $repo = Get-RepoRoot
 Write-Host ''
 
 # --- 2. 补齐 .env ---
-$envFile = Join-Path $repo '.env'
-if (-not (Test-Path $envFile)) {
-    Copy-Item (Join-Path $repo '.env.example') $envFile
-    Write-Status INFO '.env 不存在，已从 .env.example 复制'
-}
-$envText = Get-Content $envFile -Raw
-foreach ($key in 'POSTGRES_PASSWORD', 'APP_DB_PASSWORD', 'RO_DB_PASSWORD',
-    'APPSMITH_ENCRYPTION_PASSWORD', 'APPSMITH_ENCRYPTION_SALT') {
-    if ($envText -match "(?m)^$key=(__CHANGE_ME.*)?$") {
-        $secret = New-RandomSecret
-        $envText = $envText -replace "(?m)^$key=.*$", "$key=$secret"
-        Write-Status INFO "$key 仍是占位符，已替换为随机 32 位密钥"
-    }
-    elseif ($envText -notmatch "(?m)^$key=") {
-        $secret = New-RandomSecret
-        $envText = $envText.TrimEnd() + "`n$key=$secret`n"
-        Write-Status INFO ".env 缺少 $key，已追加随机密钥"
-    }
-}
-Set-Content -Path $envFile -Value $envText -Encoding UTF8 -NoNewline:$false
+# 以 .env.example 为准，缺的键补上、空值与占位符填实；已有值不动。
+# 详见 _common.ps1 里 Sync-EnvFile 的注释。
+Sync-EnvFile
 
 # --- 3. 离线 wheel ---
 $wheelDir = Join-Path $repo 'import-api/wheels'
@@ -80,6 +64,15 @@ if ($wheels.Count -eq 0 -and -not $SkipWheels) {
 # --- 4. 启动 ---
 $composeArgs = @('up', '-d')
 if (-not $NoBuild) { $composeArgs += '--build' }
+# 必须点名服务，不能直接 compose up。两个原因，都是实测撞过的：
+# 1. 网关（gateway / gateway-db / gateway-redis）要从
+#    ruoyi-admin/target/ruoyi-admin.jar 构建，而 RuoYi 源码还没入库（issue #1），
+#    不点名就会连带构建网关，然后整个 up 一起失败：
+#        COPY ruoyi-admin/target/ruoyi-admin.jar: not found
+# 2. Appsmith 已按 R2 路线图下线（服务定义从 compose 里删了，数据卷保留），
+#    点名它会直接报 no such service。
+# 主系统只剩这两个：PostgreSQL + Import API。
+$composeArgs += @('campus-db', 'import-api')
 $code = Invoke-Compose @composeArgs
 if ($code -ne 0) { Write-Status FAIL 'compose up 失败，见上方输出'; exit $code }
 
@@ -89,11 +82,11 @@ Write-Status INFO '等待健康检查（数据库与导入 API）...'
 $dbOk = Wait-ContainerHealthy -Name 'campus-db' -TimeoutSeconds 180
 if ($dbOk) { Write-Status PASS 'campus-db 健康' } else { Write-Status FAIL 'campus-db 未进入 healthy'; }
 
-# 建最小权限角色（003 不在 initdb 里，缺了它 import-api 会崩溃重启）
+# 补齐 initdb 不管的迁移（003/004/006 都不在 initdb 里）
 if ($dbOk) {
-    Write-Status INFO '执行 sql/003_roles.sql（建 campus_app / campus_ro）'
+    Write-Status INFO '执行迁移 003 → 004 → 006'
     if (Initialize-DbRoles) {
-        Write-Status PASS '最小权限角色已就位'
+        Write-Status PASS '迁移已就位'
         # 角色的密码若与 import-api 启动时缓存的连接不同，需重启一次让它重连
         $apiState = & docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' campus-import-api 2>$null
         if ($apiState -ne 'healthy') {
@@ -101,20 +94,19 @@ if ($dbOk) {
             Invoke-Compose restart import-api | Out-Null
         }
     }
-    else { Write-Status FAIL '003_roles.sql 执行失败，import-api 将无法连库' }
+    else { Write-Status FAIL '迁移执行失败：003 缺了 import-api 连不了库，006 缺了校验/提交会 500' }
 }
 
 $apiOk = Wait-ContainerHealthy -Name 'campus-import-api' -TimeoutSeconds 240
 if ($apiOk) { Write-Status PASS 'campus-import-api 健康' } else { Write-Status FAIL 'campus-import-api 未进入 healthy（看日志：docker compose logs import-api）' }
 
-$appsmithOk = Wait-ContainerHealthy -Name 'campus-appsmith' -TimeoutSeconds 300
-if ($appsmithOk) { Write-Status PASS 'campus-appsmith 健康' }
-else { Write-Status WARN 'campus-appsmith 仍在启动（首次约 3-5 分钟），不影响导入链路' }
-
 Write-Host ''
 Write-Host '访问地址：' -ForegroundColor Cyan
-Write-Host '  Import API   http://127.0.0.1:8010/docs'
-Write-Host '  Appsmith     http://127.0.0.1:8081'
 Write-Host '  PostgreSQL   127.0.0.1:55432'
-Write-Host '下一步：.\scripts\dev\smoke-test.ps1'
+Write-Host '  Import API   无宿主端口（PR-D 起统一走网关；容器内 127.0.0.1:8000）'
+Write-Host '  Java 网关    127.0.0.1:9190（需要 ruoyi-admin jar，issue #1）'
+Write-Host '  campus-web   127.0.0.1:8082（前端栈需单独启动）'
+Write-Host ''
+Write-Host 'Appsmith 已按 R2 下线，主栈不再包含它。' -ForegroundColor DarkGray
+Write-Host '下一步：.\scripts\dev\smoke-test.ps1（在容器内跑完整导入链路）'
 exit $(if ($dbOk -and $apiOk) { 0 } else { 1 })
