@@ -81,6 +81,25 @@ Appsmith 首次启动约 3–5 分钟（`start_period: 180s`），它不参与�
 
 - 删卷前建议先 `.\scripts\backup.sh`。
 
+### 孤儿 sidecar 清理
+
+`.mapping.json` 是预览阶段写在暂存文件旁的映射表。PR #29 之前，提交只删暂存文件、
+不删它，于是在 `UPLOAD_DIR` 里留下一堆查不回去的碎文件（详见
+`docs/TEST-BEHAVIOR-DECISIONS.md` D-1）。新代码不再产生新的孤儿，存量用这个脚本清：
+
+```bash
+./scripts/cleanup-orphan-sidecars.sh             # 默认 dry-run，只打印不删
+./scripts/cleanup-orphan-sidecars.sh --apply     # 确认清单无误后再删
+./scripts/cleanup-orphan-sidecars.sh --path DIR  # 扫宿主机目录（非 Docker 部署）
+```
+
+不带 `--path` 时进容器扫 `/data/uploads`。**判定标准是「同名的暂存文件还在不在」**——
+在就不动。所以千万别图省事用 `find ... -name '*.mapping.json' -delete`，那样会把正在
+使用的 sidecar 一起删掉。
+
+在 Git Bash 里跑就行；脚本内部已经处理了 MSYS 把 `/data/uploads` 改写成
+`E:/…/data/uploads` 的坑。
+
 ---
 
 ## 3. RuoYi POC
