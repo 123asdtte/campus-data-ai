@@ -1,6 +1,6 @@
 # 文档索引
 
-> **2026-10-22 文档治理完成**：治理时 `docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；此后同事新增 `IMPORT-AUDIT-DESIGN.md`（#24）、`TEST-BEHAVIOR-DECISIONS.md`（#28）、`DEVELOPMENT-ENVIRONMENT.md`（#31）、`MONITORING.md`（监控最小集），PR-E 新增验收报告，本轮新增工程决策日志，现为 **20 + 26 = 46** 份。根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
+> **2026-10-22 文档治理完成**：治理时 `docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；此后同事新增 `IMPORT-AUDIT-DESIGN.md`（#24）、`TEST-BEHAVIOR-DECISIONS.md`（#28）、`DEVELOPMENT-ENVIRONMENT.md`（#31）、`MONITORING.md`（监控最小集）、`TLS.md`（TLS 模板），PR-E 新增验收报告，本轮新增工程决策日志，现为 **21 + 26 = 47** 份。根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
 >
 > **唯一年有效认证方案**：RuoYi 登录会话 → Java 网关 `X-Internal-*` 签名 → FastAPI 二次验签。任何 pwdlib/PyCasbin 或"不迁移若依"的旧方案都只在 `archive/` 中作历史追溯，**不得作为实施依据**。
 
@@ -15,8 +15,8 @@
 | 文档 | 状态 | 内容 |
 |---|---|---|
 | [README.md](README.md) | ✅ | 本索引 |
-| [DECISION-LOG.md](DECISION-LOG.md) | ✅ | **工程决策唯一索引**：D-001~D-010，含证据、方案对比、回退与授权边界 |
-| [`../PROJECT-ROADMAP.md`](../PROJECT-ROADMAP.md) | ✅ | **唯一总路线图**（根目录，不计入 docs 20）：G/R/PR-B/C/D/E、变更边界、停止条件、自主执行边界 |
+| [DECISION-LOG.md](DECISION-LOG.md) | ✅ | **工程决策唯一索引**：D-001~D-011，含证据、方案对比、回退与授权边界 |
+| [`../PROJECT-ROADMAP.md`](../PROJECT-ROADMAP.md) | ✅ | **唯一总路线图**（根目录，不计入 docs 21）：G/R/PR-B/C/D/E、变更边界、停止条件、自主执行边界 |
 | [SECURITY-MIGRATION-EXECUTION-PLAN.md](SECURITY-MIGRATION-EXECUTION-PLAN.md) | 🗺️ | 安全迁移专项细化（阶段 0–5），冲突时以总路线图为准 |
 | [EXECUTION-PROTOCOL.md](EXECUTION-PROTOCOL.md) | ⚙️ | 执行协议：两种任务模式、PR 流程、自主/批准边界、中断恢复 |
 | [DOCUMENTATION-AUDIT.md](DOCUMENTATION-AUDIT.md) | 🗂️ | 文档分类、计数口径、归档方案与 POC 审查 |
@@ -50,6 +50,7 @@
 | [GIT-WORKFLOW.md](GIT-WORKFLOW.md) | ✅ | 分支模型、提交信息、版本标签、回滚；`main` 只接受 PR |
 | [DEVELOPMENT-ENVIRONMENT.md](DEVELOPMENT-ENVIRONMENT.md) | ✅ | Windows/Docker 开发环境：一键启动、冒烟、停止、故障排查 |
 | [MONITORING.md](MONITORING.md) | ✅ | 监控最小集：Prometheus + blackbox + Alertmanager 的启动、规则与验证 |
+| [TLS.md](TLS.md) | ✅ | TLS 模板、开发验证与正式启用清单（正式切换属 C 类） |
 
 ---
 

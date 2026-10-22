@@ -1,0 +1,20 @@
+# TLS 开发验证覆盖文件（不修改基础编排）
+#
+# 用法：
+#   ./scripts/gen-dev-cert.sh
+#   docker compose -p campus-web -f docker-compose.web.yml -f docker-compose.tls.yml up -d --build
+#
+# 说明：
+#   - 只给 web 增加 443 与证书挂载，保留原有 80/8082；
+#   - 证书目录 certs/ 已被 .gitignore 忽略，禁止把私钥提交到仓库；
+#   - **前置步骤**：先执行 ./scripts/gen-dev-cert.sh。若 certs/ 不存在，
+#     Docker 会自动创建一个空目录，nginx 因缺少 server.crt/key 启动失败并反复重启；
+#   - 生产证书、域名与流量切换属 C 类，必须单独人工授权。
+services:
+  web:
+    ports:
+      # 仅绑定回环；正式部署时由运维决定对外监听与前置代理
+      - "127.0.0.1:8443:443"
+    volumes:
+      - ./web/nginx.tls.conf:/etc/nginx/conf.d/tls.conf:ro
+      - ./certs:/etc/nginx/tls:ro
