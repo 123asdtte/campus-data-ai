@@ -117,30 +117,48 @@ def rehearse_business(admin: psycopg.Connection, admin_dsn: str) -> bool:
             trig_ok = scalar(
                 conn,
                 "SELECT count(*) FROM pg_trigger "
-                "WHERE tgname IN ('trg_import_batches_audit','trg_import_issues_audit') AND NOT tgisinternal",
+                "WHERE tgname = 'trg_import_batches_audit' AND NOT tgisinternal",
             )
-            log(bool(col_ok and trig_ok == 2), f"006 第 {round_no} 次执行（幂等）", f"{elapsed:.2f}s")
-            ok &= bool(col_ok and trig_ok == 2)
+            funcs_ok = scalar(
+                conn,
+                "SELECT to_regprocedure('campus.clear_import_issues(bigint,text)') IS NOT NULL "
+                "AND to_regprocedure('campus.record_import_issues(bigint,text)') IS NOT NULL",
+            )
+            delete_revoked = scalar(
+                conn,
+                "SELECT NOT has_table_privilege('campus_app', 'campus.import_issues', 'DELETE')",
+            )
+            step_ok = bool(col_ok and trig_ok == 1 and funcs_ok and delete_revoked)
+            log(step_ok, f"006 第 {round_no} 次执行（方案 C 幂等）", f"{elapsed:.2f}s")
+            ok &= step_ok
 
         with conn.cursor() as cur:
-            cur.execute("DROP TRIGGER IF EXISTS trg_import_issues_audit ON campus.import_issues")
             cur.execute("DROP TRIGGER IF EXISTS trg_import_batches_audit ON campus.import_batches")
             cur.execute("DROP FUNCTION IF EXISTS campus.audit_import_stmt()")
+            cur.execute("DROP FUNCTION IF EXISTS campus.record_import_issues(bigint, text)")
+            cur.execute("DROP FUNCTION IF EXISTS campus.clear_import_issues(bigint, text)")
             cur.execute("DROP INDEX IF EXISTS campus.idx_batches_dept")
             cur.execute("ALTER TABLE campus.import_batches DROP COLUMN IF EXISTS created_dept_id")
+            cur.execute("GRANT DELETE ON campus.import_issues TO campus_app")
         gone = scalar(
             conn,
             "SELECT NOT EXISTS(SELECT 1 FROM information_schema.columns "
             "WHERE table_schema='campus' AND table_name='import_batches' AND column_name='created_dept_id')",
         )
-        log(bool(gone), "006 回退（触发器/函数/索引/列）")
-        ok &= bool(gone)
+        restored = scalar(
+            conn,
+            "SELECT has_table_privilege('campus_app', 'campus.import_issues', 'DELETE')",
+        )
+        log(bool(gone and restored), "006 回退（触发器/函数/索引/列 + 恢复 DELETE）")
+        ok &= bool(gone and restored)
 
         elapsed = exec_sql(conn, SQL_DIR / "006_import_scope.sql")
         re_ok = scalar(
             conn,
             "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
-            "WHERE table_schema='campus' AND table_name='import_batches' AND column_name='created_dept_id')",
+            "WHERE table_schema='campus' AND table_name='import_batches' AND column_name='created_dept_id') "
+            "AND to_regprocedure('campus.clear_import_issues(bigint,text)') IS NOT NULL "
+            "AND NOT has_table_privilege('campus_app', 'campus.import_issues', 'DELETE')",
         )
         log(bool(re_ok), "006 回退后重放", f"{elapsed:.2f}s")
         ok &= bool(re_ok)

@@ -12,12 +12,12 @@
 
 | 阶段 | 结论 | 关键证据 |
 |---|---|---|
-| G 文档治理 | **PASS** | `docs/` 40 = 现行 14 + archive 26；根 `PROJECT-ROADMAP.md` 单独计数；链接检查通过；PR #18 |
+| G 文档治理 | **PASS** | 治理基线 40 = 14 + 26；同事 PR #24 新增设计文档、PR-E 新增验收报告后为 16 + 26 = 42；链接与废弃路线检查通过；PR #18 |
 | R Appsmith 下线 | **PASS**（含 1 项未验证） | 容器 `Exited (137)`、8081/8443 监听数 0、compose 无服务、卷 `campus_appsmith_stacks` 保留；PR #19 |
 | PR-B 学生域 | **PASS** | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计；PR #21 |
-| PR-C 导入域 | **PASS** | 批次归属 + 逐行学院校验 + 批次/异常表审计；关闭态 130 passed、开启态 105 passed；PR #22 |
+| PR-C 导入域 | **PASS** | 批次归属 + 逐行学院校验 + 方案 C 审计（批次行级 + 异常摘要）；关闭态 183 passed、开启态 120 passed；PR #22 |
 | PR-D 统一入口 | **PASS** | 12 端点经网关；26 项 E2E + 浏览器 7 步；宿主 8010 关闭；PR #25 |
-| PR-E 全量验收 | **PASS** | 关闭态 130 passed；开启态 116 passed；迁移/回退演练通过；PR-E 专项 11 passed |
+| PR-E 全量验收 | **PASS** | 关闭态 183 passed；开启态 120 passed；迁移/回退演练通过；PR-E 专项 11 passed |
 
 ---
 
@@ -27,20 +27,21 @@
 
 ```text
 python -m pytest -q
-130 passed, 101 skipped, 1 xfailed
+183 passed, 102 skipped, 4 xfailed
 ```
 
-跳过项均为"仅开启态运行"的安全用例，属预期。
+包含同事 PR #20/#27 新增的 6 个测试文件（聚合、异常文件、remap、staging、冲突、覆盖矩阵第二步）；#23 的两处 strict xfail 已随 PR-C 修复转为正式断言。
 
 ### 2.2 开启态安全专项（`INTERNAL_AUTH_ENABLED=true`）
 
 ```text
 pytest -q tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_privileges.py \
-          tests/test_import_scope.py tests/test_student_write.py tests/test_pr_e_hardening.py
-116 passed
+          tests/test_import_scope.py tests/test_student_write.py tests/test_pr_e_hardening.py \
+          tests/test_import_audit_summary.py
+120 passed
 ```
 
-覆盖：11 业务路由 × 5 类身份的权限矩阵、篡改/重放/过期/并发 nonce、跨学院读写、审计 actor、DB 权限正负向、批次范围、逐行学院拒绝。
+覆盖：11 业务路由 × 5 类身份的权限矩阵、篡改/重放/过期/并发 nonce、跨学院读写、审计 actor、DB 权限正负向、批次范围、逐行学院拒绝、审计摘要与删除收口。
 
 ### 2.3 PR-E 专项（`tests/test_pr_e_hardening.py`，11 passed）
 
@@ -73,7 +74,19 @@ pytest -q tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_p
 
 ### 2.6 CI
 
-PR #21、#22、#25、#26 的 CI 全部 SUCCESS（后端语法、接口测试、网关构建、前端构建、AI 评审）。其中 #26 的开启态步骤已纳入 PR-C/PR-E 安全用例（`test_import_scope`、`test_student_write`、`test_pr_e_hardening`）。
+PR #21、#22、#25、#26 的 CI 全部 SUCCESS（后端语法、接口测试、网关构建、前端构建、AI 评审）。其中 #26 的开启态步骤已纳入 PR-C/PR-E 安全用例（`test_import_scope`、`test_student_write`、`test_pr_e_hardening`、`test_import_audit_summary`）。
+
+### 2.7 同事成果集成（PR #20 / #24 / #27）
+
+三个 PR 均由同事 hjy-helloy 完成并已合并到 `main`（我方堆叠链原基于 `d10946f`，本次已同步）：
+
+| PR | 内容 | 判定 | 集成处理 |
+|---|---|---|---|
+| #20 | 覆盖矩阵第二步：6 个测试文件（commit 冲突、parsing 边界、queries、remap、staging） | **A** | 全部保留；在本方分支复跑，48 项通过 |
+| #24 | `IMPORT-AUDIT-DESIGN.md`：方案 C 设计（只读） | **B** | 设计成立；据此把 PR-C 的 006 从“逐行审计异常表”收敛为“批次行级 + 异常摘要 + 删除收口” |
+| #27 | 覆盖矩阵第三步：`test_meta_and_files.py`（聚合/筛选/异常文件/冲突夹具） | **A**（含 2 处标记需调整） | 保留；其两处 `#23 strict xfail` 因 PR-C 修复而 XPASS，已改为正式断言 |
+
+重叠面只有 `docs/TEST-COVERAGE-MATRIX.md`（已合并双方内容）；测试文件与业务代码无冲突。同事成果没有依赖未合并的前置改动，也未触及认证、数据库权限或密钥。
 
 ---
 
@@ -82,22 +95,23 @@ PR #21、#22、#25、#26 的 CI 全部 SUCCESS（后端语法、接口测试、�
 脚本：`scripts/rehearse_migrations.py`（隔离库 `campus_rehearsal` / `gateway_rehearsal`，演练后自动删除）。
 
 ```text
-PASS 001 建库结构 0.13s
+PASS 001 建库结构 0.16s
 PASS 004 第 1 次执行（幂等） 0.02s
-PASS 004 第 2 次执行（幂等） 0.01s
+PASS 004 第 2 次执行（幂等） 0.00s
 PASS 004 回退（删函数/表；保留集群级角色）
-PASS 004 回退后重放 0.02s
-PASS 006 第 1 次执行（幂等） 0.01s
-PASS 006 第 2 次执行（幂等） 0.01s
-PASS 006 回退（触发器/函数/索引/列）
+PASS 004 回退后重放 0.01s
+PASS 006 第 1 次执行（方案 C 幂等） 0.01s
+PASS 006 第 2 次执行（方案 C 幂等） 0.01s
+PASS 006 回退（触发器/函数/索引/列 + 恢复 DELETE）
 PASS 006 回退后重放 0.01s
 PASS 迁移未写入业务行 students=0
-PASS 005 网关库初始化 0.36s users=6 menus=117 import_perms=6
+PASS 005 网关库初始化 0.39s users=6 menus=117 import_perms=6
 PASS 清理演练数据库
-=== 演练通过，总耗时 1.99s ===
+=== 演练通过，总耗时 6.87s ===
 ```
 
 说明：
+- 006 演练同时验证 `clear_import_issues()` / `record_import_issues()` 存在、批次触发器唯一、`campus_app` 无 `import_issues` DELETE；回退时恢复该 DELETE 授权。
 - 004 回退只删本库函数/表，**不删除集群级角色** `campus_nonce_cleaner`（其他库仍在使用）。
 - 005 是初始化脚本，**非幂等**，只演练单次执行；重复执行不在设计目标内。
 - 003 是集群级角色脚本（含 psql 元命令），不属于单库迁移，演练跳过。
@@ -113,6 +127,7 @@ PASS 清理演练数据库
 | 网关内存（8.66MB multipart 上传） | 870.9 → **883.6 MiB**（+12.7 MiB） |
 | Import API 内存（同一次上传） | 86.64 → **147.7 MiB**（+61 MiB），请求后回落 86.64 MiB |
 | nonce 表 | 1000 行 216 KiB；周期清理 3600s + 启动时各一次 |
+| 异常明细审计量 | 方案 C：每次重写 1~2 行摘要；按 #24 估算，2000 行异常的一次校验由约 4000 行审计降至 1~2 行 |
 
 ---
 
@@ -150,6 +165,8 @@ PASS 清理演练数据库
 | P2 | nonce 清理为应用内定时任务，容器长期停机期间不清理 | 过期行不影响安全（仅占空间）；启动时会补一次清理 |
 | P3 | 关闭态仍允许 `X-Actor` 演示身份 | 生产必须开启认证；文档已显著标注 |
 | P3 | 中文操作人无法经 HTTP 头传递（xfail 固化） | 开启态 actor 来自登录用户，不受影响；关闭态仅演示 |
+| P3 | 提交后 sidecar `.mapping.json` 残留（同事用例 xfail 固化，§10-1） | 不影响数据正确性；后续可随清理逻辑一并修复 |
+| P3 | 损坏 xlsx 返回 500 而非 400（同事用例 xfail 固化，§10-4） | 用户侧错误码不友好；不影响数据安全 |
 
 无 P0 / P1 未处理项。
 
@@ -182,6 +199,7 @@ PASS 清理演练数据库
 | 7 | #26 | `feat/gateway-entry-pr-d` ← `test/pr-e-acceptance` | PR-E 验收、专项测试与演练脚本 |
 
 按上表顺序合并；每个 PR 只包含相对其 base 的独立改动。
+**注**：`main` 已由同事合并 #20/#24/#27；本堆叠链已同步这些提交并解决 `TEST-COVERAGE-MATRIX.md` 冲突，合并顺序不变。
 
 ---
 
