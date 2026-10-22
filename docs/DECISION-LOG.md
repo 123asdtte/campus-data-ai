@@ -22,6 +22,7 @@
 | D-006 | 2026-10-22 | 上述分支的合并顺序与执行方式 | Verified（实际顺序见正文） | — | 发布流程 |
 | D-007 | 2026-10-22 | 开发脚本对齐统一入口与全新建库流程 | Verified（本分支 `chore/dev-env-align`） | `chore/dev-env-align` | 新同事启动、冒烟、文档 |
 | D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Verified（#39 已合并 `146548d`；本分支叠加后实测通过） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
+| D-009 | 2026-10-22 | 前端 nginx 动态解析网关，避免网关重建后 502 | Verified（本分支 `fix/web-nginx-dns`） | `fix/web-nginx-dns` | 前端可用性、部署 |
 
 ---
 
@@ -252,3 +253,30 @@
   - `check-prereqs.ps1`：`FAIL=0 / WARN=5`（栈运行中），并新增网关 jar 状态检查。
 - **回退**：先 revert 本分支的叠加提交可回到 #39 行为；再 revert #39 的 merge commit 可回到 #31 脚本。
 - **授权**：PR 整合顺序属 B 类；#39 本身只改脚本与文档，不涉及正式库、认证开关或流量切换（C 类）。
+
+---
+
+## D-009 前端 nginx 动态解析网关，避免网关重建后 502
+
+- **状态**：Verified
+- **Decision owner**：AI
+- **问题与背景**：`campus-web` 的 nginx 用字面量 `proxy_pass http://gateway:9180/`。nginx 只在启动时解析一次 Docker 服务名并缓存 IP；网关容器重建（换镜像、改配置、升级）后 IP 变化，前端仍指向旧 IP。
+- **证据（实测）**：
+  - 网关健康检查 200、`curl 127.0.0.1:9190/healthz` 200，但 `curl 127.0.0.1:8082/gw/healthz` 返回 **502**；
+  - `docker logs campus-web` 显示 `connect() failed (111: Connection refused) ... upstream: "http://172.20.0.3:9180/healthz"`，而重建后的网关 IP 已是 `172.20.0.7`；
+  - `scripts/preflight.py` 的“网关健康探针（经 8082）”因此从 PASS 变成 FAIL。
+- **可选方案**：
+  1. 每次重建网关后手工 `docker restart campus-web`——把运维顺序变成隐性知识，容易漏；
+  2. nginx 使用 Docker DNS（`resolver 127.0.0.11 valid=10s`）+ 变量 `proxy_pass`，按周期重新解析；
+  3. 给网关固定 IP / network alias——与动态编排冲突，扩容或重建仍会漂移。
+- **决定**：方案 2。`location /gw/` 内用 `rewrite ^/gw/(.*)$ /$1 break;` 显式剥前缀，再 `proxy_pass http://$gateway_upstream;`（变量形式不会自动替换 location 前缀，必须显式 rewrite）。
+- **理由**：不改变对外 URL 与转发语义；重建网关后前端在 `valid=10s` 内自愈；无需引入静态 IP。
+- **影响与兼容性**：只改 `web/nginx.conf`；浏览器路径 `/gw/*` 不变；`/healthz`、SPA 回退、静态缓存规则不变。
+- **安全风险与权衡**：resolver 只指向 Docker 内置 DNS，不引入外部解析；`ipv6=off` 避免解析到不可用地址；若未来前端与网关不在同一 Docker 网络，需要调整 resolver。
+- **涉及文件**：`web/nginx.conf`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - `docker exec campus-web nginx -t` = syntax ok；reload 后 `/gw/healthz` 200、`/gw/auth/login` 200；
+  - `docker compose up -d --force-recreate gateway`（IP 由 `172.20.0.3` 变为 `172.20.0.7`），**不重启 campus-web**，等待网关 healthy 后 `/gw/healthz` 与 `/gw/auth/login` 均 200；
+  - 以 `-BaseUrl http://127.0.0.1:8082/gw` 跑完整冒烟，覆盖浏览器真实路径。
+- **回退**：恢复 `proxy_pass http://gateway:9180/;` 并 `docker exec campus-web nginx -s reload`；之后的网关重建需手工重启前端。
+- **授权**：无需人工授权（A 类：开发/部署配置）；正式环境域名与证书切换仍属 C 类，未执行。
