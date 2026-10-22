@@ -176,6 +176,66 @@ services:
     networks:
       - campus-net
 
+  # -------------------------------------------------------------------
+  # 监控最小集（profile: monitoring，默认不启动）
+  #   docker compose --profile monitoring up -d prometheus alertmanager blackbox-exporter
+  #
+  # 只做可用性监控：blackbox 从容器网络内部探测 gateway/import-api/web，
+  # Prometheus 存指标并评估规则，Alertmanager 汇总告警（当前不外发）。
+  # 所有宿主端口仍只绑 127.0.0.1；不改变主栈默认资源占用。
+  # -------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: campus-prometheus
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - campus_prometheus:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - alertmanager
+      - blackbox-exporter
+    logging: *default-logging
+    networks:
+      - campus-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: campus-alertmanager
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - campus_alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    logging: *default-logging
+    networks:
+      - campus-net
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: campus-blackbox
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/blackbox/blackbox.yml"
+    volumes:
+      - ./monitoring/blackbox:/etc/blackbox:ro
+    # 不发布宿主端口：只允许 Prometheus 在容器网络内抓取
+    logging: *default-logging
+    networks:
+      - campus-net
+
 volumes:
   campus_pgdata:
     name: campus_pgdata
@@ -189,6 +249,11 @@ volumes:
     name: campus_gateway_pgdata
   gateway_redis:
     name: campus_gateway_redis
+  # 监控数据（仅在启用 monitoring profile 时使用）
+  campus_prometheus:
+    name: campus_prometheus
+  campus_alertmanager:
+    name: campus_alertmanager
 
 networks:
   campus-net:

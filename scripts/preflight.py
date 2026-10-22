@@ -53,8 +53,13 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess:
 
 
 def compose_json() -> dict | None:
-    """获取 compose 解析后的配置；失败返回 None。"""
-    proc = run(["docker", "compose", "config", "--format", "json"])
+    """获取 compose 解析后的配置；失败返回 None。
+
+    显式带 --profile monitoring：监控服务定义了 profile（默认不启动），
+    而 `docker compose config` 默认只渲染当前启用的 profile。预检需要看到
+    “完整定义”，否则会把“已实现但未启动”误判成“根本没配置”。
+    """
+    proc = run(["docker", "compose", "--profile", "monitoring", "config", "--format", "json"])
     if proc.returncode != 0:
         add("FAIL", "compose 配置可解析", (proc.stderr or "").strip()[:200])
         return None
@@ -215,14 +220,36 @@ def check_tls() -> None:
 
 
 def check_monitoring(config: dict) -> None:
-    """至少存在指标采集或告警组件。"""
+    """监控组件必须已定义，并且实际在运行。"""
     services = (config.get("services") or {}).keys()
     expected = {"prometheus", "grafana", "loki", "alertmanager"}
     found = sorted(set(services) & expected)
-    if found:
-        add("PASS", "监控组件", "、".join(found))
-    else:
+    if not found:
         add("FAIL", "监控组件", "compose 未包含 Prometheus/Grafana/Loki/Alertmanager")
+        return
+
+    # 只校验本仓库实际定义的容器名；未定义的组件不在这里臆测。
+    containers = {
+        "prometheus": "campus-prometheus",
+        "alertmanager": "campus-alertmanager",
+        "blackbox-exporter": "campus-blackbox",
+    }
+    stopped = []
+    for svc, name in containers.items():
+        if svc not in services and svc not in expected:
+            continue
+        proc = run(["docker", "inspect", "-f", "{{.State.Running}}", name])
+        if proc.returncode != 0 or proc.stdout.strip() != "true":
+            stopped.append(svc)
+    if stopped:
+        add(
+            "FAIL",
+            "监控组件",
+            "已定义但未运行：%s（启动：docker compose --profile monitoring up -d）"
+            "；已定义：%s" % ("、".join(stopped), "、".join(found)),
+        )
+    else:
+        add("PASS", "监控组件", "%s（运行中）" % "、".join(found))
 
 
 def check_internal_auth(env_map: dict[str, str]) -> None:

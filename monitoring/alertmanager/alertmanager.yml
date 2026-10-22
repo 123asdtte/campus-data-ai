@@ -1,0 +1,18 @@
+# Alertmanager 最小配置
+#
+# 当前 receiver 不接任何外部渠道：告警只出现在 Alertmanager 的 Web UI
+# （http://127.0.0.1:9093）与 Prometheus 告警页，便于开发/演练验证规则是否生效。
+#
+# 正式部署必须补上真实投递（webhook / 邮件 / 企业微信等），并在
+# docs/DECISION-LOG.md 记录收件人与责任范围；不要把真实凭据写进本文件，
+# 应通过挂载独立 secrets 文件或环境变量注入。
+route:
+  receiver: default
+  group_by: [alertname, instance]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+    # 无 integrations：告警可见但不外发。

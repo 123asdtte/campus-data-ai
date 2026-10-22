@@ -100,6 +100,21 @@ cd ..
 > Appsmith 已按 R2 下线，不再启动，也不再需要 `APPSMITH_*` 密钥；旧容器只是
 > compose 项目里的孤儿，不影响主栈，但会占着 8081/8443。
 
+### 监控（可选，profile）
+
+```powershell
+docker compose --profile monitoring up -d prometheus alertmanager blackbox-exporter
+```
+
+| 服务 | 地址 | 说明 |
+|---|---|---|
+| Prometheus | http://127.0.0.1:9090 | 目标、规则、告警状态 |
+| Alertmanager | http://127.0.0.1:9093 | 告警汇总（当前不外发） |
+| blackbox-exporter | 无宿主端口 | 从容器网络内探测三个健康端点 |
+
+默认不启动，避免给每台开发机增加常驻资源。`scripts/preflight.py` 的“监控组件”
+要求这三个容器**正在运行**，只定义不启动会判 FAIL。详见 [MONITORING.md](MONITORING.md)。
+
 ### 停止与清理（红线）
 
 - **日常停止只用 `down-main.ps1`**，等价于 `compose down`，**不带 `-v`**，数据卷保留。
