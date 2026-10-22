@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import secrets
@@ -54,23 +53,6 @@ def _set_actor(cur, actor: str) -> None:
     cur.execute("SELECT set_config('campus.actor_user_id', %s, true)", (actor,))
 
 
-def _read_frame(data: bytes, filename: str) -> pd.DataFrame:
-    lower = filename.lower()
-    if lower.endswith((".xlsx", ".xlsm")):
-        return pd.read_excel(io.BytesIO(data), dtype=str, engine="openpyxl", keep_default_na=False)
-    if lower.endswith(".csv"):
-        last_error: Optional[Exception] = None
-        for encoding in ("utf-8-sig", "gbk", "utf-8"):
-            try:
-                return pd.read_csv(
-                    io.BytesIO(data), dtype=str, encoding=encoding, keep_default_na=False
-                )
-            except UnicodeDecodeError as exc:  # 尝试下一种编码
-                last_error = exc
-        raise ServiceError(f"CSV 编码无法识别，请另存为 UTF-8：{last_error}")
-    raise ServiceError("仅支持 .xlsx / .csv 文件")
-
-
 def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).replace("\u3000", " ").strip() for c in df.columns]
@@ -79,29 +61,6 @@ def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].map(lambda v: None if isinstance(v, str) and v.strip() == "" else (v.strip() if isinstance(v, str) else v))
     return df
-
-
-def _map_columns(df: pd.DataFrame, target: str) -> Tuple[pd.DataFrame, List[str], Dict[str, str]]:
-    spec = TARGETS[target]
-    aliases: Dict[str, str] = spec["aliases"]  # type: ignore[assignment]
-    mapping: Dict[str, str] = {}
-    used: set[str] = set()
-    for col in df.columns:
-        canonical = aliases.get(col)
-        if canonical and canonical not in used:
-            mapping[col] = canonical
-            used.add(canonical)
-
-    missing = [field for field in spec["required"] if field not in used]  # type: ignore[union-attr]
-
-    # 补齐可选列，保证后续校验与插入结构稳定
-    for field in spec["fields"]:  # type: ignore[union-attr]
-        if field not in used and field not in mapping.values():
-            df[field] = None
-
-    renamed = df.rename(columns=mapping)
-    keep = [f for f in spec["fields"] if f in renamed.columns]  # type: ignore[union-attr]
-    return renamed[keep], missing, mapping
 
 
 def _encode_enums(df: pd.DataFrame) -> pd.DataFrame:
@@ -314,6 +273,21 @@ def _read_sidecar(staged_path: str) -> Dict[str, Any]:
         return {}
 
 
+def _remove_staged(staged_path: str) -> None:
+    """删除暂存文件及其 sidecar。
+
+    sidecar 的路径由暂存文件派生，两者必须同生共死：只删文件会让
+    `.mapping.json` 永久留在上传目录里，而 `staged_path` 已被置 NULL，
+    事后既无入口也无从反查（矩阵 §10-1）。这里逐个删、逐个容错，
+    文件缺失不应阻断提交（例如被运维手工清理过）。
+    """
+    for path in (staged_path, _sidecar_path(staged_path)):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _apply_mapping(frame: pd.DataFrame, matches: List[Any], target: str) -> pd.DataFrame:
     rename: Dict[str, str] = {}
     used: set[str] = set()
@@ -329,6 +303,27 @@ def _apply_mapping(frame: pd.DataFrame, matches: List[Any], target: str) -> pd.D
     return output[list(TARGETS[target]["fields"])]  # type: ignore[index]
 
 
+ALLOWED_EXTENSIONS = (".xlsx", ".xlsm", ".csv")
+
+
+def _require_supported_extension(filename: str) -> None:
+    """后缀白名单（矩阵 §10-2）。
+
+    解析层只按「.xlsx/.xlsm」与「其它」二分，于是 `.pdf`、`.xls`（OLE2 老格式）、
+    无后缀文件都会被当 CSV 读。失败后一律收敛成「文件没有可导入的数据行」——
+    用户拿到的提示指向了错误的原因，真正该做的是「换个格式另存」。
+    在入口处把「格式不对」与「内容为空」区分开。
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in ALLOWED_EXTENSIONS:
+        return
+    detail = "没有扩展名" if not ext else f"扩展名是 {ext}"
+    raise ServiceError(
+        f"仅支持 .xlsx / .xlsm / .csv 文件，当前文件「{filename}」{detail}。"
+        "Excel 请另存为 .xlsx，CSV 请另存为「CSV UTF-8」。"
+    )
+
+
 def _prepare(
     data: bytes,
     filename: str,
@@ -337,7 +332,11 @@ def _prepare(
     header_row: Optional[int],
     overrides: Optional[Dict[str, Optional[str]]],
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[Any], List[str], Dict[str, Any]]:
-    frame, info = parsing.load_frame(data, filename, target, sheet_name, header_row)
+    try:
+        frame, info = parsing.load_frame(data, filename, target, sheet_name, header_row)
+    except parsing.WorkbookError as exc:
+        # 解析层已经给出面向用户的原因（编码/损坏/格式），这里只换类型
+        raise ServiceError(str(exc)) from exc
     frame = _normalize_frame(frame)
     matches = parsing.auto_map(frame.columns, target)
     if overrides:
@@ -376,9 +375,10 @@ def create_batch(
         raise ServiceError(f"文件超过 {settings.max_upload_mb} MB 上限", 413)
 
     safe_name = os.path.basename(filename)
+    _require_supported_extension(safe_name)
     digest = _sha256(data)
     frame_raw, mapped, matches, missing, info = _prepare(
-        data, filename, target_type, sheet_name, header_row, overrides
+        data, safe_name, target_type, sheet_name, header_row, overrides
     )
 
     if len(mapped) == 0:
@@ -844,12 +844,9 @@ def commit_batch(
             )
 
     if not settings.keep_upload_files:
-        path = batch.get("staged_path")
-        if path and os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        staged = batch.get("staged_path")
+        if staged:
+            _remove_staged(staged)
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(

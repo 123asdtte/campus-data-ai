@@ -17,7 +17,7 @@
 | `test_db_integration.py` | 14 | 真库：全链路、状态机、幂等、审计、行号偏移 |
 | `conftest.py` | — | 夹具：`samples/` 读取、`api_client`、`db_session`/`clean_db`/`db_client` |
 
-夹具：`samples/` 12 个文件。其中 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 在测试中零引用**（前者仅出现在 `docs/archive/IMPORT-MAPPING-TEST.md` 手工场景 7）。
+夹具：`samples/` 12 个文件。盘点时 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 零引用**（前者仅出现在 [`docs/archive/IMPORT-MAPPING-TEST.md`](archive/IMPORT-MAPPING-TEST.md) 手工场景 7，归档前路径为 `docs/IMPORT-MAPPING-TEST.md`）；**§12 已全部纳入自动化用例**。
 
 ---
 
@@ -148,10 +148,97 @@
 
 按 issue #8 边界「不修改业务代码，除非测试/盘点暴露真实缺陷，需单独开 Issue 说明」：
 
+> 其中第 1、2、3、5 条属于「先定行为再补测」，四张决策单见
+> [`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md)（D-1 ~ D-4，含选项、成本与验证方式）。
+> **第 1、2、3、5 条均已实施**（D-1 ~ D-4），第 4 条（损坏 xlsx 应 400）随 D-3 一并修掉；
+> 本表 6 条全部闭环：第 6 条（#23）由 PR-C 修复。
+
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|
-| 1 | sidecar 映射文件从不清理，每次成功导入永久残留一个 `.mapping.json` | `service.py:794-805` | 补删 sidecar；顺带确认孤儿文件是否需要 TTL 机制 |
-| 2 | 扩展名白名单未生效：`.txt` 等内容为 CSV 的文件可正常导入（相关报错在死代码里） | `parsing.py:65-66`、`service.py:57-71` | 定行为：拒绝未知后缀，还是明确「按内容识别」并写进文档 |
-| 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py:182-186` | 至少对替换字符出现的情况给 warning |
-| 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py:74` | 捕获 openpyxl 异常转 `ServiceError` |
-| 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py:57`、`:84` | 删除，避免误判为已覆盖 |
+| 1 | sidecar 映射文件从不清理，每次成功导入永久残留一个 `.mapping.json` | `service.py` 的 `commit_batch` 清理段 | **已修复**：`_remove_staged()` 同时删暂存文件与 sidecar；孤儿文件的一次性清理脚本仍在 D-1 范围内未做 |
+| 2 | 扩展名白名单未生效：`.txt` 等内容为 CSV 的文件可正常导入（相关报错在死代码里） | `service.py` 的 `create_batch` 入口 | **已修复**：`_require_supported_extension()` 按 `.xlsx/.xlsm/.csv` 白名单拒绝，「格式不对」与「内容为空」不再是同一句提示 |
+| 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py` 的 `_read_raw_rows` / `load_frame` | **已修复**：`_decode_text()` 严格解码；**实测发现比「替换字符」更严重的问题**——旧实现先用 UTF-8 解一份、再用 GBK 严格解一次并覆盖，`学号,姓名\n2026001,\n` 这类「中文表头 + ASCII 数据」的 UTF-8 文件整份恰好能被 GBK 解出，表头变成「瀛﹀彿,濮撳悕」，映射全失配后表现为「200 + failed / 缺少必需列」 |
+| 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py` 的 `_open_workbook` | **已修复**：openpyxl / pandas 的异常统一收成 `parsing.WorkbookError`，由 `service._prepare` 转 `ServiceError`（400） |
+| 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py`（原 `:57`、`:84`） | **已删除**（D-4），随之移除未使用的 `import io` |
+| 6 | **缺少「入学年份」等可选列时提交 500**：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚。任何只含学号+姓名的最小名单都提交不了 | `service.py:116`（`_pre_coerce`）、`service.py:733-751`（取值直接入库） | **已修复**（PR-C，Issue #23）：取值处按 `_cell` 的规则把 `pd.NA`/`NaT` 归一成 `None`；原 xfail(strict) 标记已移除，`test_commit_conflict.py::TestOptionalColumn` 与 `test_meta_and_files.py::TestConflictFixture` 转为正式断言 |
+
+---
+
+## 11. 第二步补测（2026-10-22）
+
+按 §9 的排序补齐，只补「无」和「部分」，不重复已有用例。新增 5 个文件、37 个用例。
+
+| 新增文件 | 层 | 用例数 | 补的缺口 |
+|---|---|---|---|
+| `test_remap.py` | 真库 | 8 | §4 remap 接口（此前整接口零行为测试）：改映射后预览/列映射同步、手动指定解除原占用列、取消必需列转 failed、校验后 remap 状态回退 `uploaded`、回退后必须重新校验、已导入批次 409、并行批次互不干扰 |
+| `test_staging.py` | 真库 + 纯 FS | 7 | §6/§7 暂存文件生命周期：预览/校验后必须保留、提交后删除且 `staged_path` 置空、`keep_upload_files` 为真时保留、文件被外部删除后 409；sidecar 残留（§10-1，已修复并转为正式断言） |
+| `test_commit_conflict.py` | 真库 | 3 | §2 ON CONFLICT 分支（见下方新发现） |
+| `test_queries_read.py` | 真库 | 11 | §8 只读查询层（此前零行为覆盖）：分页与总数、参数夹取、keyword ILIKE、学院筛选与 `forced_college` 取交集、`get_student` 异动排序 |
+| `test_parsing_edge.py` | 纯函数 | 8 | §3 解析边界：后缀白名单（§10-2）、严格解码（§10-3）、损坏 xlsx（§10-4）、sidecar 读写往返与损坏兜底 |
+
+### 新发现（补测过程中确认，不在本轮修）
+
+**`commit_batch` 的 ON CONFLICT / `skipped_rows` 分支在正常流程下不可达。**
+
+`commit_batch` 在 INSERT 之前会调 `_revalidate` 重算业务问题，同学号会被判
+`DUPLICATE_STUDENT_NO`（severity=error）从而在循环里被 `continue` 掉，根本到不了
+`INSERT ... ON CONFLICT`。串行导入走的是 `invalid_rows_excluded`，不是 `skipped_rows`。
+
+`ON CONFLICT` 实际是**并发兜底**：只有「校验完成后、提交开始前」被另一个事务插入同学号
+时才会命中。`test_commit_conflict.py` 用 monkeypatch 让 `_fetch_known_students` 返回空集
+来模拟这个窗口，另设一条用例固化正常路径，避免有人误以为 `skipped_rows` 是常规可达路径。
+
+这条同时意味着：§2「幂等」的承压点不在 ON CONFLICT，而在提交前的二次校验——后者现在有测试了。
+
+**remap 无法永久取消某一列的映射。**
+
+sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides 置空后，当次响应会正确
+报 `missing_required` 并把批次标成 `failed`，但下次解析时 `auto_map` 会把它重新占用，
+校验照样通过。也就是说「忽略这一列」这个意图没有落盘，用户改不掉自动映射的结果。
+已由 `test_remap.py::test_取消必需列映射只在当次响应生效` 固化为现状。
+
+### 仍未覆盖（按 §9 顺序，建议后续处理）
+
+1. ~~异常文件的 **API 层**行为~~ → §12 已补
+2. ~~`get_overview` / `get_filters`~~ → §12 已补
+3. ~~`samples/` 中 `bad_headers.xlsx`、`students_demo.xlsx` 仍零引用~~ → §12 已补
+4. ~~§10-2、§10-3、§10-5 三项（扩展名白名单、编码替换、死代码）需先定行为再补测~~
+   → 决策单：[`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md) D-2 / D-3 / D-4，**均已实施**
+5. §10-1 的「存量孤儿 sidecar 一次性清理脚本」——待定放哪个目录（与 #3 的运维脚本规划相关）
+6. §10-6（#23，缺可选列提交 500）——已定案未修，合并 #22 时一并处理
+
+---
+
+## 12. 第三步补测（2026-10-22）
+
+补 §11「仍未覆盖」的第 1、2、3 项，并顺带补掉 §4 的夹具缺口。新增 1 个文件、14 个用例，
+全部是真库用例（`CAMPUS_TEST_DATABASE_URL` 未设置时跳过）。
+
+| 类 | 用例数 | 补的缺口 |
+|---|---|---|
+| `TestMetaFilters` | 3 | `GET /meta/filters` 从零行为覆盖到：学院/班级去重、停用学生剔除、空库零值 |
+| `TestOverview` | 3 | `GET /stats/overview`：`students_active` 与 `students_total` 口径差异、`pending_review`、`change_type_counts` 排序、`recent_batches` 最多 5 条且最新在前、空库边界 |
+| `TestAbnormalFileOverHttp` | 5 | §3 在 HTTP 层：坏表头、仅表头 xlsx、未知后缀、`.xlsm`、损坏 xlsx |
+| `TestConflictFixture` | 2 | §4 冲突场景端到端：`test_conflict_columns.csv` 上传 → 冲突提示 → 手动指定解除（提交环节被 #23 阻断，另设 xfail 用例固化） |
+| `TestDemoFixture` | 1 | `students_demo.xlsx` 的文档口径（15 行 / 10 有效 / 5 异常）变成可执行断言 |
+
+### 新发现
+
+**`bad_headers.xlsx` 不会触发「缺少必需列」。** 这份夹具的表头是「编号 / 名字」，
+其中「名字」按别名精确命中 `student_name`，「编号」靠 contains 模糊命中 `student_no`
+（置信度 0.78），于是表头明显不规范的名单被 `status=uploaded` 正常接收，用户收不到任何提示。
+现状已由 `test_meta_and_files.py::TestAbnormalFileOverHttp::test_无可识别表头被包含匹配接受`
+固化；是否要给 contains 命中加 warning，需先定行为（并入 §10 的待定项一起评估）。
+
+**#23 的第二个复现入口：`test_conflict_columns.csv`。** 这份夹具同样没有「入学年份」列，
+于是「冲突 → 手动指定 → 校验通过 → 提交」这条完整链路在提交环节 500（`cannot adapt type
+'NAType'`），与 #23 完全同因。校验阶段仍返回 `valid_rows=1`，用户的体感是「校验通过却提交
+失败」。已由 `TestConflictFixture::test_手动指定后提交应成功` 以 `xfail(strict=True)` 固化——
+这说明 #23 不是「某一份样例文件的偶发问题」，而是**所有缺可选列的名单**都会踩到。
+
+### 口径说明
+
+`recent_batches` 的「最新在前」不能靠 `preview` 连续调用来验证：同一测试里的多次写入
+落在同一事务瞬间，`created_at` 完全相同，断言顺序等于赌数据库物理行序。用例显式把
+`created_at` 改写成按 `id` 递增的时间戳后再断言，结论才是确定的。
+
