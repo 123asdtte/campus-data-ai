@@ -34,8 +34,10 @@ function Check([bool]$Ok, [string]$Message) {
     if ($Ok) { Write-Status PASS $Message } else { Write-Status FAIL $Message; $script:fail++ }
 }
 
-# 容器内跑的客户端：stdlib only，从 /app/samples 取样例文件。
-# 每步的结果汇总成一个 JSON 行打印出来，PowerShell 侧只负责翻译成 PASS/FAIL。
+# 容器内跑的客户端。HTTP 部分只用标准库（容器里没有 curl，也没有
+# httpx / requests）；改学号那一处用了 openpyxl，它是 import-api 自己的
+# 依赖（解析 xlsx 就要用它），镜像里必然有。若优先走 .csv 样例，
+# 则整段都是纯标准库。
 $clientScript = @'
 import json, os, sys, uuid, urllib.request, urllib.error
 

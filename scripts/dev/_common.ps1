@@ -127,8 +127,12 @@ function Get-EnvFileGaps {
     foreach ($line in (Get-Content $examplePath -Encoding UTF8)) {
         if ($line -notmatch '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') { continue }
         $key = $Matches[1]
+        # 取值口径必须和 Read-EnvFile 一致（同样去引号），否则 .env.example 里
+        # 写成 KEY="__CHANGE_ME__" 时，这里会因为开头是引号而匹配不上占位符，
+        # 把占位符连引号一起抄进 .env。
+        $exampleValue = $Matches[2].Trim().Trim('"')
         if (-not $current.ContainsKey($key)) {
-            $gaps.Missing += [pscustomobject]@{ Key = $key; ExampleValue = $Matches[2].Trim() }
+            $gaps.Missing += [pscustomobject]@{ Key = $key; ExampleValue = $exampleValue }
             continue
         }
         if ($current[$key] -eq '') { $gaps.Empty += $key; continue }
@@ -137,8 +141,6 @@ function Get-EnvFileGaps {
     $gaps.Exists = $true
     return $gaps
 }
-
-# 把 .env 补齐到与 .env.example 一致。只补缺的、只填空的，已有值一律不动。
 function Sync-EnvFile {
     $envPath = Join-Path $script:RepoRoot '.env'
     $examplePath = Join-Path $script:RepoRoot '.env.example'
@@ -161,10 +163,17 @@ function Sync-EnvFile {
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($l in (Get-Content $envPath -Encoding UTF8)) { $lines.Add($l) }
 
-    # 占位符与空值：原地替换，保持原来在 .env 里的位置
+    # 占位符一律换成随机密钥——.env.example 的约定就是「__CHANGE_ME_* 表示
+    # 这里需要一个随机值」。空值则要分情况，不能一律随机：
+    #   - 密钥类（名字里带 PASSWORD/SECRET/SALT/TOKEN/KEY）必须填实，因为
+    #     compose 的 ${VAR:?} 把空值也算缺失（INTERNAL_HMAC_SECRET 就是如此）；
+    #   - 其它键留空往往是有意义的（开关没配、可选参数没填），填成随机串会
+    #     把语义搞坏（比如 KEEP_UPLOAD_FILES 变成 32 位随机字符串）。
     $toFill = @{}
     foreach ($k in $gaps.Placeholder) { $toFill[$k] = $true }
-    foreach ($k in $gaps.Empty) { $toFill[$k] = $true }
+    foreach ($k in $gaps.Empty) {
+        if ($k -match '(?i)(PASSWORD|SECRET|SALT|TOKEN|KEY)') { $toFill[$k] = $true }
+    }
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
             if ($toFill.ContainsKey($Matches[1])) {
@@ -174,9 +183,11 @@ function Sync-EnvFile {
     }
 
     # 缺的键追加到末尾。.env.example 里已经给了具体值的（比如 GATEWAY_DB_NAME）
-    # 照抄；留空或还是占位符的，才生成随机密钥。
+    # 照抄；是占位符或（密钥类）空值的，才生成随机密钥。
     foreach ($m in $gaps.Missing) {
-        if ($m.ExampleValue -eq '' -or $m.ExampleValue -match '^__CHANGE_ME') {
+        $needSecret = ($m.ExampleValue -match '^__CHANGE_ME') -or
+                      ($m.ExampleValue -eq '' -and $m.Key -match '(?i)(PASSWORD|SECRET|SALT|TOKEN|KEY)')
+        if ($needSecret) {
             $value = New-RandomSecret
         }
         else {
@@ -189,7 +200,12 @@ function Sync-EnvFile {
         Write-Status INFO ".env 的 $k 还是占位符，已替换为随机密钥"
     }
     foreach ($k in $gaps.Empty) {
-        Write-Status INFO ".env 的 $k 是空值（compose 把空值也算变量缺失），已填实"
+        if ($toFill.ContainsKey($k)) {
+            Write-Status INFO ".env 的 $k 是空值（密钥类，compose 把空值也算缺失），已填实"
+        }
+        else {
+            Write-Status INFO ".env 的 $k 是空值，按 .env.example 保持留空（非密钥类，不填随机值）"
+        }
     }
 
     # 不能用 Set-Content -Encoding UTF8：PowerShell 5.1 那样写会带 BOM，
