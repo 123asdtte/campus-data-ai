@@ -1,6 +1,6 @@
 # 架构与安全边界（ARCHITECTURE & SECURITY PLAN）
 
-- **版本**：v1.1（2026-10-22 修订：RuoYi 库边界、8010 关闭前置、审计基线、Appsmith 决策）
+- **版本**：v1.2（2026-10-22 最终核对：Appsmith 已停、SQL 编号统一、测试数字更正）
 - **地位**：系统现状架构与安全边界的权威描述。实现细节以 `INTERNAL-AUTH-SPEC.md` 为准；迁移阶段以 `PROJECT-ROADMAP.md` 为准。
 - **基线**：main `d10946f`（PR #16 已合并，开关关闭）；主栈容器 = 运行版本。
 
@@ -16,7 +16,7 @@ campus-web (nginx:8082)  ──/api/*──►  import-api (uvicorn:8000，宿�
                                           │ psycopg (campus_app)
                                           ▼
                                       campus-db (PG16, schema campus)
-campus-appsmith ──── campus_app 可写账号（待处置）──► campus-db
+~~campus-appsmith ── campus_app 可写账号 ──►~~  （已停止：R2，2026-10-22）
 auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 ```
 
@@ -25,7 +25,7 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 | `campus-db` | PG16，schema `campus`，角色 `campus_dba`(super)/`campus_app`(业务读写)/`campus_ro`(只读) | 内部 5432 |
 | `import-api` | FastAPI，11 业务路由 + 2 健康端点 | 127.0.0.1:8010 → 容器 8000 |
 | `campus-web` | React 静态 + nginx 反代 `/api/` → `import-api:8000` | 127.0.0.1:8082 |
-| `campus-appsmith` | 历史低代码平台（已降级），**仍持可写账号** | 127.0.0.1:8081 |
+| `campus-appsmith` | 历史低代码平台，**已停止（R2，2026-10-22）**：容器 Exited、compose 服务已移除、8081/8443 无监听；数据卷 `campus_appsmith_stacks` 保留 | 不再发布 |
 | `auth-gateway` | PR-B 新增：RuoYi 后端精简 + `X-Internal-*` 签名代理 | 待定 |
 
 **注意**：`8010` 当前对宿主回环发布——任何本机进程可绕过 nginx 直连。PR-D 将移除该发布。
@@ -108,12 +108,11 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 | 5 | 审计 | 🟡 触发器在、actor 93% 匿名 | 开启态写路径会带真实 actor；存量匿名行为历史数据 |
 | 6 | nonce 表 | ✅ 代码已合入 | **正式库未执行 004**；`campus_app` 无 DELETE，清理走受控函数 |
 | 7 | 网络边界 | 🔴 8010 宿主可直连 | PR-D 移除发布 |
-| 8 | Appsmith 可写账号 | 🔴 未处置 | 独立任务（见 ROADMAP） |
+| 8 | Appsmith 可写账号 | 🟢 已停服务（R2） | 容器停止、compose 移除、卷保留；账号仍存在，留待 PR-B 账号治理 |
 | 9 | 密钥管理 | 🟡 仅 env，未接入 secrets | `INTERNAL_HMAC_SECRET` 不得入库/前端/日志 |
 | 10 | 备份/迁移演练 | 🔴 未做 | PR-E |
 | 11 | RuoYi 认证库隔离 | 🟡 未建 | PR-B：独立库 `campus_gateway` + `gw_app`（对 `campus` 零权限） |
-| 12 | Appsmith 可写账号 | 🔴 未处置 | 独立任务 R：只读化或停服务，先于 PR-B |
-| 13 | 文档双轨 | 🔴 26 份历史文档在正文 | G：归档 + 索引两节 |
+| 12 | 文档双轨 | 🔴 26 份历史文档在正文 | G：归档 + 索引两节 |
 
 ---
 
@@ -124,14 +123,16 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 | 001/002 | 结构 / 演示数据（002 禁止用于测试与生产） | initdb / 手动 | 002 幂等可重跑 |
 | 003 | `campus_app`/`campus_ro` 最小权限 | 一次性（手工） | DROP ROLE |
 | **004** | `internal_nonce` + 受控清理函数 | **开关开启前必须执行** | DROP FUNCTION/TABLE/ROLE |
-| 005（PR-B） | 网关 `ry_*` 引导 + 权限点 | PR-B | 脚本附回退段 |
-| 006（PR-C） | `created_dept_id` + 审计触发器 | PR-C | 脚本附回退段 |
+| 005（PR-B） | 网关 `sys_*` 引导 + 权限点（`sql/005_gateway_bootstrap.sql`） | PR-B | 脚本附回退段 |
+| 006（PR-C） | `created_dept_id` + 审计触发器（`sql/006_import_scope.sql`） | PR-C | 脚本附回退段 |
 
 测试库初始化：`python scripts/init-test-db.py --admin-dsn <DSN> --verify`（管理连接建库授权，业务测试用 `campus_app`，正负向权限 11 项断言）。
 
 ---
 
 ## 5. 测试与证据体系
+
+> **2026-10-22 CI 实查**（run 39725491360）：关闭态 collected 213（**130 passed / 82 skipped / 1 xfailed**）；开启态 collected 88（**88 passed**）。下表分层数字为基线快照，最终以 CI 输出为准；`TEST-COVERAGE-MATRIX.md` 的 112 用例基线（`c28ec94`）已过时。
 
 | 层 | 内容 | 证据 |
 |---|---|---|
@@ -162,6 +163,8 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 
 ## 7. 未验证声明
 
-- 本文档的运行态断言基于 2026-10-22 11:32 的容器与数据库实查；此后状态以 CI 与监控为准。
+- 本文档的运行态断言基于 2026-10-22 的容器与数据库实查；Appsmith 停止状态基于同日 `docker ps -a`、端口监听与 compose diff。
 - `auth-gateway` 的 RuoYi 精简可行性未经裁剪验证（PR-B 首周验证项）。
-- Appsmith 内部页面与数据源配置未逐项检查（仅确认其使用可写账号）。
+- Appsmith 内部页面与数据源配置未逐项检查；**R2 的"业务方确认无依赖"尚未完成**，compose 改动未提交、未推送。
+- POC 审查基于 `origin/main f1c2856` 的静态审读；本地 `main` 落后 origin 10 个提交。
+- 测试数字以 CI 日志为准；`TEST-COVERAGE-MATRIX` 的 112 用例基线（`c28ec94`）已过时。

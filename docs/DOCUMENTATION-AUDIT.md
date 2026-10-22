@@ -1,9 +1,9 @@
 # 文档审计与治理方案（DOCUMENTATION AUDIT）
 
-- **版本**：v1.1（2026-10-22 修订：分类唯一化与数量自洽、补充 POC 仓库审查、计数口径更正）
+- **版本**：v1.2（2026-10-22 最终核对：计数口径修正、PR #17 状态、Appsmith 下线后的更新范围）
 - **方法**：逐文件阅读 + 交叉引用 grep + 与 main `d10946f` 代码/CI/部署现状比对；不按文件名或日期判断。
 - **边界**：本轮**不执行**归档/删除；获批后按 §5 一次性实施。
-- **范围**：`docs/` 37 份 + 根 `README.md`/`CONTRIBUTING.md`（不计入 37）+ 未跟踪 `.tmp/`。
+- **范围**：`docs/` 40 份 Markdown（含索引 README）+ 根 `PROJECT-ROADMAP.md` 1 份 + 根 `README.md`/`CONTRIBUTING.md`（仅更新，不计入）+ 未跟踪 `.tmp/`。
 
 ---
 
@@ -19,16 +19,21 @@
 
 **`TEST-COVERAGE-MATRIX` 分类变更说明**：原判 B（需更新）——因基线 `c28ec94`/112 用例已过时、且未含 PR #16 新增的安全测试层。现提升为 **A（保留但需更新基线）**：其"59 场景缺口"仍是 PR-C/PR-E 补测的权威输入，比"待更新的现状快照"价值更高。更新动作保留在 §2 的 A 表中（**分类为 A，动作仍是更新**）。
 
-### 1.2 数量总账
+### 1.2 数量总账（v1.2 修正）
 
 | 口径 | 数量 |
 |---|---|
-| 治理前：`docs/` 现有文档 | **37** |
-| 治理前：根目录文档（README、CONTRIBUTING） | 2（不计入 37，仅更新） |
-| 本次新增规划文件 | **4**（`PROJECT-ROADMAP.md` 在根；`ARCHITECTURE-AND-SECURITY-PLAN.md`、`DOCUMENTATION-AUDIT.md`、`EXECUTION-PROTOCOL.md` 在 docs/） |
-| 治理后：`docs/` 现行文档 | **15** = A 5 + B 6 + 新增 4 |
+| 治理前：`docs/` 现有文档（含索引 `README.md`） | **40** = 旧文档 37（A5+B6+C26）+ 本轮新增 3 |
+| 治理前：根目录新增规划文件 | **1**（`PROJECT-ROADMAP.md`） |
+| 治理前：全项目文档合计 | **41** = docs 40 + 根 1 |
+| 根目录 `README.md`/`CONTRIBUTING.md` | 2（不计入 41，仅更新） |
+| 治理后：`docs/` 现行文档 | **14** = A 5 + B 6（含索引 `README.md`）+ 新增 3 |
 | 治理后：`docs/archive/` 历史文档 | **26** |
-| 治理后：合计 | **41** = 37 + 4（数量守恒，无删除） |
+| 治理后：`docs/` 合计 | **40** = 14 + 26（数量守恒，无删除） |
+| 治理后：全项目合计 | **41** = docs 40 + 根 `PROJECT-ROADMAP.md` 1 |
+| 本次新增规划文件 | **4 份**：根 `PROJECT-ROADMAP.md`；`docs/ARCHITECTURE-AND-SECURITY-PLAN.md`、`docs/DOCUMENTATION-AUDIT.md`、`docs/EXECUTION-PROTOCOL.md` |
+
+> **v1.1 口径更正**：v1.1 写"docs 现行 15 = A5+B6+新增4、合计 41"，把根目录 `PROJECT-ROADMAP.md` 算进了 `docs/`。按文件实际路径，`docs/` 内新增只有 3 份，现行 14 份；全项目（含根路线图）才是 15 份现行 / 41 份合计。v1.2 已按路径拆分，不再混用。
 
 ---
 
@@ -83,7 +88,7 @@
 
 | 文件 | 更新要点 |
 |---|---|
-| `README.md` | 7 处：行 77"未实现"、行 86 指向已废弃 ROADMAP、行 127 缺 004、行 173/182 编号重复、行 222 测试表缺 5 文件与双模式、行 278 X-Actor 表述、POC 措辞（48/53）；行 322 Appsmith 风险保留并链接 R 任务 |
+| `README.md` | 7 处：行 39/99/123/151/179/308/322 的 Appsmith 运行描述（**R2 已停服务，需改为"已下线"**）；行 77"未实现"、行 86 指向已废弃 ROADMAP、行 127 缺 004、行 173/182 编号重复、行 222 测试表缺双模式与实际数字（关闭态 130/开启态 88）、行 278 X-Actor 表述、POC 措辞（48/53） |
 | `CONTRIBUTING.md` | 2 处：行 83-84"后端没有单元测试目录"已过时；分支前缀 `feature/`→`feat/`；补 CI 双连接要求 |
 
 ---
@@ -125,15 +130,19 @@
 
 ## 5. 治理实施方案（获批后一个 PR）
 
+> **状态（2026-10-22）**：PR #17 已开放待审批，本轮只交付规划，**尚未执行 `git mv`、未归档、未删除**。
+
 **PR**：`docs/governance-stage0`，单 PR 多 commit：
 
+0. **前置事实**：PR #17 已开放（head `3a2efda`），包含本轮 4 份新增规划文件 + `docs/README.md` + `SECURITY-MIGRATION-EXECUTION-PLAN.md` 修改；G 阶段应在 PR #17 合并后执行，避免重复改同一批文件。
 1. `git mv` 26 份 C 类 → `docs/archive/`（文件名不变）；
 2. C 类中 3 份加"已被取代"头注（`SECURITY-AUTH-ROADMAP`、`SECURITY-AUTH-DECISION`、`RUOYI-PLUS-EVALUATION`）；
 3. 更新 6 份 B 类 + 根 2 份（§2 列表）；
-4. 纳入 4 份新增规划文件；
+4. 纳入 4 份新增规划文件（PR #17 已纳入，G 仅核对索引）；
 5. 重建 `docs/README.md`：两节结构（**现行规范** / `archive/`（历史，仅追溯））；
 6. 修复归档造成的相对链接（8 处外部引用，逐一 `grep -rn "docs/<file>"` 核对）；
-7. 校验：非 archive 文件中 `grep -rn "SECURITY-AUTH-ROADMAP\|poc_auth.py\|004_internal_nonce\|ry_\*"` **零命中**。
+7. **同步 Appsmith 下线**：README 7 处、`APPSMITH-SETUP.md`（随 C 类归档）、`DOCKER-ENV-AUDIT.md`、`SECURITY-CHECKLIST.md` 的状态描述；
+8. 校验：非 archive 文件中 `grep -rn "SECURITY-AUTH-ROADMAP\|poc_auth.py\|004_internal_nonce\|ry_\*"` **零命中**。
 
 **影响评估**：移动 26 个文件会破坏相对路径引用——已盘点 8 处需同步；不删除任何文件，`git revert` 可整体回退；对 CI 无影响。
 
@@ -157,7 +166,8 @@ docs/
 
 ## 6. POC 仓库审查（新增，动用 POC 代码前必读）
 
-对象：`campus-ruoyi-poc` main `f1c2856`（PR #3 已合并）。方法：只读静态审读，**未运行容器、未构建、未复算计数**。
+对象：`campus-ruoyi-poc` **origin/main `f1c2856`**（PR #3 已合并）。方法：只读静态审读，**未运行容器、未构建、未复算计数**。
+> 本地 `main` 实际为 `d5c45dc`，**落后 origin/main 10 个提交**；工作分支为 `feat/import-api-security` @ `563e400`。审查结论以 origin/main 为准，本地操作前先 `git fetch`。
 
 ### 6.1 可移植性
 
@@ -193,4 +203,6 @@ POC 的 `test_slice.sh` / `test_datascope.sh` **没有 PASS/FAIL 计数器**（�
 
 - POC 仓库仅静态审读：SQL 实际可执行性、幂等性、Maven/前端构建均未验证；
 - `.tmp/issues/` 是否已全部发布到 GitHub 需逐份比对后才可删除；
-- 归档后相对链接需在治理 PR 内以 grep 复核（8 处来自审计时点扫描）。
+- 归档后相对链接需在治理 PR 内以 grep 复核（8 处来自审计时点扫描）；
+- **R2 的"业务方确认无依赖"未完成**；Appsmith 的 compose 改动未提交，README 仍描述其运行中；
+- 文档计数已按实际路径核对（docs 40 / 全项目 41），但归档执行后须再次以 `Get-ChildItem` 复核 14+26。
