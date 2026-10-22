@@ -78,6 +78,7 @@ def test_正向_set_config_后审计记录真实操作人(admin_conn):
         "UPDATE campus.operation_logs SET actor_user_id = 'forged' WHERE id = 1",
         "DELETE FROM campus.operation_logs WHERE id = 1",
         "DELETE FROM campus.students WHERE student_no = 'PRIV-AUDIT'",
+        "DELETE FROM campus.import_issues WHERE batch_id = -1",
         "TRUNCATE campus.students",
         "CREATE TABLE campus.priv_probe (x int)",
     ],
@@ -118,7 +119,8 @@ def test_nonce_清理函数只删过期记录(admin_conn):
 
 def test_授权回归_只读与删除边界(admin_conn):
     checks = {
-        ("campus.import_issues", "DELETE"): True,   # 003 的唯一例外
+        ("campus.import_issues", "DELETE"): False,  # 006 收口：只能经受控函数删除
+        ("campus.import_issues", "INSERT"): True,   # 预览/提交仍由应用写入明细
         ("campus.students", "DELETE"): False,
         ("campus.student_changes", "DELETE"): False,
         ("campus.import_batches", "DELETE"): False,
