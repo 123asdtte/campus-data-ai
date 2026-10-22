@@ -179,7 +179,7 @@ PASS 清理演练数据库
 | 4 | #21 | `chore/appsmith-r2` ← `feat/student-gateway-pr-b` | PR-B 学生域网关 |
 | 5 | #22 | `feat/student-gateway-pr-b` ← `feat/import-scope-pr-c` | PR-C 导入域隔离 |
 | 6 | #25 | `feat/import-scope-pr-c` ← `feat/gateway-entry-pr-d` | PR-D 统一入口 |
-| 7 | 本 PR | `feat/gateway-entry-pr-d` ← `test/pr-e-acceptance` | PR-E 验收、专项测试与演练脚本 |
+| 7 | #26 | `feat/gateway-entry-pr-d` ← `test/pr-e-acceptance` | PR-E 验收、专项测试与演练脚本 |
 
 按上表顺序合并；每个 PR 只包含相对其 base 的独立改动。
 
