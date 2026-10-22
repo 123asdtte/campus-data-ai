@@ -40,7 +40,7 @@ def table_count(table: str) -> int:
 
 class TestHealth:
     def test_数据库可用时返回200(self, db_client) -> None:
-        response = db_client.get("/health")
+        response = db_client.get("/health/ready")
 
         assert response.status_code == 200
         assert response.json()["database"] == "ok"

@@ -107,10 +107,10 @@ class TestBase64Preview:
 class TestHealthWithoutDatabase:
     def test_数据库不可用时返回503(self, api_client) -> None:
         """健康检查不能假装健康——连接池未打开时必须 503。"""
-        response = api_client.get("/health")
+        response = api_client.get("/health/ready")
 
         assert response.status_code == 503
-        assert "database unavailable" in response.json()["detail"]
+        assert response.json()["detail"] == "database unavailable"
 
 
 class TestQueryValidation:
