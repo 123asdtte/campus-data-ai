@@ -57,3 +57,6 @@ application-ga.yml
 # 只保留在本机；仓库只提交脱敏模板 gateway/.env.example。
 ruoyi-admin/src/main/resources/application-dev.yml
 ruoyi-admin/src/main/resources/application-prod.yml
+# 扩展模块（snailjob/snailai）不属于 PR-B 最小切片，其真实配置同样不进入仓库
+ruoyi-extend/**/src/main/resources/application-dev.yml
+ruoyi-extend/**/src/main/resources/application-prod.yml
