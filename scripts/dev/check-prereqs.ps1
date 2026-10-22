@@ -45,13 +45,17 @@ else {
     else { Assert FAIL 'docker compose 不可用' }
 }
 
-# --- 2. 端口占用（主栈 55432/8010/8081/8443，前端 8082） ---
+# --- 2. 端口占用 ---
+# 主栈（docker-compose.yml）只有 PostgreSQL 对外发布 55432。
+# Import API 的 8010 宿主发布已由 PR-D 移除（业务请求统一经网关），
+# 所以宿主机上不再有 8010，冒烟测试改为进容器内访问 127.0.0.1:8000。
+# 网关侧端口（9190 / 55434 / 6382）只有启动网关时才用得到，
+# 而网关镜像需要 ruoyi-admin jar（issue #1），本机通常没有。
+# 前端栈（docker-compose.web.yml，项目名 campus-web）占 8082。
 $ports = @{
-    55432 = 'PostgreSQL'
-    8010  = 'Import API'
-    8081  = 'Appsmith(HTTP)'
-    8443  = 'Appsmith(HTTPS)'
-    8082  = '前端静态站'
+    55432 = 'PostgreSQL（主栈）'
+    9190  = 'Java 网关（需要 RuoYi jar，issue #1）'
+    8082  = 'campus-web（前端栈）'
 }
 foreach ($p in ($ports.Keys | Sort-Object)) {
     $busy = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
@@ -64,22 +68,30 @@ foreach ($p in ($ports.Keys | Sort-Object)) {
     }
 }
 
-# --- 3. .env 与必填项 ---
+# --- 3. .env 与必填项（以 .env.example 为准） ---
 $envFile = Join-Path $repo '.env'
 if (-not (Test-Path $envFile)) {
     Assert FAIL '.env 不存在：up-main.ps1 会从 .env.example 自动生成，也可先手动 cp .env.example .env'
 }
 else {
-    Assert PASS '.env 已存在'
-    $envText = Get-Content $envFile -Raw
-    $required = @('POSTGRES_PASSWORD', 'APP_DB_PASSWORD', 'RO_DB_PASSWORD',
-        'APPSMITH_ENCRYPTION_PASSWORD', 'APPSMITH_ENCRYPTION_SALT')
-    foreach ($key in $required) {
-        if ($envText -notmatch "(?m)^$key=") {
-            Assert FAIL ".env 缺少 $key"
+    $gaps = Get-EnvFileGaps
+    if (-not $gaps.HasExample) {
+        Assert FAIL '.env.example 不存在，无法判断 .env 是否齐全'
+    }
+    elseif (($gaps.Missing | Measure-Object).Count -eq 0 -and
+            ($gaps.Placeholder | Measure-Object).Count -eq 0 -and
+            ($gaps.Empty | Measure-Object).Count -eq 0) {
+        Assert PASS '.env 与 .env.example 对齐：无缺失、无占位符、无空值'
+    }
+    else {
+        foreach ($m in $gaps.Missing) {
+            Assert FAIL ".env 缺少 $($m.Key)（.env.example 里有）——compose 会报 missing a value"
         }
-        elseif ($envText -match "(?m)^$key=(__CHANGE_ME.*)?$") {
-            Assert FAIL ".env 的 $key 仍是占位符，未填写"
+        foreach ($k in $gaps.Placeholder) {
+            Assert FAIL ".env 的 $k 仍是占位符，未填写"
+        }
+        foreach ($k in $gaps.Empty) {
+            Assert FAIL ".env 的 $k 是空值——compose 把空值也算缺失，会报 missing a value"
         }
     }
 }
