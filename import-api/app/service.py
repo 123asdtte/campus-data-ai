@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import secrets
@@ -54,23 +53,6 @@ def _set_actor(cur, actor: str) -> None:
     cur.execute("SELECT set_config('campus.actor_user_id', %s, true)", (actor,))
 
 
-def _read_frame(data: bytes, filename: str) -> pd.DataFrame:
-    lower = filename.lower()
-    if lower.endswith((".xlsx", ".xlsm")):
-        return pd.read_excel(io.BytesIO(data), dtype=str, engine="openpyxl", keep_default_na=False)
-    if lower.endswith(".csv"):
-        last_error: Optional[Exception] = None
-        for encoding in ("utf-8-sig", "gbk", "utf-8"):
-            try:
-                return pd.read_csv(
-                    io.BytesIO(data), dtype=str, encoding=encoding, keep_default_na=False
-                )
-            except UnicodeDecodeError as exc:  # 尝试下一种编码
-                last_error = exc
-        raise ServiceError(f"CSV 编码无法识别，请另存为 UTF-8：{last_error}")
-    raise ServiceError("仅支持 .xlsx / .csv 文件")
-
-
 def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).replace("\u3000", " ").strip() for c in df.columns]
@@ -79,29 +61,6 @@ def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].map(lambda v: None if isinstance(v, str) and v.strip() == "" else (v.strip() if isinstance(v, str) else v))
     return df
-
-
-def _map_columns(df: pd.DataFrame, target: str) -> Tuple[pd.DataFrame, List[str], Dict[str, str]]:
-    spec = TARGETS[target]
-    aliases: Dict[str, str] = spec["aliases"]  # type: ignore[assignment]
-    mapping: Dict[str, str] = {}
-    used: set[str] = set()
-    for col in df.columns:
-        canonical = aliases.get(col)
-        if canonical and canonical not in used:
-            mapping[col] = canonical
-            used.add(canonical)
-
-    missing = [field for field in spec["required"] if field not in used]  # type: ignore[union-attr]
-
-    # 补齐可选列，保证后续校验与插入结构稳定
-    for field in spec["fields"]:  # type: ignore[union-attr]
-        if field not in used and field not in mapping.values():
-            df[field] = None
-
-    renamed = df.rename(columns=mapping)
-    keep = [f for f in spec["fields"] if f in renamed.columns]  # type: ignore[union-attr]
-    return renamed[keep], missing, mapping
 
 
 def _encode_enums(df: pd.DataFrame) -> pd.DataFrame:
@@ -312,6 +271,21 @@ def _read_sidecar(staged_path: str) -> Dict[str, Any]:
             return json.load(handle)
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _remove_staged(staged_path: str) -> None:
+    """删除暂存文件及其 sidecar。
+
+    sidecar 的路径由暂存文件派生，两者必须同生共死：只删文件会让
+    `.mapping.json` 永久留在上传目录里，而 `staged_path` 已被置 NULL，
+    事后既无入口也无从反查（矩阵 §10-1）。这里逐个删、逐个容错，
+    文件缺失不应阻断提交（例如被运维手工清理过）。
+    """
+    for path in (staged_path, _sidecar_path(staged_path)):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _apply_mapping(frame: pd.DataFrame, matches: List[Any], target: str) -> pd.DataFrame:
@@ -792,12 +766,9 @@ def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
             )
 
     if not settings.keep_upload_files:
-        path = batch.get("staged_path")
-        if path and os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        staged = batch.get("staged_path")
+        if staged:
+            _remove_staged(staged)
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(

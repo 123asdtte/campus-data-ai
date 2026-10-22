@@ -150,15 +150,16 @@
 
 > 其中第 1、2、3、5 条属于「先定行为再补测」，四张决策单见
 > [`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md)（D-1 ~ D-4，含选项、成本与验证方式）。
-> 第 4 条（损坏 xlsx 应 400）与第 6 条（#23）已定案，只剩实现。
+> **D-1（sidecar 残留）与 D-4（死代码）已实施**；D-2/D-3 待实施；第 4 条（损坏 xlsx 应 400）
+> 与第 6 条（#23）已定案，只剩实现。
 
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|
-| 1 | sidecar 映射文件从不清理，每次成功导入永久残留一个 `.mapping.json` | `service.py:794-805` | 补删 sidecar；顺带确认孤儿文件是否需要 TTL 机制 |
-| 2 | 扩展名白名单未生效：`.txt` 等内容为 CSV 的文件可正常导入（相关报错在死代码里） | `parsing.py:65-66`、`service.py:57-71` | 定行为：拒绝未知后缀，还是明确「按内容识别」并写进文档 |
-| 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py:182-186` | 至少对替换字符出现的情况给 warning |
+| 1 | sidecar 映射文件从不清理，每次成功导入永久残留一个 `.mapping.json` | `service.py` 的 `commit_batch` 清理段 | **已修复**：`_remove_staged()` 同时删暂存文件与 sidecar；孤儿文件的一次性清理脚本仍在 D-1 范围内未做 |
+| 2 | 扩展名白名单未生效：`.txt` 等内容为 CSV 的文件可正常导入（相关报错在死代码里） | `parsing.py:65-66`、`service.py` 的 `create_batch` 入口 | 定行为：拒绝未知后缀，还是明确「按内容识别」并写进文档 |
+| 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py` 的 `_read_raw_rows` / `load_frame` 两处解码 | 至少对替换字符出现的情况给 warning |
 | 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py:74` | 捕获 openpyxl 异常转 `ServiceError` |
-| 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py:57`、`:84` | 删除，避免误判为已覆盖 |
+| 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py`（原 `:57`、`:84`） | **已删除**（D-4），随之移除未使用的 `import io` |
 | 6 | **缺少「入学年份」等可选列时提交 500**：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚。任何只含学号+姓名的最小名单都提交不了 | `service.py:116`（`_pre_coerce`）、`service.py:733-751`（取值直接入库） | 取值处按 `_cell` 的规则把 `pd.NA`/`NaT` 归一成 `None`；已由 `test_commit_conflict.py::TestOptionalColumn` 以 xfail 固化 |
 
 ---
@@ -170,7 +171,7 @@
 | 新增文件 | 层 | 用例数 | 补的缺口 |
 |---|---|---|---|
 | `test_remap.py` | 真库 | 8 | §4 remap 接口（此前整接口零行为测试）：改映射后预览/列映射同步、手动指定解除原占用列、取消必需列转 failed、校验后 remap 状态回退 `uploaded`、回退后必须重新校验、已导入批次 409、并行批次互不干扰 |
-| `test_staging.py` | 真库 + 纯 FS | 7 | §6/§7 暂存文件生命周期：预览/校验后必须保留、提交后删除且 `staged_path` 置空、`keep_upload_files` 为真时保留、文件被外部删除后 409；sidecar 残留固化为 xfail（§10-1） |
+| `test_staging.py` | 真库 + 纯 FS | 7 | §6/§7 暂存文件生命周期：预览/校验后必须保留、提交后删除且 `staged_path` 置空、`keep_upload_files` 为真时保留、文件被外部删除后 409；sidecar 残留（§10-1，已修复并转为正式断言） |
 | `test_commit_conflict.py` | 真库 | 3 | §2 ON CONFLICT 分支（见下方新发现） |
 | `test_queries_read.py` | 真库 | 11 | §8 只读查询层（此前零行为覆盖）：分页与总数、参数夹取、keyword ILIKE、学院筛选与 `forced_college` 取交集、`get_student` 异动排序 |
 | `test_parsing_edge.py` | 纯函数 | 8 | §3 解析边界：未知后缀按内容识别（现状固化）、非法字节替换（现状固化）、损坏 xlsx（xfail，§10-4）、sidecar 读写往返与损坏兜底 |
