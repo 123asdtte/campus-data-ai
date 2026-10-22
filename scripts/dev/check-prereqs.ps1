@@ -6,6 +6,12 @@
     只做检查，不改任何东西。任何一项 FAIL 都会让退出码为 1，
     up-main.ps1 会先跑它，失败即停，避免带着缺口启动再出现难懂的报错。
 
+    2026-10-22 对齐统一入口（PR-D 之后）：
+      - 宿主不再发布 8010（import-api 只能经网关访问）；
+      - Appsmith 已下线，改为检查网关相关端口；
+      - 网关要求 JWT_SECRET_KEY / GATEWAY_DB_PASSWORD / GATEWAY_REDIS_PASSWORD /
+        INTERNAL_HMAC_SECRET 全部非空（缺失时 compose 直接拒绝启动）。
+
 .EXAMPLE
     .\scripts\dev\check-prereqs.ps1
 #>
@@ -46,16 +52,17 @@ else {
 }
 
 # --- 2. 端口占用 ---
-# 主栈（docker-compose.yml）只有 PostgreSQL 对外发布 55432。
-# Import API 的 8010 宿主发布已由 PR-D 移除（业务请求统一经网关），
-# 所以宿主机上不再有 8010，冒烟测试改为进容器内访问 127.0.0.1:8000。
-# 网关侧端口（9190 / 55434 / 6382）只有启动网关时才用得到，
-# 而网关镜像需要 ruoyi-admin jar（issue #1），本机通常没有。
-# 前端栈（docker-compose.web.yml，项目名 campus-web）占 8082。
+# 主栈：业务库 55432；网关侧 55434（认证库）/ 6382（Redis）/ 9190（统一入口）；
+# 前端独立编排（docker-compose.web.yml）：8082。
+# 8010 / 8081 / 8443 不再属于本栈：8010 是已关闭的 import-api 直连口，
+# 8081/8443 是已下线的 Appsmith。它们被占用不代表冲突，因此不再检查。
+# 网关三件套只有构建出 ruoyi-admin jar 后才会启动；未构建时它们空闲属正常。
 $ports = @{
-    55432 = 'PostgreSQL（主栈）'
-    9190  = 'Java 网关（需要 RuoYi jar，issue #1）'
-    8082  = 'campus-web（前端栈）'
+    55432 = 'PostgreSQL 业务库'
+    55434 = 'PostgreSQL 网关认证库（需网关 jar）'
+    6382  = 'Redis 网关缓存（需网关 jar）'
+    9190  = 'Java 网关（统一入口，需网关 jar）'
+    8082  = '前端静态站（独立 compose）'
 }
 foreach ($p in ($ports.Keys | Sort-Object)) {
     $busy = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue
@@ -110,6 +117,17 @@ if (Test-Path (Join-Path $repo 'web/dist')) {
 }
 else {
     Assert WARN 'web/dist 不存在：前端栈（docker-compose.web.yml）需要它，主栈不受影响'
+}
+
+# 网关镜像只 COPY 宿主构建好的 jar（gateway/Dockerfile），target/ 不入库。
+# 没有 jar 时 up-main 只启动核心栈；要验证统一入口，先构建：
+#   cd gateway; mvn -B -DskipTests -pl ruoyi-admin -am package
+$gatewayJar = Join-Path $repo 'gateway/ruoyi-admin/target/ruoyi-admin.jar'
+if (Test-Path $gatewayJar) {
+    Assert PASS '网关 jar 已就绪：up-main 会一并启动网关（统一入口 9190）'
+}
+else {
+    Assert WARN '网关 jar 不存在：up-main 只启动核心栈；需要统一入口时先构建 ruoyi-admin（见文档第 2 节）'
 }
 
 # --- 5. 磁盘 ---

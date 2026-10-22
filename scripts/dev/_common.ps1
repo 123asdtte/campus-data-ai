@@ -8,12 +8,12 @@ $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 # 接口返回的中文会变成乱码，ConvertFrom-Json 也会跟着失败。
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# 另一条独立的坑，管的是反方向——把字符串**喂给** native 命令时用的编码
-# 是 $OutputEncoding，PS 5.1 默认 ASCII，中文会直接变成问号。
-# （把 Python 脚本管道给 `docker compose exec ... python -` 时踩到：
-#  脚本里的「学号」变成「??」，openpyxl 报 '??' is not list。）
-# Console::OutputEncoding 只管显示，救不了这一路。
-$OutputEncoding = [System.Text.Encoding]::UTF8
+# 反方向：把字符串“喂给” native 命令时用的是 $OutputEncoding。
+# PS 5.1 默认 ASCII，中文会变成问号，甚至会吞掉换行：
+#   - 管道给 psql 时，004 的 DO 块被误判语法错误；
+#   - 管道给 `docker compose exec ... python -` 时，脚本里的「学号」变成「??」。
+# Console::OutputEncoding 只管显示，救不了这一路，所以单独设置且不带 BOM。
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 function Get-RepoRoot {
     return $script:RepoRoot
@@ -89,6 +89,13 @@ function Read-EnvFile {
     return $map
 }
 
+# 是否是“密钥类”键：只有这类键在空值/占位符时才生成随机串。
+# 其余键（开关、数量、名称）必须沿用 .env.example 的默认值，不能随机化。
+function Test-SecretKey {
+    param([string]$Key)
+    return ($Key -match '(?i)(PASSWORD|SECRET|TOKEN|_KEY$|^KEY$)')
+}
+
 # 以 .env.example 为准，算出当前 .env 还差什么。
 #
 # 为什么以 .env.example 为准，而不是写死一份「已知键」清单：
@@ -119,6 +126,7 @@ function Get-EnvFileGaps {
         Missing     = @()
         Placeholder = @()
         Empty       = @()
+        Example     = @{}
     }
     if (-not $gaps.HasExample) { return $gaps }
     if (-not (Test-Path $envPath)) { return $gaps }
@@ -127,8 +135,11 @@ function Get-EnvFileGaps {
     foreach ($line in (Get-Content $examplePath -Encoding UTF8)) {
         if ($line -notmatch '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') { continue }
         $key = $Matches[1]
+        # 与 Read-EnvFile 使用同一套清洗规则，避免把引号原样抄进 .env
+        $exampleValue = $Matches[2].Trim().Trim('"')
+        $gaps.Example[$key] = $exampleValue
         if (-not $current.ContainsKey($key)) {
-            $gaps.Missing += [pscustomobject]@{ Key = $key; ExampleValue = $Matches[2].Trim() }
+            $gaps.Missing += [pscustomobject]@{ Key = $key; ExampleValue = $exampleValue }
             continue
         }
         if ($current[$key] -eq '') { $gaps.Empty += $key; continue }
@@ -136,6 +147,20 @@ function Get-EnvFileGaps {
     }
     $gaps.Exists = $true
     return $gaps
+}
+
+# 按“密钥类才随机、其余照抄默认值”的规则决定某个键的填充值。
+function Get-FillValue {
+    param(
+        [string]$Key,
+        [string]$ExampleValue
+    )
+    if ($ExampleValue -and $ExampleValue -notmatch '^__CHANGE_ME') {
+        return $ExampleValue
+    }
+    if (Test-SecretKey $Key) { return (New-RandomSecret) }
+    # 非密钥类的空值保留原样：这类键通常是可选开关，随机化会改变语义
+    return $null
 }
 
 # 把 .env 补齐到与 .env.example 一致。只补缺的、只填空的，已有值一律不动。
@@ -167,21 +192,19 @@ function Sync-EnvFile {
     foreach ($k in $gaps.Empty) { $toFill[$k] = $true }
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
-            if ($toFill.ContainsKey($Matches[1])) {
-                $lines[$i] = "$($Matches[1])=$(New-RandomSecret)"
+            $key = $Matches[1]
+            if ($toFill.ContainsKey($key)) {
+                $value = Get-FillValue -Key $key -ExampleValue ([string]$gaps.Example[$key])
+                if ($null -ne $value) { $lines[$i] = "$key=$value" }
             }
         }
     }
 
     # 缺的键追加到末尾。.env.example 里已经给了具体值的（比如 GATEWAY_DB_NAME）
-    # 照抄；留空或还是占位符的，才生成随机密钥。
+    # 照抄；密钥类且留空/占位的，才生成随机值。
     foreach ($m in $gaps.Missing) {
-        if ($m.ExampleValue -eq '' -or $m.ExampleValue -match '^__CHANGE_ME') {
-            $value = New-RandomSecret
-        }
-        else {
-            $value = $m.ExampleValue
-        }
+        $value = Get-FillValue -Key $m.Key -ExampleValue $m.ExampleValue
+        if ($null -eq $value) { continue }
         $lines.Add("$($m.Key)=$value")
         Write-Status INFO ".env 缺少 $($m.Key)（.env.example 里有，手上这份是旧版），已补上"
     }
@@ -197,6 +220,34 @@ function Sync-EnvFile {
     # 的工具会直接读不出来，所以按无 BOM 写。
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($envPath, (($lines -join "`n") + "`n"), $utf8NoBom)
+}
+
+# 用 psql 执行一份 SQL 文件（内容经 stdin 传入，避免 Windows 路径映射问题）。
+# 返回 @{ Code = 退出码; Output = 合并后的输出 }，调用方据此判断并打印错误。
+function Invoke-PsqlFile {
+    param(
+        [string]$Path,
+        [hashtable]$Variables = @{}
+    )
+    $psqlArgs = @(
+        'compose', 'exec', '-T', 'campus-db', 'psql',
+        '-U', $script:DbUser, '-d', $script:DbName, '-v', 'ON_ERROR_STOP=1'
+    )
+    foreach ($key in ($Variables.Keys | Sort-Object)) {
+        $psqlArgs += @('-v', "$key=$($Variables[$key])")
+    }
+    $psqlArgs += @('-f', '/dev/stdin')
+
+    # 必须显式 -Encoding UTF8：Windows PowerShell 5.1 的 Get-Content 默认按系统
+    # ANSI(GBK) 解码，UTF-8 的 SQL 注释会变成乱码并吞掉换行，psql 收到的脚本
+    # 行号错位，最终报出 “syntax error at or near campus_nonce_cleaner” 这种
+    # 与真实内容无关的错误（实测踩过）。
+    $content = Get-Content -Path $Path -Raw -Encoding UTF8
+    $output = ($content | & docker @psqlArgs 2>&1) |
+        ForEach-Object { $_.ToString() }
+    # $LASTEXITCODE 必须在管道结束后立刻取值，否则会被后续 cmdlet 覆盖
+    $code = $LASTEXITCODE
+    return @{ Code = $code; Output = ($output -join "`n") }
 }
 
 # 补齐 initdb 不负责的迁移：003 → 004 → 006（与 CI 的顺序一致）。
@@ -230,6 +281,10 @@ function Initialize-DbRoles {
         @{ Name = '006_import_scope.sql'; Vars = @{} }
     )
 
+    # Invoke-PsqlFile 依赖这两个脚本级变量（只在本次调用期间有效）
+    $script:DbUser = $user
+    $script:DbName = $db
+
     Push-Location $script:RepoRoot
     try {
         foreach ($step in $steps) {
@@ -238,23 +293,10 @@ function Initialize-DbRoles {
                 Write-Status FAIL "找不到 sql/$($step.Name)"
                 return $false
             }
-            # -Encoding UTF8 必须带上：不然 003 里那条以「。」结尾的中文注释
-            # 会把下一行的 GRANT DELETE 吞进 -- 注释里，语句静默不执行。
-            $sql = Get-Content $path -Raw -Encoding UTF8
-            $psqlArgs = @('exec', '-T', 'campus-db', 'psql',
-                '-U', $user, '-d', $db, '-v', 'ON_ERROR_STOP=1')
-            foreach ($k in $step.Vars.Keys) {
-                $psqlArgs += @('-v', "$k=$($step.Vars[$k])")
-            }
-            $psqlArgs += @('-f', '/dev/stdin')
-
-            # 先把输出收下再判退出码，别把 psql 的正常输出当返回值。
-            $output = ($sql | & docker compose @psqlArgs 2>&1) |
-                ForEach-Object { $_.ToString() }
-            $code = $LASTEXITCODE
-            if ($code -ne 0) {
-                $output | Out-Host
-                Write-Status FAIL "sql/$($step.Name) 执行失败"
+            $result = Invoke-PsqlFile -Path $path -Variables $step.Vars
+            if ($result.Code -ne 0) {
+                Write-Status FAIL "sql/$($step.Name) 执行失败（exit=$($result.Code)）"
+                $result.Output.Split("`n") | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" }
                 return $false
             }
             Write-Status PASS "sql/$($step.Name) 已执行"

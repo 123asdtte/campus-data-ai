@@ -47,18 +47,21 @@
 ```powershell
 .\scripts\dev\check-prereqs.ps1    # 只看不改：Docker / 端口 / .env / wheels / 磁盘
 .\scripts\dev\up-main.ps1          # 启动：补 .env → 补 wheel → compose up → 等健康检查
-.\scripts\dev\smoke-test.ps1       # 冒烟：健康检查 + 只读接口 + 一次完整导入
+.\scripts\dev\smoke-test.ps1       # 冒烟：网关登录 + 只读接口 + 一次完整导入
 .\scripts\dev\down-main.ps1        # 停止：**保留数据卷**，下次启动数据还在
 ```
 
-首次执行 `up-main.ps1` 会自动做三件事，不需要手工干预：
+首次执行 `up-main.ps1` 会自动做四件事，不需要手工干预：
 
 1. 对齐 `.env`：不存在就从 `.env.example` 复制；已存在的按 `.env.example`
-   **补齐缺的键、填实空值与 `__CHANGE_ME_*` 占位符**（已有值一律不动）；
+   **补齐缺的键、填实密钥类的空值与 `__CHANGE_ME_*` 占位符**（已有值一律不动）；
 2. `import-api/wheels` 为空时用本机 Python 预取（`--platform manylinux… --python-version 312`）；
-3. 数据库健康后按顺序执行 `003_roles.sql` → `004_internal_auth.sql` → `006_import_scope.sql`。
+3. 数据库健康后按顺序执行 `003_roles.sql` → `004_internal_auth.sql` → `006_import_scope.sql`；
+4. 检测 `gateway/ruoyi-admin/target/ruoyi-admin.jar`：存在则一并启动
+   `gateway-db` / `gateway-redis` / `gateway` 并等待健康；不存在则只启动核心栈，
+   并提示构建命令（见下）。
 
-第 1、3 条都是实测补上的，见第 5 节。
+第 1、3、4 条都是实测补上的，见第 5 节。
 
 **为什么要第 1 条**：compose 里加了新服务（网关就是这么进来的）之后，旧的 `.env`
 里没有那几个变量，`docker compose` 的**任何**子命令都会直接报
@@ -70,22 +73,32 @@
 `campus.clear_import_issues()` 是当前主干代码的**硬依赖**——缺了它，预览能过，
 一进「校验 / 提交」就 `function does not exist`（或退化成权限报错）。
 
-### 启动后的地址
+**为什么要第 4 条**：`gateway/Dockerfile` 只 `COPY ruoyi-admin/target/ruoyi-admin.jar`，
+`target/` 不入库。全新检出没有 jar，连带构建整个 compose 会失败；但网关源码
+**已在仓库**，执行一次 Maven 即可：
 
-主栈（`docker-compose.yml`）只有 PostgreSQL 对外发布；Import API 的 8010 宿主
-发布已由 PR-D 移除，业务请求统一经 Java 网关：
+```powershell
+cd gateway
+mvn -B -DskipTests -pl ruoyi-admin -am package   # 需要 JDK 21
+cd ..
+.\scripts\dev\up-main.ps1                        # 这次会连同网关一起启动
+```
+
+### 启动后的地址
 
 | 服务 | 地址 | 说明 |
 |---|---|---|
-| PostgreSQL | 127.0.0.1:55432 | 主栈 |
-| Java 网关 | 127.0.0.1:9190 | 需要 `ruoyi-admin` jar（issue #1），本机通常构建不出来 |
-| Import API | **无宿主端口** | 只在容器内 `127.0.0.1:8000`，冒烟测试进容器访问 |
+| **统一入口（Java 网关）** | http://127.0.0.1:9190 | 仅在存在 `ruoyi-admin.jar` 时启动 |
+| Import API | **无宿主端口** | 只在容器内 `http://import-api:8000`（宿主 8010 已关闭） |
+| PostgreSQL 业务库 | 127.0.0.1:55432 | 主栈 |
+| PostgreSQL 网关认证库 | 127.0.0.1:55434 | 仅启用网关时 |
+| 网关 Redis | 127.0.0.1:6382 | 仅启用网关时 |
 | campus-web | 127.0.0.1:8082 | 前端栈，`docker compose -p campus-web -f docker-compose.web.yml up -d` |
 
-> Appsmith 已按 R2 路线图下线（前端主入口改为 campus-web）。服务定义从
-> `docker-compose.yml` 删除，数据卷 `campus_appsmith_stacks` 保留，需要时可将
-> 服务定义原样加回。旧的 Appsmith 容器如果还在跑，它只是 compose 项目里的孤儿，
-> 不影响主栈，但会占着 8081/8443。
+> PR-D 之后浏览器只访问网关：前端 nginx 把 `/gw/*` 反代到 `gateway:9180`，
+> 由网关验登录态后签名转发内网 `import-api:8000`。宿主不存在绕过网关的业务端口。
+> Appsmith 已按 R2 下线，不再启动，也不再需要 `APPSMITH_*` 密钥；旧容器只是
+> compose 项目里的孤儿，不影响主栈，但会占着 8081/8443。
 
 ### 停止与清理（红线）
 
@@ -144,13 +157,14 @@ $env:POC_ROOT = 'D:\ai\ruoyi-plus-poc'
 | `docker pull` 超时 | Docker Hub 不可达 | 配镜像加速（第 1 节） |
 | `compose build` 卡在 pip | 容器内无外网，`wheels/` 为空 | 让 `up-main.ps1` 自动预取，或手工跑 `scripts/fetch-wheels.sh` |
 | `password authentication failed for user "campus_app"` | 角色没建 | 跑 `up-main.ps1`（会自动执行 003→004→006）；手工补：`docker compose exec -T campus-db psql -U <user> -d <db> -v app_password=... -v ro_password=... -f sql/003_roles.sql` |
-| `required variable GATEWAY_DB_PASSWORD is missing a value`（**任何 compose 子命令都报**） | `.env` 缺键，或值是空的 | 跑 `up-main.ps1` 或 `check-prereqs.ps1`：按 `.env.example` 补齐。空值也算缺失 |
-| `no such service: appsmith` | Appsmith 已按 R2 下线 | 主栈只点名 `campus-db` + `import-api` |
-| `COPY ruoyi-admin/target/ruoyi-admin.jar: not found` | 网关要 RuoYi jar，源码未入库（issue #1） | `up-main.ps1` 不构建网关；需要网关时先解决 issue #1 |
-| **预览成功，一进校验/提交就 500** | 006 没执行，`clear_import_issues()` 不存在 | 跑 `up-main.ps1` 补齐 003→004→006 |
+| **预览成功，一进校验/提交就 500** | 006 没执行，`clear_import_issues()` 不存在 | 跑 `up-main.ps1` 补齐 003→004→006，或手工 `psql -f sql/006_import_scope.sql`（幂等） |
 | `permission denied for table import_issues` | 003 的 `GRANT DELETE` 被 GBK 吞行吃掉，从未执行 | 用 `-Encoding UTF8` 重跑 003（006 会收回该 DELETE，改用受控函数） |
+| `required variable GATEWAY_DB_PASSWORD is missing a value`（**任何 compose 子命令都报**） | `.env` 缺键，或值是空的 | 跑 `up-main.ps1` 或 `check-prereqs.ps1`：按 `.env.example` 补齐。空值也算缺失 |
+| 登录返回 500 / `请配置jwt秘钥` | `.env` 的 `JWT_SECRET_KEY` 为空 | 填入 ≥32 字符随机值后 `docker compose up -d --force-recreate gateway` |
+| `no such service: appsmith` | Appsmith 已按 R2 下线 | 主栈只点名 `campus-db` + `import-api`（有网关 jar 时再点名网关三件套） |
+| `COPY ruoyi-admin/target/ruoyi-admin.jar: not found` | 网关镜像只 COPY 宿主构建产物，`target/` 不入库 | 先 `cd gateway; mvn -B -DskipTests -pl ruoyi-admin -am package`（JDK 21）；未构建时 `up-main` 会自动跳过网关 |
 | 校验全行无效、`DUPLICATE_STUDENT_NO` | 样例学号上次已导入 | 冒烟测试现在会自动加随机前缀，可直接重跑 |
-| 端口冲突 | 55432/8082/9190 被占 | `check-prereqs.ps1` 会打印占用进程名 |
+| 端口冲突 | 55432/55434/6382/9190/8082 被占 | `check-prereqs.ps1` 会打印占用进程名 |
 | 健康检查失败（wget 报连接被拒） | Docker 向容器注入了指向容器自身的 `HTTP_PROXY` | 健康检查统一用 `curl --noproxy '*'`（已落实在 compose 里） |
 | 服务互访不通 | 容器内 `127.0.0.1` 是容器自己 | 用 Compose 服务名（`campus-db`），不要写 localhost |
 | 脚本输出中文乱码 | 只设了 `[Console]::OutputEncoding` | stdin 那一路要设 `$OutputEncoding`（`_common.ps1` 已设） |
@@ -158,7 +172,37 @@ $env:POC_ROOT = 'D:\ai\ruoyi-plus-poc'
 
 ---
 
-## 5. 本次实测记录（2026-10-22，Windows 11 家庭版 26200 + Docker Desktop 4.96.2 / Engine 29.9.2）
+## 5. 实测记录
+
+### 5.1 统一入口复测（2026-10-22，PR-D 合并后）
+
+> 上一小节 5.2 是 Appsmith + 8010 时代的记录，仅作历史参考；当前拓扑以下表为准。
+
+| 步骤 | 结果 |
+|---|---|
+| `check-prereqs.ps1` | 栈运行时 `FAIL=0 / WARN=5`（端口被本栈占用属预期）；端口检查为 55432/55434/6382/9190/8082 |
+| `up-main.ps1 -NoBuild` | 检测到 jar → 5 个容器全部 healthy；自动执行 `003 → 004 → 006` 成功 |
+| `up-main.ps1 -NoBuild`（临时移走 jar） | 按设计降级：只启动核心栈，给出 Maven 构建提示，退出码 0 |
+| `smoke-test.ps1`（网关模式） | 连续运行 3 次全部 `FAIL=0`：登录 → 只读接口 → 预览→校验→提交 3 行 → 按唯一学号检索 |
+| `smoke-test.ps1 -ForceContainer`（降级模式） | `FAIL=0`：容器内直连 `127.0.0.1:8000`，预览/校验/提交 10 行 |
+| 安全边界 | 无 token 访问被拒；宿主 `8010` 不可达 |
+| `down-main.ps1` → `up-main.ps1` | 数据卷保留；重启后上次导入的 `SMK1022214253%` 仍为 3 行 |
+
+本轮修掉的问题：
+
+1. **004/006 未随 003 重放**：全新库会缺 `internal_nonce`、导入范围列与审计函数。
+   现在 `up-main.ps1` 在 003 之后固定重放 004、006（均幂等）。
+2. **PowerShell 5.1 编码坑（两层）**：
+   - 脚本文件无 BOM 时，PS 5.1 按 GBK 读源码，中文直接乱码甚至语法错误 → 所有 `scripts/dev/*.ps1` 改为 **UTF-8 with BOM**；
+   - `Get-Content -Raw` 默认按 ANSI 读 SQL，经管道喂给 psql 时中文注释会吞掉换行，
+     导致 004 报 `syntax error at or near "campus_nonce_cleaner"` → 统一用
+     `Get-Content -Encoding UTF8`，并设置 `$OutputEncoding` 为 UTF-8。
+3. **冒烟测试不可重复**：固定样例第二次运行全部命中 `DUPLICATE_STUDENT_NO`。
+   现在两种模式都会给学号加唯一前缀；网关模式还会按该前缀检索确认。
+4. **`.env` 与 `.env.example` 漂移**（吸收 PR #39）：改为以 `.env.example` 为准自动补齐，
+   密钥类空值才生成随机值，普通开关沿用默认值，避免把 `KEEP_UPLOAD_FILES` 之类随机化。
+
+### 5.2 历史记录（Appsmith + 8010 时代，2026-10-22 早于 PR-D 合并）
 
 按「干净环境」的口径跑完整流程，结论如下：
 

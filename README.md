@@ -80,11 +80,11 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | 数据权限专项 | 🧪 POC 通过 | 框架 Mapper 与实际业务路径**分别**取证 | [RUOYI-POC-DATA-PERMISSION.md](docs/archive/RUOYI-POC-DATA-PERMISSION.md) |
 | 学生管理切片 S1–S3 | 🧪 POC 通过 | 列表/详情/修改 + 12 项测试 | [RUOYI-POC-STUDENT-SLICE.md](docs/archive/RUOYI-POC-STUDENT-SLICE.md) |
 | 配套 React 前端 | 🧪 POC 通过 | 生产构建成功、真实登录、动态菜单 | [RUOYI-POC-AUTH-RESULTS.md](docs/archive/RUOYI-POC-AUTH-RESULTS.md) §13.2 |
-| **正式迁移** | 🟡 **PR-B/C/D 已实现，待评审** | 网关、学生域、导入域与统一入口均已进入主项目并通过端到端验证；PR 未合并 | [PROJECT-ROADMAP.md](PROJECT-ROADMAP.md) |
+| **正式迁移** | ✅ **PR-B/C/D/E 已合并** | 网关、学生域、导入域、统一入口与整体验收均已进入 `main` 并通过主线复验 | [PROJECT-ROADMAP.md](PROJECT-ROADMAP.md) |
 | 认证与权限（主系统） | 🟡 默认关闭 | 验签 + 权限点 + 学院范围已实现；`INTERNAL_AUTH_ENABLED=false` 保持关闭，正式切换需人工批准 | [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md) |
-| 学生域网关（PR-B） | 🟡 PR 待评审 | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计 actor | PR #21 |
-| 导入域隔离（PR-C） | 🟡 PR 待评审 | 批次归属部门 + 逐行学院校验 + 批次/异常表审计；管理员硬限制已解除 | PR #22 |
-| 统一入口（PR-D） | 🟡 PR 待评审 | 学生/聚合/导入全部经 `/gw`；移除 `/api` 与宿主 8010；multipart 经网关签名 | PR 描述 |
+| 学生域网关（PR-B） | ✅ 已合并（#21） | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计 actor | [DECISION-LOG.md](docs/DECISION-LOG.md) |
+| 导入域隔离（PR-C） | ✅ 已合并（#22） | 批次归属部门 + 逐行学院校验 + 批次/异常表审计；管理员硬限制已解除 | [DECISION-LOG.md](docs/DECISION-LOG.md) |
+| 统一入口（PR-D） | ✅ 已合并（#25） | 学生/聚合/导入全部经 `/gw`；移除 `/api` 与宿主 8010；multipart 经网关签名 | [DECISION-LOG.md](docs/DECISION-LOG.md) |
 | AI 能力（Dify 等） | ❌ 未开始 | 按计划排在认证与权限之后 | [ADR-001-import-mapping.md](docs/ADR-001-import-mapping.md) |
 
 🧪 = 结论仅在隔离 POC 成立，**不代表生产环境已具备同等保护**。
