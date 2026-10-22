@@ -1,128 +1,204 @@
 # PROJECT-ROADMAP — 校园数据 AI 项目总路线图
 
-- **版本**：v1（2026-10-22，阶段 0 产出）
+- **版本**：v1.1（2026-10-22 修订，含六项既定决策、POC 仓库审查、审计基线）
 - **地位**：本项目唯一总路线图。安全迁移细节见 `docs/SECURITY-MIGRATION-EXECUTION-PLAN.md`（专项细化，阶段定义以本文为准）。
-- **审批状态**：待项目负责人一次性确认；确认前不启动 PR-B。
+- **审批状态**：PR #17 开放待整体审批；本轮不启动 PR-B、不治理文档、不动正式库。
 
 ---
 
-## 1. 项目当前状态（事实基线，2026-10-22）
+## 0. 既定决策（v1.1 固化，后续不再逐项询问）
+
+| # | 决策 | 固化内容 |
+|---|---|---|
+| D1 | **认证架构 = RuoYi 路线** | RuoYi 负责登录/身份/权限；Java 网关为 FastAPI 生成内部签名；FastAPI 复核身份与范围。PR-B **只**接入登录 + 学生域 3 端点；保留现有 React 前端；**plus-ui-react 许可未确认前不作为正式依赖** |
+| D2 | **Appsmith 风险处置先于 PR-B** | 确认无实际业务依赖 → 停服务并保留数据卷与配置；仍需使用 → 换独立只读账号 + 负向测试证明写操作被拒。**不得为迁就功能给只读账号加写权限**；处置与验证在 PR-B 开发前完成（不在正式环境执行） |
+| D3 | **文档治理原则** | 更新现行规范、归档历史决策、**不永久删除**有审计价值的材料；每份文件唯一分类，数量与路径一一对应 |
+| D4 | **审计匿名基线** | 明确统计时间范围、分母、匿名判定规则、历史/近期区分；**不导出学生个人信息或完整业务记录**；基线成为后续验收指标 |
+| D5 | **RuoYi 与业务库隔离** | 明确 `sys_*` 表位置、访问账号、能否触碰业务表；**优先独立数据库 + 专用账号**；认证框架账号不得获得业务表写权限。PR-D 关 8010 前须先证明前端经网关全接口可用，且关闭的是**宿主直连入口**而非容器内通信 |
+| D6 | **阶段顺序** | 保留 PR-B → PR-C → PR-D → PR-E 主流程；文档治理（G）与 Appsmith 风险处置（R）作为**业务开发前的独立任务**，各自独立 PR |
+
+---
+
+## 1. 项目当前状态（事实基线，2026-10-22 实查）
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 主分支 | `d10946f`（PR #16 已合并），工作区干净 | git |
-| 主栈运行版本 | 与 main 一致（11:32 重建），`INTERNAL_AUTH_ENABLED=false` | `docker exec campus-import-api env` |
-| 认证基础设施 | 已合入：`internal_auth.py`、11 路由验签依赖、`PUT /students` 条件注册、`sql/004`（**未在正式库执行**） | PR #16 |
-| 正式库 | `campus.internal_nonce` 不存在；`campus_nonce_cleaner` 角色不存在；`campus_app` 仍为可写账号 | `psql campus-db` 实查 |
-| 审计 | `operation_logs` 匿名占比 **93%** | 实查 |
-| 前端 | React（`web/`），经 nginx 调 import-api，`X-Actor` 无签名 | `web/nginx.conf:28` |
-| POC | `campus-ruoyi-poc` PR #3 已合并（`f1c2856`），导入 48/48、学生 12/12 | POC 仓库 |
-| Appsmith | 仍在主栈运行，持 `campus_app` 可写账号（高风险，未处置） | compose + `SECURITY-AUTH-DESIGN` |
-| plus-ui 许可 | 未确认（Issue #11，阻塞项：仅当采用 plus-ui 界面时相关） | Issue |
-| 测试 | 关闭态 130 / 开启态 97 / CI 四项全绿（001→003→004 + campus_app） | CI + 本地 |
+| 主分支 | `d10946f`（PR #16 已合并）；主栈运行版本一致，`INTERNAL_AUTH_ENABLED=false` | git / 容器 env |
+| 认证基础设施 | 已合入（`internal_auth.py`、11 路由验签、`sql/004`），**正式库未执行 004** | PR #16；`psql campus-db` |
+| 正式库角色 | 仅 `campus_app`/`campus_ro`；**无** `campus_nonce_cleaner` | `pg_roles` 实查 |
+| 审计 | 544 条，全部产生于 2026-10-20；匿名 504 条（**92.6%**）；对象类型仅 students/student_changes | `operation_logs` 聚合计数（无业务明细） |
+| 近期审计 | 2026-10-21 起**无新增审计记录**（最新 2026-10-20） | 同上 |
+| Appsmith | 在主栈运行，持 `campus_app` 可写账号 | compose + `SECURITY-AUTH-DESIGN` |
+| 前端 | React（`web/`），nginx 反代 import-api，`X-Actor` 无签名 | `web/nginx.conf:28` |
+| POC | `campus-ruoyi-poc` main=`f1c2856`；审查结论见 §5 | POC 仓库 |
+| 测试 | 关闭态 130 / 开启态 97 / CI 四项全绿 | CI + 本地 |
 
-**核心判断**：技术路线（RuoYi 网关 + `X-Internal-*` 签名 + FastAPI 范围复核）已被 POC 与 PR-A 双重验证，**方向正确，不需要更换**。当前最大风险不是技术，而是：① 网关尚未进入主项目；② Appsmith 可写账号未处置；③ 文档新旧混杂（37 份中 26 份属历史）。
+**核心判断**：技术路线（RuoYi 网关 + `X-Internal-*`）成立且不需更换；POC 与 PR-A 双重验证。当前风险集中在三处：网关未进主项目、Appsmith 可写账号、文档双轨。
+
+### 1.1 审计匿名基线（D4 固化）
+
+| 指标 | 值 | 说明 |
+|---|---|---|
+| 统计时间范围 | 2026-10-20 单日（`min(created_at)=max(created_at)=2026-10-20`） | 一期 Appsmith 阶段的验收操作 |
+| 分母 | **544** 条 `operation_logs` 记录 | 全部记录，无抽样 |
+| 匿名判定 | `actor_user_id IS NULL OR btrim(actor_user_id)=''` | 与一期写入路径一致（未设置会话变量） |
+| 匿名 / 有主 | **504 / 40**（92.6% / 7.4%） | 有主的 40 条为手工带 `X-Actor` 的操作 |
+| 按对象类型 | `student_changes` 305（匿名 300）、`students` 239（匿名 204） | 均为写入/更新路径 |
+| 历史 vs 近期 | **全部为历史记录；2026-10-21 起新增 0 条** | 因此 92.6% 反映"一期从未接入可信身份"，**不等于当前存在同等强度的活跃缺陷** |
+
+**验收指标（后续阶段引用）**：PR-B 完成后，任何**新增**业务操作必须有非空 `actor_user_id`；PR-E 验收要求"近期窗口内匿名新增 = 0"。存量历史不回填（回填属伪造审计，禁止）。
 
 ---
 
-## 2. 总览表
+## 2. 总览表（按既定决策调整后）
 
 | 阶段 | 解决的问题 | 最终成果 | 核心实现 | 验收标准 | 前置依赖 | 主要风险 |
 |---|---|---|---|---|---|---|
-| **G 文档治理**（新增，本次方案批准后执行） | 37 份文档 26 份属历史，新旧路线并存会误导开发 | docs/ 活跃文档 ≤11 份 + `archive/` 26 份；索引分"现行/归档"两节 | `git mv` 归档 + 修复 6 份 B 类 + 索引重建 | 归档链接无死链；每份活跃文档与代码一致；README 不再指向已废弃路线 | 本方案批准 | 移动文件破坏相对链接（需同步修 8 处引用） |
-| **PR-B 网关落地（学生域）**（职责调整） | 学生域"真实链路"缺网关：无网关则签名无从产生 | compose 新增 `auth-gateway`（RuoYi 后端精简）；登录/权限点/3 个学生端点签名代理；前端学生页切登录会话 | POC 的 `PocProxyController` 模式移植为 `InternalProxyController`；RuoYi 表（`ry_*`）以 `sql/005_gateway_bootstrap.sql` 引导 | 登录→网关→验签→DB→审计全链路可重复；审计 actor=登录用户；跨学院 403 | PR-A；G | 网关引入 RuoYi 全套表与 JVM 服务的重量；管理员引导凭据管理 |
-| **PR-C 导入范围与审计** | 导入接口缺批次范围/逐行校验/审计 | 解除管理员硬限制；`created_dept_id` + 逐行校验 + 语句级审计触发器；48 项导入安全用例在主项目复跑 | 移植 POC `07_import_security.sql` 与 `service` 改动（PR #3 已验证） | 越权批次不可见/不可提交；历史 NULL 批次仅管理员；审计计数与 POC 一致 | PR-B | 正式库需要执行 005/006 迁移（先备份） |
-| **PR-D 导入接入网关 + 前端切换** | 导入仍可绕过网关直连 8010；前端多入口 | 导入 7 端点接入网关签名代理；前端导入页切登录；**关闭 8010 宿主端口** | 网关补 7 个代理端点（multipart 签名）；nginx 不再直连 | 无签名直连 8010 不可达；前端全站登录可用 | PR-C | 前端大文件上传经网关的内存峰值 |
-| **PR-E 回归与发布评审** | 未验证项收口；上线 Go/No-Go | 并发写/审计差异/大文件/nonce 增长四项专项测试；Appsmith 只读化或下线；迁移+回退演练；Go/No-Go 报告 | 压测脚本 + 演练记录 | 无未解决 P0/P1；回退 5 分钟内可完成；Go/No-Go 有证据 | B/C/D | 演练发现回退不可用需要返工 |
-| **Appsmith 处置**（独立任务，随 PR-E 收口） | 可写账号是最短攻击路径 | 只读化（新账号 campus_ro）或整体下线 | 新增只读账号 + Appsmith 数据源切换，或 `docker compose down appsmith` | Appsmith 无法再写任何业务表 | PR-A | 现有 Appsmith 页面失效（已降级为历史方案，影响可接受） |
+| **G 文档治理** | 37 份文档 26 份属历史，两套互斥认证方案并存 | 现行 15 份 + `archive/` 26 份，索引分两节 | `git mv` 归档 + 修 6 份 B 类 + 索引重建 | 分类唯一且数量自洽；非 archive 文件中零处指向已废弃路线；链接无死链 | 本方案批准 | 移动破坏相对链接（8 处需同步） |
+| **R Appsmith 风险处置** | `campus_app` 可写账号是最短攻击路径 | 二选一：停服务（保留卷/配置）**或** 只读化 + 负向测试 | 独立只读账号；数据源切换或 compose 下线 | 写操作被实测拒绝；必要功能经回归验证；不新增任何写授权 | G（避免混 PR） | 存在未识别的写入依赖 → 先核实再决策 |
+| **PR-B 学生域（含网关最小切片）** | 无网关则签名无从产生；学生域仍是旧行为 | `auth-gateway` 服务 + `sys_*` 引导 + 登录 + 学生端点签名代理；前端学生页切登录 | 移植 `PocProxyController` 为 `InternalProxyController`（14 段 canonical 零改动，头名/权限点改写） | 登录→网关→验签→DB→审计端到端可跑；跨学院 403；审计 actor=登录用户；Java 复现金标向量；**审计新增匿名=0** | G、R | 网关引入 JVM + `sys_*` 表的重量；账号引导凭据管理 |
+| **PR-C 导入域** | 导入无批次范围/逐行校验/批次审计；管理员硬限制是临时措施 | `created_dept_id` + 逐行学院校验 + 语句级审计触发器；解除管理员硬限制 | 移植 POC `07_import_security.sql` 思路（**不照抄 nonce/授权部分**） | 跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；审计计数与 POC 一致 | PR-B | 正式库需执行 005（先备份） |
+| **PR-D 正式入口** | 8010 宿主可直连；前端多入口 | 导入 7 端点接入网关；前端导入页切登录；**关闭宿主 8010 发布** | 网关补 7 个代理端点（multipart 签名） | ①前端经网关访问**全部必需接口**均 200；②宿主 `curl 127.0.0.1:8010` 连接被拒；③**容器内 `campus-web`→`import-api:8000` 通信不受影响**；④网关→import-api 内网正常 | PR-C | multipart 过网关内存峰值；误关容器内链路 |
+| **PR-E 整体验收** | 未验证项收口；上线决策 | 四项专项测试报告 + 正式库 004/005 迁移与回退演练 + Go/No-Go 报告 | 压测/演练脚本 | 无未解决 P0/P1；回退 ≤5 分钟；近期窗口审计匿名新增=0；正式库迁移前后数据一致 | B/C/D | 演练环境与正式环境差异导致"演练通过、实际失败" |
 
-> **对原路线的调整声明**（不静默扩范围）：
-> 1. **PR-B 与 PR-D 职责对调**：原 PR-B 是"学生域真实链路"，但它硬依赖网关（签名无从产生）；原 PR-D 的"网关"被**提前、缩小**为"仅学生域切片"，并入 PR-B。原 PR-D 剩余部分（导入接入 + 前端导入页 + 关 8010）成为新 PR-D。理由：不做网关，PR-B 只能停留在测试桩，与"真实链路"目标矛盾。
-> 2. **新增 G 阶段（文档治理）**：37 份文档中 26 份为历史方案，其中两套互斥认证方案并存，是后续 AI 开发误用的最大风险源。
-> 3. **新增 Appsmith 处置任务**：可写账号问题在 10-20 的文档中已是"高风险"，但一直无所属阶段。
-> 4. **PR-C 内容不变**，PR-E 增加四项此前承诺的专项测试（并发写、审计差异、大文件、nonce 增长）。
+> **对原 PR-B/C/D/E 的调整声明**（不静默扩范围）：
+> 1. **PR-B 吸收原 PR-D 的"网关最小切片"**：原 PR-B（学生域真实链路）硬依赖网关，无网关则签名无从产生，只能停在测试桩；因此把网关**提前并缩小**（仅登录 + 学生 3 端点），原 PR-D 剩余部分（导入接入 + 前端导入页 + 关 8010）保持为 PR-D。
+> 2. **新增 G（文档治理）与 R（Appsmith 风险处置）**，二者为业务开发前的独立任务，各自独立 PR。
+> 3. **PR-C 内容不变**；**PR-E 增加**此前承诺的四项专项测试（并发写、审计差异、大文件内存、nonce 增长）。
+> 4. **更正既有描述**：RuoYi-Vue-Plus 6.0.0 的表前缀是 `sys_*`（以 POC `sql/01_ruoyi.sql` 为准），**不是** v1.0 写的 `ry_*`；POC 的 `sys_*` 与业务 `campus` schema 同库不同 schema，主项目按 D5 改为**独立数据库 + 专用账号**。
 
 ---
 
 ## 3. 阶段详解
 
-### 3.1 G — 文档治理（新增，先行）
+### 3.1 G — 文档治理
 
-**为什么**：`SECURITY-AUTH-ROADMAP`（pwdlib+Casbin 路线）与 `INTERNAL-AUTH-SPEC`（网关签名路线）两套互斥方案并存；`RUOYI-S1S3-MERGE-PLAN` 写的文件名（`poc_auth.py`、`004_internal_nonce.sql`）与实际实现不同；`IMPORT-API.md` §3.7 的 `/health` 契约与实现矛盾。后续任何 AI 或新人从旧文档出发都会做出错误实现。
+**为什么**：两套互斥认证方案（`SECURITY-AUTH-ROADMAP` 的 pwdlib+Casbin vs 现行网关签名）同时存在于正文；`004_auth.sql` 编号与实际 `004_internal_auth.sql` 撞车；根 README 仍指向已废弃路线。后续任何 AI/新人从旧文档出发都会做错实现。
 
-**做到什么程度**：见 `docs/DOCUMENTATION-AUDIT.md` §4 目标结构。验收：`grep -r "SECURITY-AUTH-ROADMAP" README.md docs/*.md` 仅出现在 archive 内部；docs/README 索引覆盖全部现存文件；无一份活跃文档描述已被取代的路线。
+**做到什么程度**：见 `docs/DOCUMENTATION-AUDIT.md` §5。验收：非 archive 文件中 `grep -rn "SECURITY-AUTH-ROADMAP\|poc_auth.py\|004_internal_nonce\|ry_\*"` 零命中；索引覆盖 100% 现存文件；每份活跃文档与 `d10946f` 一致。
 
-**怎么做**：一个 PR 完成——`git mv` 26 份到 `docs/archive/`；修复 6 份 B 类（API-MIGRATION-INVENTORY、DOCKER-ENV-AUDIT、GIT-WORKFLOW、IMPORT-API、TEST-COVERAGE-MATRIX、docs/README 索引）；README.md 修 7 处（§3.1、§4、§8、§13 行 278 等）；CONTRIBUTING 修 2 处（tests 已存在、分支前缀 feat/）。
+**怎么做**：一个 PR（`docs/governance-stage0`）：`git mv` 26 份 C 类 → `docs/archive/`；3 份加"已被取代"头注；修 6 份 B 类；重建 `docs/README.md` 两节索引；修根 README 7 处 + CONTRIBUTING 2 处；同步 8 处相对链接。
 
-**失败怎么办**：移动导致链接失效 → 归档 PR 内跑 `grep -rn "docs/XXX" README.md docs/*.md import-api web` 逐个修复；不删除任何文件，回退即 `git revert`。
+**测试命令**：无代码测试；验收靠 `grep` 校验 + 链接检查。
+**回退**：`git revert` 整个 PR。
+**未解决风险**：`git mv` 后外部引用（GitHub 链接、其他仓库）会失效，需在 PR 描述列出重定向说明。
 
-### 3.2 PR-B — 网关落地（学生域切片）
+### 3.2 R — Appsmith 风险处置
 
-**为什么**：这是"POC 验证成果进入主项目"的关键一步。没有网关，`X-Internal-*` 无处产生，学生接口只能停留在测试桩；且菜单权限点（`student:list/write`）需要 RuoYi 的 `sys_menu` 体系来承载。
+**为什么**：`campus_app` 可写账号经 Appsmith 暴露，是当前最短攻击路径；10-20 文档已标高风险但始终无归属阶段。
+
+**做到什么程度**：二选一（先核实使用情况：近 7 日访问/查询记录、页面是否被业务方使用）：
+- **R1 只读化**：新建 `appsmith_ro`（仅 `campus` schema SELECT），切换 Appsmith 数据源；**不新增任何写授权**；
+- **R2 停服务**：`docker compose stop appsmith`（保留 `appsmith_pgdata` 卷与 `.env` 配置），从 compose 移除服务但**不删卷**。
+
+**验收**：R1 → 用 `appsmith_ro` 执行 INSERT/UPDATE/DELETE 全部被拒（错误码 42501），只读页面仍可用；R2 → `docker ps` 无 appsmith，业务方确认无依赖。
+**测试命令**：`psql` 以 `appsmith_ro` 身份尝试写入 → 必须 permission denied。
+**回退**：R1 改回数据源连接串；R2 `docker compose up -d appsmith`（配置与卷未动）。
+**未解决风险**：若存在未识别的写入依赖，R1 会破坏功能——先核实再决策，不允许"先加权限再谈"。
+
+### 3.3 PR-B — 学生域（含网关最小切片）
+
+**为什么**：PR-A 只提供了"验签能力"，没有"签名的产生者"；学生域要真正可信，必须有登录会话与权限点发放。
 
 **做到什么程度**：
-- `docker-compose.yml` 新增服务 `auth-gateway`（RuoYi-Vue-Plus 后端，仅启用登录/用户/菜单/权限最小模块）；
-- `sql/005_gateway_bootstrap.sql`：`ry_*` 表引导 + 管理员账号 + `student:list`/`student:write` 菜单权限点 + 学院角色；
-- 网关暴露 3 个端点：`POST /auth/login`、`GET /poc-proxy/students`、`PUT /poc-proxy/students/{no}`（签名转发）；
-- 前端学生页：登录 → 携 token 调网关；`X-Actor` 从前端删除；
-- 导入接口保持现路径不变（PR-D 再切）。
+- 独立数据库 `campus_gateway` + 专用账号 `gw_app`（**仅** `sys_*` 表读写；**对 `campus` schema 零权限**）；
+- `sql/005_gateway_bootstrap.sql`：`sys_*` 表（PG 方言，取自 POC `sql/01_ruoyi.sql` 的必要子集）、管理员账号、`student:list/write` 权限点、学院角色；
+- 网关端点：`POST /auth/login`、`GET /poc-proxy/students`、`GET /poc-proxy/students/{no}`、`PUT /poc-proxy/students/{no}`；
+- 前端学生页改走登录会话，`X-Actor` 移除。
 
-**怎么做（方案对比）**：
-- **A. 移植 RuoYi 后端（推荐）**：POC 已验证（12/12），权限模型现成；代价是引入 JVM 服务与 `ry_*` 表。
-- B. Python 轻量签名边缘：无 Java 依赖，但需自建会话/权限/菜单三件事，等于重做一遍已被否决的 `SECURITY-AUTH-DECISION` 路线，且与 POC 验证物分叉。
-- C. 不做网关，前端直连 FastAPI + 应用内登录：等于第三套方案，直接排除。
-- 选 A 的理由：复用已验证资产、权限点模型与 `INTERNAL-AUTH-SPEC` 天然对齐；RuoYi 的重量通过"精简模块 + 独立 schema"控制。
+**怎么做**（方案对比）：
+- **A 移植 POC 的 RuoYi 后端（推荐）**：14 段 canonical、`pct`、`multipart` 签名策略、RestClient 转发可**零改动复制**；头名 `X-Poc-*`→`X-Internal-*`、权限点 `poc:student:*`→`student:*`、配置键 `poc.hmac-secret`→`INTERNAL_HMAC_SECRET`、nonce 沿用主项目 `internal_nonce`+`cleanup_internal_nonce()`。
+- B Python 轻量签名边缘：需自建会话/权限/菜单三件事 → 等于重做已被否决的路线，排除；
+- C 前端直连 + 应用内登录：第三套方案，排除。
+- 选 A：复用已验证资产，权限模型与 `INTERNAL-AUTH-SPEC` 对齐；重量通过"独立数据库 + 独立账号 + 仅必要端点"控制。
 
-**验收**：① 登录获取 token；② 网关生成签名可被 FastAPI 验签通过（金标向量在 Java 侧复现）；③ 跨学院 403；④ 越权写 403；⑤ 审计 actor=登录用户；⑥ 导入接口行为与 PR-A 完全一致（回归）；⑦ `INTERNAL_AUTH_ENABLED=false` 时一切照旧。
+**测试命令**：
+```bash
+# Java 侧金标向量（必须复现 9d934c4c…500a）
+mvn -pl ruoyi-admin test -Dtest=InternalAuthGoldenVectorTest
+# 网关链路
+curl -X POST <gw>/auth/login … && curl -H "Authorization: Bearer <token>" <gw>/poc-proxy/students
+# Python 侧（开启态）
+INTERNAL_AUTH_ENABLED=true pytest tests/test_internal_auth.py tests/test_route_matrix.py
+```
+**验收**：① 登录取 token；② 网关签名被 FastAPI 验签通过；③ 跨学院详情/修改 403；④ 审计 `actor_user_id` = 登录用户且新增匿名=0；⑤ 关闭态 130 项回归全绿；⑥ `gw_app` 对 `campus` schema 零权限（DB 断言）。
+**回退**：compose 移除 `auth-gateway`；前端回到 `/api` 直连（改动集中在 `web/src/api/client.ts`）。
+**未解决风险**：RuoYi 精简裁剪可行性未实测（PR-B 第一周验证项）；POC 用 `sys_dept` 直查学院清单，在**独立库**下 `campus_app` 不可达 → 学院白名单改为网关随签名下发（**移植时必须改**）。
 
-**失败怎么办**：RuoYi 精简失败（模块耦合过深）→ 降级为"完整 RuoYi 后端镜像"（更重但可行）；签名不一致 → 金标向量单测定位差异段。网关侧发现根本性问题 → 停止并汇报，回退 = compose 移除服务。
+### 3.4 PR-C — 导入域
 
-### 3.3 PR-C — 导入范围与审计
+**为什么**：导入是唯一批量写学生数据的入口，缺批次归属与逐行校验；管理员硬限制是临时措施。
 
-**为什么**：导入是唯一写学生数据的批量入口，目前只有认证与权限点，没有批次归属、逐行学院校验和批次审计；管理员硬限制是临时措施，不解除则导入功能对普通用户不可用。
+**做到什么程度**：`created_dept_id`（服务端身份写入、客户端不可指定）+ 索引；`create_batch` 写快照；`commit` 逐行学院校验（越权行记 `COLLEGE_OUT_OF_SCOPE` 并不落库）；7 路由批次范围检查；`import_batches`/`import_issues` 语句级审计触发器（SECURITY DEFINER + 专用属主）；解除 `IMPORT_ADMIN_ONLY`；POC 48 项导入安全用例移植到主项目（**按主项目表名/角色重写，不照抄 POC 脚本**）。
 
-**做到什么程度**：`created_dept_id` 快照列 + 索引；`create_batch` 写快照、`commit` 逐行学院校验（越权行记 `COLLEGE_OUT_OF_SCOPE` 不落库）、`list/get/remap/validate/commit` 批次范围检查；`import_batches/import_issues` 语句级审计触发器（SECURITY DEFINER + 专用属主，复刻 POC 已验证实现）；解除 `IMPORT_ADMIN_ONLY`；POC 48 项导入安全用例移植到主项目。
+**怎么做**：新增 `sql/005_import_scope.sql`（`created_dept_id`、约束扩展、审计函数与触发器、专用属主与授权）；`service.py`/`queries.py` 移植 POC 对应逻辑（POC `service.py:740-815`、`sql/07:37-134`）。
+**测试命令**：`INTERNAL_AUTH_ENABLED=true pytest tests/test_import_security_main.py`（POC 48 项重写版）+ 关闭态全量。
+**验收**：跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；审计计数与 POC 一致；历史 NULL 批次仅管理员可见。
+**回退**：开关关闭 + `git revert`；正式库迁移前必须 `pg_dump`。
+**未解决风险**：POC `import_audit_trail` 用逗号串 id + 正则匹配，设计脆弱 → 移植时改为关联表或精确 `bigint[]`。
 
-**怎么做**：直接移植 POC `07_import_security.sql` 与 `service.py` 对应改动（已在 POC 通过审查），新增 `sql/005_import_scope.sql`；POC 侧保持不变。替代方案（在网关层做批次过滤）否决：批次范围是数据语义，必须贴近数据层。
+### 3.5 PR-D — 正式入口
 
-**依赖与验收**：依赖 PR-B（权限点经网关下发生效）；验收 = 48 项矩阵全绿 + 关闭态 130 项回归全绿 + 历史批次（NULL 快照）仅管理员可见。
+**为什么**：只要 8010 对宿主发布且前端直连，导入路径就有绕网关的口子。
 
-**失败怎么办**：迁移在测试库先演练；正式库执行前 `pg_dump`；失败回退 = 开关关闭 + revert。
+**做到什么程度**：网关补 7 个导入代理端点（multipart：文件 SHA-256 + 规范化字段签名）；前端导入页切登录；**移除 compose 中 `127.0.0.1:8010:8000` 发布**。
 
-### 3.4 PR-D — 导入接入网关 + 前端切换
+**怎么做**：移植 POC `PocProxyController` 的导入 7 端点并改写命名；nginx 不变（仍按服务名 `import-api:8000` 访问）。
 
-**为什么**：只要 8010 对宿主发布且前端直连 FastAPI，导入路径就存在绕过网关的口子；"部分接口走网关"的状态不能作为终态。
+**验收（D5 明确的前置条件）**：
+1. **先证明**：前端经网关访问**全部必需接口**（学生 3 + 聚合 2 + 导入 7）均 200；
+2. 再关闭宿主发布；
+3. 关闭后：`curl 127.0.0.1:8010` **连接被拒**；
+4. **容器内通信未受影响**：`campus-web` → `import-api:8000`（服务名，非 8010）仍 200；`campus-web` healthcheck 仍 healthy；
+5. 网关 → import-api 内网签名链路正常。
 
-**做到什么程度**：网关补 7 个导入代理端点（含 multipart：文件 SHA-256 + 规范化字段签名）；前端导入页切登录会话；**`docker-compose.yml` 移除 `127.0.0.1:8010:8000` 端口发布**；`docs/IMPORT-API.md` 标注新入口。
+**回退**：恢复 compose 端口发布 + 前端切回。
+**未解决风险**：multipart 经网关内存峰值（`file.getBytes()` 全量读入）→ PR-E 压测项。
 
-**验收**：① 宿主机 `curl 127.0.0.1:8010` 连接拒绝；② 前端导入全流程（上传→校验→提交）走登录会话可用；③ 无签名直连 FastAPI 容器内网也不可达网关外路径；④ 导入审计 actor 全部为真实用户（匿名占比从 93% 下降到仅剩历史行）。
+### 3.6 PR-E — 整体验收
 
-**失败怎么办**：multipart 经网关内存放大 → 网关侧限流/分块，或临时保留 8010 并加防火墙规则（记录为偏离项并汇报）。
+**为什么**：四项未验证项 + 正式库迁移是不可逆动作，必须有演练证据。
 
-### 3.5 PR-E — 回归与发布评审
+**做到什么程度**：① PUT 并发写竞态测试；② 审计 `changed_fields` 新旧值差异完整性验证；③ 大文件（接近 10MB）内存与耗时基准；④ nonce 表增长率与清理效果；⑤ 正式库执行 004/005（先 `pg_dump`）；⑥ 开关开启演练 + 回退演练各一次；⑦ Go/No-Go 报告。
 
-**为什么**：PR-A 审查遗留四项未验证（PUT 并发写、审计差异完整性、大文件内存、nonce 增长）；且"开认证"是不可逆动作，必须有演练证据。
-
-**做到什么程度**：四项专项测试各出报告；`sql/004` 在正式库执行（先 `pg_dump`）；Appsmith 只读化/下线；开关开启演练 + 回退演练各一次（回退 ≤5 分钟）；Go/No-Go 报告（含证据链接）。
-
-**失败怎么办**：任何演练失败 → No-Go，保持关闭态，问题回对应阶段修复；报告与证据归档。
-
-### 3.6 Appsmith 处置（独立任务）
-
-**为什么**：`campus_app` 可写账号经 Appsmith 暴露，是当前系统最短攻击路径（10-20 已标记高风险，至今未动）。
-**做到什么程度**：二选一——只读化（Appsmith 数据源切 `campus_ro`）或下线；验收 = Appsmith 无法执行任何写语句。
-**怎么做**：只读化成本低（改数据源连接串）；下线影响历史页面（已降级为历史方案）。
-**依赖**：无硬依赖，建议与 PR-C 并行或 PR-E 前完成。
+**验收**：无未解决 P0/P1；回退 ≤5 分钟；正式库迁移前后业务数据一致；近期窗口审计匿名新增=0。
+**回退**：DDL 回退脚本（004/005 均附）；开关关闭；镜像回退到演练通过的 tag。
+**未解决风险**：演练环境与正式环境配置差异导致"演练通过、实际失败"——缓解：演练用与正式同镜像同 compose。
 
 ---
 
-## 4. 执行机制
+## 4. 串行 / 并行安排
 
-见 `docs/EXECUTION-PROTOCOL.md`（自主执行白名单、批准清单、每阶段交付义务、中断恢复）。
+| 工作 | 关系 | 说明 |
+|---|---|---|
+| G 文档治理 | 串行在 R、PR-B 之前 | 避免后续 PR 基于旧文档 |
+| R Appsmith 处置 | 与 G 串行；与 PR-B **可并行**（不同服务、不同文件） | 但**不与业务 PR 混在一个 PR** |
+| PR-B → PR-C → PR-D | **严格串行** | 权限点、范围模型、入口逐层依赖 |
+| 同事线（Issue #3 Docker / #8 测试覆盖） | 与 PR-B 可并行 | 边界：不改同一 compose 段、不改 `sql/` 授权脚本 |
+| PR-E 专项测试 | 依赖 B/C/D 全部完成 | 不可提前 |
 
-## 5. 未验证项声明
+**失败回退规则**：某阶段验收不过 → 回到该阶段修复；连续两次修复仍不过 → 回到前一阶段重新评估依赖；涉及授权/密钥/正式库 → 停止并汇报（见 `docs/EXECUTION-PROTOCOL.md` §6）。
 
-- POC 仓库的文档与当前代码一致性本轮**未复核**（仅主仓库审计）；
-- GitHub CI 的 AI 评审质量本轮未评估；
-- RuoYi 后端"精简模块"的可行性基于 POC 经验推断，**未实际裁剪验证**（PR-B 第一周验证项）；
-- plus-ui 许可影响仅限"是否采用其管理界面"，不阻塞网关后端（Issue #11 继续跟进）。
+---
+
+## 5. POC 仓库审查结论（动用 POC 代码前必读）
+
+来源：只读审查 `campus-ruoyi-poc`（main `f1c2856`），明细见 `docs/DOCUMENTATION-AUDIT.md` §6。
+
+| 分类 | 内容 |
+|---|---|
+| **零改动可复制** | 14 段 canonical 构造与段序、`pct`/`normalize` percent-encoding、`sha256`/`hmacHex`、multipart 签名策略（文件内容摘要 + 非文件字段 meta）、`Who`/`require_perm`/`require_college` 骨架、RestClient 转发与错误透传、`LoginHelper` 相关 API（v6.0.0 确认存在） |
+| **必须改写** | 头名 `X-Poc-*`→`X-Internal-*`（11 个）；权限点 `poc:student:*`→`student:*`；配置键 `poc.hmac-secret`→`INTERNAL_HMAC_SECRET`；nonce **沿用主项目** `internal_nonce`+`cleanup_internal_nonce()`（**不移植** POC 的 `poc_nonce` 与应用级 DELETE）；admin 判定改严格布尔；补 POC 缺失的 nonce/ts/dept 格式与长度校验、密钥 ≥32 校验 |
+| **禁止移植** | `sql/06` 的 `campus.poc_nonce`（含 `GRANT DELETE`）；`sql/07:196` 的 `GRANT SELECT ON sys_dept TO campus_app`（独立库下不成立，且泄漏框架表）；`sql/08` 复制 admin 密码建用户的做法；`poc-api` 服务与 `--poc.api-base`（键名与代码不匹配，参数实际未生效）；`.env.poc`（磁盘含明文密钥） |
+| **POC 文档已过时** | `VERSIONS.md` 的"backend 5 处/import-api-poc 3 处定制"与 PR #3 实际 diff 不符；POC `README.md` 仍写"sql/01–06"（实为 01–08）且测试脚本清单漏 `test_import_security.sh` |
+
+**口径更正（重要）**：POC 的 `test_slice.sh` / `test_datascope.sh` **没有 PASS/FAIL 计数器**，是打印式脚本——此前"POC 学生 12/12"指的是 **T1–T12 段落数**，不是断言通过数；只有 `test_import_security.sh` 有计数器（其"48"为运行时计数，无法从静态文件复算）。POC 文档已归档，引用时按此口径表述。
+
+---
+
+## 6. 未验证项声明
+
+- POC 仓库本轮为**静态审读**：未运行容器、未构建 Maven/前端、未复算 48 项计数；SQL 可执行性未验证；
+- RuoYi 精简裁剪可行性基于 POC 经验推断，未实测；
+- plus-ui 许可（Issue #11）只影响"是否采用其管理界面"，不阻塞网关后端；
+- 审计基线仅覆盖 2026-10-20 一期数据，2026-10-21 起无新增记录，**不能据此推断当前活跃路径的缺陷比例**。

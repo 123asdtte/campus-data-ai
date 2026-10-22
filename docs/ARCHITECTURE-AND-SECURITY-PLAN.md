@@ -1,6 +1,6 @@
 # 架构与安全边界（ARCHITECTURE & SECURITY PLAN）
 
-- **版本**：v1（2026-10-22）
+- **版本**：v1.1（2026-10-22 修订：RuoYi 库边界、8010 关闭前置、审计基线、Appsmith 决策）
 - **地位**：系统现状架构与安全边界的权威描述。实现细节以 `INTERNAL-AUTH-SPEC.md` 为准；迁移阶段以 `PROJECT-ROADMAP.md` 为准。
 - **基线**：main `d10946f`（PR #16 已合并，开关关闭）；主栈容器 = 运行版本。
 
@@ -64,6 +64,39 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 
 ---
 
+## 2.3 RuoYi 认证库与业务库的隔离（D5 固化）
+
+| 项 | 决策 | 理由 |
+|---|---|---|
+| 库 | **独立数据库 `campus_gateway`**（RuoYi `sys_*` 表） | POC 做法是同库不同 schema；独立库让"网关账号碰不到业务表"成为**物理事实**而非授权约定 |
+| 账号 | 专用 `gw_app`，仅 `sys_*` 表读写 | 认证框架账号不得获得业务数据写权限 |
+| 业务库 | `campus` schema 仅 `campus_app` / `campus_ro` / `campus_nonce_cleaner` | `gw_app` 对 `campus` schema **零权限**（DB 断言负向测试） |
+| 学院清单来源 | POC 用 `sys_dept` 直查（`sql/07:196` 给了 `campus_app` SELECT）→ **不可移植**：独立库下业务账号不可达 | 改为**网关在签名声明中下发学院集合**（`X-Internal-Colleges`），FastAPI 只用声明，不再查框架表 |
+| 框架表泄漏面 | 主项目 `campus_app` **不授予** `sys_*` 任何权限 | POC 的 `GRANT SELECT ON sys_dept TO campus_app` 是需避免的反面样本 |
+
+## 2.4 关闭 8010 的前置条件（D5 固化）
+
+关闭顺序不可颠倒：
+
+1. **先证明**：前端经网关访问**全部必需接口**（学生 3 + 聚合 2 + 导入 7）均 200；
+2. 再移除 compose 中 `127.0.0.1:8010:8000` 发布；
+3. 关闭后 `curl 127.0.0.1:8010` **连接被拒**；
+4. **容器内通信不受影响**：`campus-web` → `import-api:8000`（按**服务名**解析，与 8010 无关）；`campus-web` healthcheck 仍 healthy；
+5. 网关 → import-api 内网签名链路正常。
+
+> 误关风险：若把 8010 当作容器间路径使用，关闭会切断 nginx→import-api。本项目 nginx 使用服务名，因此 8010 仅是"宿主直连入口"。
+
+## 2.5 审计匿名基线（D4 固化）
+
+| 指标 | 值 |
+|---|---|
+| 统计范围 | 2026-10-20 单日（`min=max=2026-10-20`） |
+| 分母 | 544 条（全部 `operation_logs`，无抽样、无业务明细导出） |
+| 匿名判定 | `actor_user_id IS NULL OR btrim(actor_user_id)=''` |
+| 结果 | 匿名 504（92.6%）/ 有主 40（7.4%）；`student_changes` 305、`students` 239 |
+| 历史/近期 | 全部为历史；2026-10-21 起新增 **0** 条 |
+| 验收指标 | PR-B 后新增操作必须有非空 actor；PR-E 要求近期窗口匿名新增=0；**不回填历史**（回填=伪造审计） |
+
 ## 3. 安全边界清单（当前状态）
 
 | # | 边界 | 状态 | 说明 |
@@ -78,6 +111,9 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 | 8 | Appsmith 可写账号 | 🔴 未处置 | 独立任务（见 ROADMAP） |
 | 9 | 密钥管理 | 🟡 仅 env，未接入 secrets | `INTERNAL_HMAC_SECRET` 不得入库/前端/日志 |
 | 10 | 备份/迁移演练 | 🔴 未做 | PR-E |
+| 11 | RuoYi 认证库隔离 | 🟡 未建 | PR-B：独立库 `campus_gateway` + `gw_app`（对 `campus` 零权限） |
+| 12 | Appsmith 可写账号 | 🔴 未处置 | 独立任务 R：只读化或停服务，先于 PR-B |
+| 13 | 文档双轨 | 🔴 26 份历史文档在正文 | G：归档 + 索引两节 |
 
 ---
 
