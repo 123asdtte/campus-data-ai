@@ -17,7 +17,10 @@ campus-web (nginx:8082)  ──/api/*──►  import-api (uvicorn:8000，宿�
                                           ▼
                                       campus-db (PG16, schema campus)
 ~~campus-appsmith ── campus_app 可写账号 ──►~~  （已停止：R2，2026-10-22）
-auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
+campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
+  │ Sa-Token 会话
+  ├─ campus-gateway-db（RuoYi sys_*，独立库）
+  └─ campus-gateway-redis（会话/缓存）
 ```
 
 | 组件 | 说明 | 端口 |
@@ -26,7 +29,9 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 | `import-api` | FastAPI，11 业务路由 + 2 健康端点 | 127.0.0.1:8010 → 容器 8000 |
 | `campus-web` | React 静态 + nginx 反代 `/api/` → `import-api:8000` | 127.0.0.1:8082 |
 | `campus-appsmith` | 历史低代码平台，**已停止（R2，2026-10-22）**：容器 Exited、compose 服务已移除、8081/8443 无监听；数据卷 `campus_appsmith_stacks` 保留 | 不再发布 |
-| `auth-gateway` | PR-B 新增：RuoYi 后端精简 + `X-Internal-*` 签名代理 | 待定 |
+| `campus-gateway` | PR-B 已实现：RuoYi 最小切片 + `X-Internal-*` 签名代理（学生域 3 端点） | 127.0.0.1:9190 → 容器 9180 |
+| `campus-gateway-db` | 独立认证库 `campus_gateway`（`sys_*`），账号 `gateway_dba` | 127.0.0.1:55434 |
+| `campus-gateway-redis` | 网关会话缓存 | 127.0.0.1:6382 |
 
 **注意**：`8010` 当前对宿主回环发布——任何本机进程可绕过 nginx 直连。PR-D 将移除该发布。
 
@@ -101,7 +106,7 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 
 | # | 边界 | 状态 | 说明 |
 |---|---|---|---|
-| 1 | 网关会话 → 内部签名 | 🟡 设计定稿，PR-B 实现 | 规范 `INTERNAL-AUTH-SPEC.md`（含金标向量） |
+| 1 | 网关会话 → 内部签名 | ✅ PR-B 已实现（待评审） | `campus-gateway` 登录后签发 14 段签名；规范见 `INTERNAL-AUTH-SPEC.md` |
 | 2 | FastAPI 验签 + nonce 防重放 | ✅ 已实现（开启态生效） | 60s 窗口、nonce 主键原子消费 |
 | 3 | 权限点 | ✅ 声明链路已实现 | 权限点的**发放**（sys_menu + 网关）在 PR-B |
 | 4 | 学院数据范围 | ✅ 学生/聚合已强制；导入 PR-C | fail-closed：空声明 → 403 |
@@ -111,7 +116,7 @@ auth-gateway (PR-B 新增) ── X-Internal-* ──► import-api
 | 8 | Appsmith 可写账号 | 🟢 已停服务（R2） | 容器停止、compose 移除、卷保留；账号仍存在，留待 PR-B 账号治理 |
 | 9 | 密钥管理 | 🟡 仅 env，未接入 secrets | `INTERNAL_HMAC_SECRET` 不得入库/前端/日志 |
 | 10 | 备份/迁移演练 | 🔴 未做 | PR-E |
-| 11 | RuoYi 认证库隔离 | 🟡 未建 | PR-B：独立库 `campus_gateway` + `gw_app`（对 `campus` 零权限） |
+| 11 | RuoYi 认证库隔离 | ✅ PR-B 已建（待评审） | 独立库 `campus_gateway` + `gw_app`/`gateway_dba`（对 `campus` schema 零权限） |
 | 12 | 文档双轨 | 🔴 26 份历史文档在正文 | G：归档 + 索引两节 |
 
 ---

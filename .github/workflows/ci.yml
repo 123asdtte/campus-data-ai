@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # 堆叠 PR 的 base 可能是阶段分支而非 main，因此不限制 base 分支
   pull_request:
-    branches: [main]
 
 jobs:
   frontend:
@@ -33,6 +33,22 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m compileall -q import-api/app import-api/scripts
+
+  gateway:
+    name: 网关构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      # 真实 application-dev.yml 已被 .gitignore 排除；构建只依赖源码与 application.yml
+      - run: mvn -B -DskipTests -pl ruoyi-admin -am package
 
   backend-tests:
     name: 后端接口与校验测试

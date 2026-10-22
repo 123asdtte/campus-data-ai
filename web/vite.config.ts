@@ -14,6 +14,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // PR-B：开发期把 /gw 代理到本机网关映射端口
+      '/gw': {
+        target: process.env.VITE_GATEWAY_TARGET ?? 'http://127.0.0.1:9190',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gw/, ''),
+      },
     },
   },
   build: {

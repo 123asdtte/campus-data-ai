@@ -4,6 +4,7 @@ import AppLayout from './components/AppLayout';
 import HomePage from './pages/HomePage';
 import StudentsPage from './pages/StudentsPage';
 import ImportPage from './pages/ImportPage';
+import LoginPage from './pages/LoginPage';
 
 function NotFound() {
   const navigate = useNavigate();
@@ -24,6 +25,8 @@ function NotFound() {
 export default function App() {
   return (
     <Routes>
+      {/* 登录页独立于主布局，避免侧边栏干扰 */}
+      <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<AppLayout />}>
         <Route index element={<HomePage />} />
         <Route path="students" element={<StudentsPage />} />

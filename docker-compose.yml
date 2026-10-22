@@ -81,6 +81,92 @@ services:
     networks:
       - campus-net
 
+  # -------------------------------------------------------------------
+  # PR-B：RuoYi 网关最小切片
+  # 认证库与业务库物理隔离：网关账号只碰 campus_gateway，不碰 campus schema。
+  # -------------------------------------------------------------------
+  gateway-db:
+    image: postgres:16.15-alpine
+    container_name: campus-gateway-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${GATEWAY_DB_NAME:-campus_gateway}
+      POSTGRES_USER: ${GATEWAY_DB_USER:-gateway_dba}
+      POSTGRES_PASSWORD: ${GATEWAY_DB_PASSWORD:?GATEWAY_DB_PASSWORD 未设置}
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:55434:5432"
+    volumes:
+      - gateway_pgdata:/var/lib/postgresql/data
+      # 仅首次初始化执行：RuoYi sys_* 表 + 学院/权限夹具
+      - ./sql/005_gateway_bootstrap.sql:/docker-entrypoint-initdb.d/005_gateway_bootstrap.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+    networks:
+      - campus-net
+
+  gateway-redis:
+    image: redis:7.4-alpine
+    container_name: campus-gateway-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${GATEWAY_REDIS_PASSWORD:?GATEWAY_REDIS_PASSWORD 未设置}"]
+    ports:
+      - "127.0.0.1:6382:6379"
+    volumes:
+      - gateway_redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${GATEWAY_REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      GATEWAY_REDIS_PASSWORD: ${GATEWAY_REDIS_PASSWORD:?GATEWAY_REDIS_PASSWORD 未设置}
+    logging: *default-logging
+    networks:
+      - campus-net
+
+  gateway:
+    build:
+      context: ./gateway
+    image: campus-gateway:0.1.0
+    container_name: campus-gateway
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD}
+      GATEWAY_REDIS_PASSWORD: ${GATEWAY_REDIS_PASSWORD}
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET:?INTERNAL_HMAC_SECRET 未设置}
+    # 启动参数优先级最高：直接指向容器内服务名，避免 profile 配置差异
+    command:
+      - "--spring.datasource.dynamic.datasource.master.driverClassName=org.postgresql.Driver"
+      - "--spring.datasource.dynamic.datasource.master.url=jdbc:postgresql://gateway-db:5432/${GATEWAY_DB_NAME:-campus_gateway}"
+      - "--spring.datasource.dynamic.datasource.master.username=${GATEWAY_DB_USER:-gateway_dba}"
+      - "--spring.datasource.dynamic.datasource.master.password=${GATEWAY_DB_PASSWORD}"
+      - "--spring.data.redis.host=gateway-redis"
+      - "--spring.data.redis.port=6379"
+      - "--spring.data.redis.password=${GATEWAY_REDIS_PASSWORD}"
+      - "--internal.hmac-secret=${INTERNAL_HMAC_SECRET}"
+      - "--internal.importapi-base=http://import-api:8000"
+      - "--captcha.enable=false"
+      # 仅开发/测试环境：生产必须开启传输加密并替换为受控方案
+      - "--api-decrypt.enabled=false"
+    ports:
+      - "127.0.0.1:9190:9180"
+    depends_on:
+      gateway-db:
+        condition: service_healthy
+      gateway-redis:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - campus-net
+
 volumes:
   campus_pgdata:
     name: campus_pgdata
@@ -90,6 +176,10 @@ volumes:
     name: campus_appsmith_stacks
   campus_uploads:
     name: campus_uploads
+  gateway_pgdata:
+    name: campus_gateway_pgdata
+  gateway_redis:
+    name: campus_gateway_redis
 
 networks:
   campus-net:

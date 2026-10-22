@@ -75,6 +75,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | 配套 React 前端 | 🧪 POC 通过 | 生产构建成功、真实登录、动态菜单 | [RUOYI-POC-AUTH-RESULTS.md](docs/archive/RUOYI-POC-AUTH-RESULTS.md) §13.2 |
 | **正式迁移** | ❌ **未开始** | S1–S3 的**实现代码尚未进入主项目**，仓库内只有验收文档 | [API-MIGRATION-INVENTORY.md](docs/API-MIGRATION-INVENTORY.md) |
 | 认证与权限（主系统） | 🟡 基础设施已合入 | PR #16 已合入验签与范围（默认关闭）；正式网关与学生域迁移未开始；关闭态 `X-Actor` 仍可伪造 | [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md) |
+| 学生域网关（PR-B） | 🟡 PR 待评审 | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计 actor；端到端已通过，PR 未合并 | PR 描述 |
 | AI 能力（Dify 等） | ❌ 未开始 | 按计划排在认证与权限之后 | [ADR-001-import-mapping.md](docs/ADR-001-import-mapping.md) |
 
 🧪 = 结论仅在隔离 POC 成立，**不代表生产环境已具备同等保护**。
@@ -100,6 +101,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | 磁盘 | 项目盘剩余 ≥ 15 GB | Z: 141 GB 可用（代码）/ F: 27 GB 可用（镜像与数据卷） |
 | 端口 | 55432、8010、8082 未被占用（8081/8443 随 Appsmith 下线已释放） | 已确认（5432/8000/8080 被其他服务占用，故整体避开） |
 | PostgreSQL | 16.15（镜像 `postgres:16.15-alpine`） | 容器内 |
+| JDK / Maven | 21 / 3.9+（仅构建 gateway） | 已安装（`C:\Program Files\Java\jdk-21`） |
 | Python | 3.12（镜像 `python:3.12-slim`） | 仅构建期；运行时在容器内 |
 | Node.js | 不需要 | 前端在容器内构建（2026-10-21 起）；仅修改前端代码时本地装 Node 更方便 |
 
@@ -120,6 +122,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 
 ```text
 campus-data-ai/
+├─ gateway/                   # PR-B：RuoYi 网关最小切片（JDK 21 + Maven）
 ├─ docker-compose.yml          # 主栈：campus-db / import-api（Appsmith 已下线）
 ├─ docker-compose.web.yml      # 前端独立栈（campus-web）
 ├─ import-api/                 # FastAPI 服务（含 wheels 离线依赖）
@@ -166,6 +169,16 @@ docker compose exec -T campus-db psql -U campus_dba -d campus \
 docker compose -p campus-web -f docker-compose.web.yml up -d --build
 ```
 
+网关（PR-B，需要 JDK 21 + Maven；首次构建约 2–3 分钟）：
+
+```bash
+cd gateway
+mvn -B -DskipTests -pl ruoyi-admin -am package
+cd ..
+docker compose up -d gateway-db gateway-redis     # 独立认证库 + 会话缓存
+docker compose up -d --build gateway              # 登录 + 学生域签名代理
+```
+
 > 2026-10-21 起前端改为多阶段构建（node:22-alpine 容器内 npm ci + vite build），
 > 构建阶段显式绕开 Docker Desktop 注入的失效代理，直连官方源。
 > 若你的网络无法直连 PyPI/npm，再退回离线路径：`./scripts/fetch-wheels.sh` + 宿主机构建（见 §14）。
@@ -176,6 +189,8 @@ docker compose -p campus-web -f docker-compose.web.yml up -d --build
 |---|---|
 | React 前端 | http://127.0.0.1:8082 |
 | Import API | http://127.0.0.1:8010 （`/health` 探活） |
+| Gateway（PR-B） | http://127.0.0.1:9190 （登录 + 学生域代理） |
+| Gateway DB / Redis | 127.0.0.1:55434 / 6382（独立于业务库） |
 | Appsmith（历史方案，已下线） | 不再提供（2026-10-22 R2：容器停止、compose 移除、卷保留） |
 | PostgreSQL | 127.0.0.1:55432（库 `campus`） |
 
@@ -230,6 +245,7 @@ docker compose -p campus-web -f docker-compose.web.yml logs -f
 | 真库集成 | `test_db_integration.py` | 状态机、幂等 409、事务、**审计触发器与业务同事务** | PostgreSQL |
 | 安全·关闭态 | `test_auth_disabled.py` | OpenAPI 无 PUT、405 无副作用、旧行为回归 | 无 |
 | 安全·开启态 | `test_internal_auth.py`、`test_route_matrix.py` | 缺头/篡改/过期/重放/权限/范围、11×5 矩阵 | PostgreSQL |
+| Java 网关 | `gateway/` | `mvn -B -DskipTests -pl ruoyi-admin -am package` | JDK 21 + Maven |
 
 **CI 实查（2026-10-22）**：关闭态 collected 213（**130 passed / 82 skipped / 1 xfailed**）；开启态 collected 88（**88 passed**）。
 
