@@ -93,8 +93,9 @@ sa-token:
   is-concurrent: true
   # 在多人登录同一账号时，是否共用一个token (为true时所有登录共用一个token, 为false时每次登录新建一个token)
   is-share: false
-  # jwt秘钥
-  jwt-secret-key: abcdefghijklmnopqrstuvwxyz
+  # 校园平台使用 Sa-Token JWT（StpLogicJwtForSimple），密钥必须由部署环境提供。
+  # 缺失或过短时登录 fail-closed；禁止在仓库内写死。
+  jwt-secret-key: ${JWT_SECRET_KEY:}
 
 # security配置
 security:
@@ -106,6 +107,7 @@ security:
     - /**/*.js
     - /favicon.ico
     - /error
+    - /healthz
     - /*/api-docs
     - /*/api-docs/**
     - /warm-flow-ui/config
@@ -207,10 +209,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: '*'
+        # 生产只暴露最小集合；env/heapdump/logfile 等一律不开放
+        include: health,info
   endpoint:
     health:
-      show-details: ALWAYS
+      # 不向来访者展示数据库/磁盘等细节
+      show-details: never
     logfile:
       external-file: ./logs/sys-console.log
 
