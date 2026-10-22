@@ -303,6 +303,27 @@ def _apply_mapping(frame: pd.DataFrame, matches: List[Any], target: str) -> pd.D
     return output[list(TARGETS[target]["fields"])]  # type: ignore[index]
 
 
+ALLOWED_EXTENSIONS = (".xlsx", ".xlsm", ".csv")
+
+
+def _require_supported_extension(filename: str) -> None:
+    """后缀白名单（矩阵 §10-2）。
+
+    解析层只按「.xlsx/.xlsm」与「其它」二分，于是 `.pdf`、`.xls`（OLE2 老格式）、
+    无后缀文件都会被当 CSV 读。失败后一律收敛成「文件没有可导入的数据行」——
+    用户拿到的提示指向了错误的原因，真正该做的是「换个格式另存」。
+    在入口处把「格式不对」与「内容为空」区分开。
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in ALLOWED_EXTENSIONS:
+        return
+    detail = "没有扩展名" if not ext else f"扩展名是 {ext}"
+    raise ServiceError(
+        f"仅支持 .xlsx / .xlsm / .csv 文件，当前文件「{filename}」{detail}。"
+        "Excel 请另存为 .xlsx，CSV 请另存为「CSV UTF-8」。"
+    )
+
+
 def _prepare(
     data: bytes,
     filename: str,
@@ -311,7 +332,11 @@ def _prepare(
     header_row: Optional[int],
     overrides: Optional[Dict[str, Optional[str]]],
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[Any], List[str], Dict[str, Any]]:
-    frame, info = parsing.load_frame(data, filename, target, sheet_name, header_row)
+    try:
+        frame, info = parsing.load_frame(data, filename, target, sheet_name, header_row)
+    except parsing.WorkbookError as exc:
+        # 解析层已经给出面向用户的原因（编码/损坏/格式），这里只换类型
+        raise ServiceError(str(exc)) from exc
     frame = _normalize_frame(frame)
     matches = parsing.auto_map(frame.columns, target)
     if overrides:
@@ -349,9 +374,10 @@ def create_batch(
         raise ServiceError(f"文件超过 {settings.max_upload_mb} MB 上限", 413)
 
     safe_name = os.path.basename(filename)
+    _require_supported_extension(safe_name)
     digest = _sha256(data)
     frame_raw, mapped, matches, missing, info = _prepare(
-        data, filename, target_type, sheet_name, header_row, overrides
+        data, safe_name, target_type, sheet_name, header_row, overrides
     )
 
     if len(mapped) == 0:
