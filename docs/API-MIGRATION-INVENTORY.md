@@ -2,8 +2,8 @@
 
 - **日期**：2026-10-21
 - **状态**：只读盘点 + 文档，未修改代码、数据库、容器或配置
-- **依据代码**：`main` 分支 `5b5d0dc`，`import-api/app/{main.py,service.py,queries.py,parsing.py}`
-- **对照基线**：POC 结果见 `RUOYI-POC-AUTH-RESULTS.md`、`RUOYI-POC-DATA-PERMISSION.md`
+- **依据代码（历史基线）**：`main` 分支 `5b5d0dc`；**现行基线为 `d10946f`（PR #16 已合并）**，路由清单仍适用，安全项状态见 §5 表前说明
+- **对照基线**：POC 结果见 `docs/archive/RUOYI-POC-AUTH-RESULTS.md`、`docs/archive/RUOYI-POC-DATA-PERMISSION.md`（历史记录，现行方案见 `INTERNAL-AUTH-SPEC.md`）
 
 ---
 
@@ -86,6 +86,8 @@
 
 ## 5. 必须先修复的安全问题（按优先级）
 
+> **状态更新（2026-10-22）**：#1–#3 已由 PR-A（PR #16）实现——默认关闭保持旧行为，开启态要求 `X-Internal-*` 验签并强制学院范围；#4 待 PR-D；#5/#6 待 PR-C；#7 未处理。下表"全部接口无认证"仅描述 `5b5d0dc` 基线。
+
 | # | 问题 | 位置 | 修复层 | 说明 |
 |---|---|---|---|---|
 | 1 | 全部接口无认证 | main.py 全部 12 路由 | Java 网关 | 网关统一要求 Sa-Token 会话 |
@@ -131,6 +133,8 @@
 ---
 
 ## 8. 本轮确认的环境状态
+
+> **⚠️ 本节为 2026-10-21 快照，已失效**：Appsmith 已于 2026-10-22 停服务（R2）；POC 已升为独立仓库 `campus-ruoyi-poc`（origin/main `f1c2856`）；主栈当前仅 `campus-db`、`campus-import-api`、`campus-web`。
 
 | 项 | 状态 |
 |---|---|

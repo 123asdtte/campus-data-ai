@@ -23,7 +23,7 @@ preview（上传 + 解析 + 预览）
 
 | 项 | 说明 |
 |---|---|
-| 身份 | 请求头 `X-Actor`，写入 `operation_logs.actor_user_id`。**阶段 1 未经认证**，仅用于演示审计链路 |
+| 身份 | 关闭态（默认）：请求头 `X-Actor`，写入 `operation_logs.actor_user_id`，仅用于演示审计链路、**可伪造**；开启态：`X-Internal-*` 签名声明，`actor_user_id` 来自验签用户。详见 §9 |
 | 编码 | 请求与响应均为 UTF-8；响应为 JSON |
 | 限制 | 单文件 ≤ 10 MB、≤ 10,000 行（`.env` 可调）；允许 `.xlsx` / `.xlsm` / `.csv` |
 | 暂存 | 上传文件暂存于卷 `campus_uploads`，提交成功后删除（`KEEP_UPLOAD_FILES=false`） |
@@ -138,10 +138,10 @@ preview（上传 + 解析 + 预览）
 ### 3.7 `GET /health`
 
 ```json
-{"status": "ok", "database": "ok", "version": "0.1.0"}
+{"status": "ok"}
 ```
 
-数据库不可用时返回 **503**，不谎报健康。
+`/health` 为 liveness，只返回 `{"status":"ok"}`；数据库就绪由 `/health/ready` 检查，不可用时返回 **503**，不谎报健康。
 
 ---
 

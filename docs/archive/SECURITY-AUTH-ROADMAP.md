@@ -1,5 +1,8 @@
 # 认证与权限实施路线图
 
+> **⚠️ 已被取代（归档）**：本路线图（pwdlib + PyCasbin）**未实施**，已被 **RuoYi 登录 + 网关 `X-Internal-*` 签名 + FastAPI 二次验签**方案取代。
+> 现行契约见 [`../INTERNAL-AUTH-SPEC.md`](../INTERNAL-AUTH-SPEC.md)，阶段定义见 [`../../PROJECT-ROADMAP.md`](../../PROJECT-ROADMAP.md)。本文件仅作历史决策追溯，**不得作为实施依据**。
+
 - **日期**：2026-10-20
 - **状态**：待批准，**尚未实施任何一步**
 - **关联**：`docs/SECURITY-AUTH-DECISION.md`（选型）、`docs/SECURITY-AUTH-DESIGN.md`（现状与风险）

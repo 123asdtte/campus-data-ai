@@ -32,7 +32,7 @@ git diff --cached --name-only | grep -E '\.env$|\.sql\.gz$|node_modules' && echo
 | `fix/<主题>` | 缺陷修复 | 同上 |
 | `chore/<主题>` | 依赖、配置、文档 | 可小步提交 |
 
-当前为单人开发，允许直接在 `main` 上小步提交；多人协作时必须走分支 + PR。
+`main` 只接受 PR，不直接提交；单人开发同样走分支 + PR，确保 CI 与评审记录完整。
 
 ---
 
@@ -48,6 +48,7 @@ git diff --cached --name-only | grep -E '\.env$|\.sql\.gz$|node_modules' && echo
 | `refactor` | 不改行为的重构 |
 | `chore` | 构建、依赖、配置 |
 | `test` | 测试 |
+| `perf` | 性能优化 |
 
 scope 取值：`db`、`api`、`web`、`deploy`、`docs`、`repo`。
 

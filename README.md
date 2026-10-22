@@ -36,7 +36,7 @@ campus-db         PostgreSQL 16.15               业务表 + 审计触发器
                     │
                     └─ operation_logs（触发器写入，与业务同事务）
 
-campus-appsmith   Appsmith CE v2.5.0            低代码界面（历史方案，非主入口）
+campus-appsmith   Appsmith CE v2.5.0            低代码界面（历史方案，**已于 2026-10-22 R2 下线**）
 ```
 
 - 所有端口只绑定 `127.0.0.1`，不对局域网/公网暴露。
@@ -64,27 +64,27 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 
 | 模块 | 状态 | 说明 | 报告 |
 |---|---|---|---|
-| Excel 解析与表头识别 | ✅ 已完成 | 多工作表、前 15 行表头定位、别名/模糊匹配、冲突与未知列处理 | [IMPORT-MAPPING-TEST.md](docs/IMPORT-MAPPING-TEST.md) |
+| Excel 解析与表头识别 | ✅ 已完成 | 多工作表、前 15 行表头定位、别名/模糊匹配、冲突与未知列处理 | [IMPORT-MAPPING-TEST.md](docs/archive/IMPORT-MAPPING-TEST.md) |
 | 导入闭环（预览→校验→提交） | ✅ 已完成 | 幂等保护、事务回滚、异常带 Excel 行号 | [IMPORT-API.md](docs/IMPORT-API.md) |
 | 审计链路 | ✅ 已完成 | 触发器写 `operation_logs`，actor 来自事务级 GUC | [§10](#10-操作审计) |
-| React 查询与导入页 | ✅ 已完成 | 20 项浏览器验收通过，生产构建与容器化部署 | [REACT-TEST-REPORT.md](docs/REACT-TEST-REPORT.md) |
-| 部署与回退 | ✅ 已完成 | 前端独立栈，停止/恢复主栈不受影响 | [DEPLOY-ACCEPTANCE-1.3.md](docs/DEPLOY-ACCEPTANCE-1.3.md) |
-| RuoYi 真实登录与身份贯通 | 🧪 POC 通过 | 登录 → Java 签名 → FastAPI 验签 → 审计 actor 正确 | [RUOYI-POC-AUTH-RESULTS.md](docs/RUOYI-POC-AUTH-RESULTS.md) |
-| 数据权限专项 | 🧪 POC 通过 | 框架 Mapper 与实际业务路径**分别**取证 | [RUOYI-POC-DATA-PERMISSION.md](docs/RUOYI-POC-DATA-PERMISSION.md) |
-| 学生管理切片 S1–S3 | 🧪 POC 通过 | 列表/详情/修改 + 12 项测试 | [RUOYI-POC-STUDENT-SLICE.md](docs/RUOYI-POC-STUDENT-SLICE.md) |
-| 配套 React 前端 | 🧪 POC 通过 | 生产构建成功、真实登录、动态菜单 | [RUOYI-POC-AUTH-RESULTS.md](docs/RUOYI-POC-AUTH-RESULTS.md) §13.2 |
+| React 查询与导入页 | ✅ 已完成 | 20 项浏览器验收通过，生产构建与容器化部署 | [REACT-TEST-REPORT.md](docs/archive/REACT-TEST-REPORT.md) |
+| 部署与回退 | ✅ 已完成 | 前端独立栈，停止/恢复主栈不受影响 | [DEPLOY-ACCEPTANCE-1.3.md](docs/archive/DEPLOY-ACCEPTANCE-1.3.md) |
+| RuoYi 真实登录与身份贯通 | 🧪 POC 通过 | 登录 → Java 签名 → FastAPI 验签 → 审计 actor 正确 | [RUOYI-POC-AUTH-RESULTS.md](docs/archive/RUOYI-POC-AUTH-RESULTS.md) |
+| 数据权限专项 | 🧪 POC 通过 | 框架 Mapper 与实际业务路径**分别**取证 | [RUOYI-POC-DATA-PERMISSION.md](docs/archive/RUOYI-POC-DATA-PERMISSION.md) |
+| 学生管理切片 S1–S3 | 🧪 POC 通过 | 列表/详情/修改 + 12 项测试 | [RUOYI-POC-STUDENT-SLICE.md](docs/archive/RUOYI-POC-STUDENT-SLICE.md) |
+| 配套 React 前端 | 🧪 POC 通过 | 生产构建成功、真实登录、动态菜单 | [RUOYI-POC-AUTH-RESULTS.md](docs/archive/RUOYI-POC-AUTH-RESULTS.md) §13.2 |
 | **正式迁移** | ❌ **未开始** | S1–S3 的**实现代码尚未进入主项目**，仓库内只有验收文档 | [API-MIGRATION-INVENTORY.md](docs/API-MIGRATION-INVENTORY.md) |
-| 认证与权限（主系统） | ❌ 未实现 | 主系统 12 个接口目前**均无认证**，`X-Actor` 可伪造 | [SECURITY-AUTH-DESIGN.md](docs/SECURITY-AUTH-DESIGN.md) |
+| 认证与权限（主系统） | 🟡 基础设施已合入 | PR #16 已合入验签与范围（默认关闭）；正式网关与学生域迁移未开始；关闭态 `X-Actor` 仍可伪造 | [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md) |
 | AI 能力（Dify 等） | ❌ 未开始 | 按计划排在认证与权限之后 | [ADR-001-import-mapping.md](docs/ADR-001-import-mapping.md) |
 
 🧪 = 结论仅在隔离 POC 成立，**不代表生产环境已具备同等保护**。
 
 ### 3.1 已知未完成 / 未验证
 
-- 主系统接口无认证、无角色、无数据范围强制（`/students` 的 `college` 参数只是过滤器）；
-- `import_batches`、`import_issues` **无审计触发器**；
-- 认证方案的技术选型见 [SECURITY-AUTH-DECISION.md](docs/SECURITY-AUTH-DECISION.md)，实施路线见 [SECURITY-AUTH-ROADMAP.md](docs/SECURITY-AUTH-ROADMAP.md)；
-- 边界项：数据库异常注入回滚、并发修改、nonce 表 TTL 清理均未验证。
+- 关闭态（默认）接口保持旧行为、无认证；开启态已有 HMAC 验签 + 权限点 + 学院范围（仅在测试库验证），**正式迁移尚未开始**；
+- `import_batches`、`import_issues` **无审计触发器**（PR-C）；
+- 现行认证契约见 [INTERNAL-AUTH-SPEC.md](docs/INTERNAL-AUTH-SPEC.md)，阶段与顺序见 [PROJECT-ROADMAP.md](PROJECT-ROADMAP.md)；旧认证方案已归档，禁止作为实施依据；
+- 边界项：数据库异常注入回滚、并发修改、nonce 表 TTL 清理均未验证（PR-E）。
 
 ---
 
@@ -96,9 +96,9 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 |---|---|---|
 | 操作系统 | Windows 11 + Docker Desktop | Windows 11 |
 | Docker | Docker Desktop，固定版本标签 | Engine 29.2.0 / Compose v5.0.2 |
-| 内存 | 建议 16 GB 以上（Appsmith 约占 2–4 GB） | 31.8 GB；当前容器实测占用约 3.2 GB |
+| 内存 | 建议 8 GB 以上（当前主栈 db/api/web 实测约 1–2 GB） | 31.8 GB |
 | 磁盘 | 项目盘剩余 ≥ 15 GB | Z: 141 GB 可用（代码）/ F: 27 GB 可用（镜像与数据卷） |
-| 端口 | 8081、8443、55432、8010、8082 未被占用 | 已确认（5432/8000/8080 被其他服务占用，故整体避开） |
+| 端口 | 55432、8010、8082 未被占用（8081/8443 随 Appsmith 下线已释放） | 已确认（5432/8000/8080 被其他服务占用，故整体避开） |
 | PostgreSQL | 16.15（镜像 `postgres:16.15-alpine`） | 容器内 |
 | Python | 3.12（镜像 `python:3.12-slim`） | 仅构建期；运行时在容器内 |
 | Node.js | 不需要 | 前端在容器内构建（2026-10-21 起）；仅修改前端代码时本地装 Node 更方便 |
@@ -120,7 +120,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 
 ```text
 campus-data-ai/
-├─ docker-compose.yml          # 主栈：campus-db / appsmith / import-api
+├─ docker-compose.yml          # 主栈：campus-db / import-api（Appsmith 已下线）
 ├─ docker-compose.web.yml      # 前端独立栈（campus-web）
 ├─ import-api/                 # FastAPI 服务（含 wheels 离线依赖）
 ├─ web/                        # React + TypeScript + Ant Design 前端
@@ -148,7 +148,7 @@ cp .env.example .env      # 然后逐项替换 __CHANGE_ME_* 占位符
 ### 6.2 启动
 
 ```bash
-docker compose up -d --build             # db / appsmith / import-api（镜像自动构建）
+docker compose up -d --build             # db / import-api（镜像自动构建）
 docker compose exec -T campus-db psql -U campus_dba -d campus \
   -v app_password="$APP_DB_PASSWORD" -v ro_password="$RO_DB_PASSWORD" \
   -q -f - < sql/003_roles.sql          # 最小权限账号（只做一次）
@@ -176,10 +176,10 @@ docker compose -p campus-web -f docker-compose.web.yml up -d --build
 |---|---|
 | React 前端 | http://127.0.0.1:8082 |
 | Import API | http://127.0.0.1:8010 （`/health` 探活） |
-| Appsmith（历史方案） | http://127.0.0.1:8081 |
+| Appsmith（历史方案，已下线） | 不再提供（2026-10-22 R2：容器停止、compose 移除、卷保留） |
 | PostgreSQL | 127.0.0.1:55432（库 `campus`） |
 
-### 6.3 内部认证开关（默认关闭）
+### 6.4 内部认证开关（默认关闭）
 
 | 开关 | 行为 |
 |---|---|
@@ -198,7 +198,7 @@ docker compose up -d --force-recreate import-api
 - 健康检查：`/health` 为 liveness（只返回 `{"status":"ok"}`），`/health/ready` 为数据库就绪探针；
 - 规范见 `docs/INTERNAL-AUTH-SPEC.md`，迁移路线见 `docs/SECURITY-MIGRATION-EXECUTION-PLAN.md`。
 
-### 6.4 日志、停止与恢复
+### 6.5 日志、停止与恢复
 
 ```bash
 docker compose logs -f import-api
@@ -228,6 +228,10 @@ docker compose -p campus-web -f docker-compose.web.yml logs -f
 | 校验规则 | `test_validation.py`、`test_business_rules.py` | 类型预转换、必填/长度/枚举/范围、行号偏移、学号重复与库内已存在 | 无 |
 | 接口契约 | `test_api_contract.py` | 400/413/422 拒绝路径、base64 入口、健康检查降级 | 无（不触发 lifespan） |
 | 真库集成 | `test_db_integration.py` | 状态机、幂等 409、事务、**审计触发器与业务同事务** | PostgreSQL |
+| 安全·关闭态 | `test_auth_disabled.py` | OpenAPI 无 PUT、405 无副作用、旧行为回归 | 无 |
+| 安全·开启态 | `test_internal_auth.py`、`test_route_matrix.py` | 缺头/篡改/过期/重放/权限/范围、11×5 矩阵 | PostgreSQL |
+
+**CI 实查（2026-10-22）**：关闭态 collected 213（**130 passed / 82 skipped / 1 xfailed**）；开启态 collected 88（**88 passed**）。
 
 ```bash
 cd import-api
@@ -275,7 +279,7 @@ curl -X POST "$BASE/imports/$BATCH/commit"
 - 审计表同时记录**数据库连接账号**（`actor_db_role`）与业务操作人（`actor_user_id`）；
 - 敏感字段在写入审计前被剔除（`audit_payload()`）。
 
-> ⚠️ 当前操作人来自客户端可伪造的 `X-Actor` 请求头，**只具备演示价值**，正式身份链路尚未落地。
+> ⚠️ 关闭态（默认）：操作人来自客户端可伪造的 `X-Actor`，**只具备演示价值**；开启态：操作人来自验签通过的 `X-Internal-User`，正式网关链路待 PR-B。
 
 ---
 
@@ -305,7 +309,7 @@ docker compose -p campus-web -f docker-compose.web.yml ps
 ## 13. 安全与注意事项（必读）
 
 1. **不要提交**：`.env`、数据库备份（`backups/*.sql.gz`）、上传目录、任何真实学生数据、访问令牌。`.gitignore` 已覆盖，提交前请再确认一次 `git status`。
-2. **不要分发凭据**：数据库密码、Appsmith 加密密钥、HMAC 密钥一律不通过微信/邮件/仓库文件传递；新同事从 `.env.example` 开始，用自己的本地配置与独立数据库。
+2. **不要分发凭据**：数据库密码、HMAC 密钥一律不通过微信/邮件/仓库文件传递；Appsmith 已下线，其历史加密密钥仅作留档，不得复用。新同事从 `.env.example` 开始，用自己的本地配置与独立数据库。
 3. **POC 的加密关闭配置仅限 POC**：`--api-decrypt.enabled=false` 与 `VITE_APP_ENCRYPT=false` 不得用于生产；生产必须明确传输保护方案。
 4. **POC 数据库与主库必须分离**：禁止把 POC 指向主库 `campus`。
 5. **既有测试记录不要动**：批次 27（2007 行待提交）与批次 37 的暂存文件属于验收证据，不得删除、覆盖或重新提交。
@@ -319,7 +323,7 @@ docker compose -p campus-web -f docker-compose.web.yml ps
 - 运行时容器无外网出口（Docker Desktop 注入失效代理）：构建阶段已绕开，但容器内不能再跑 pip/npm；
 - 仅支持 `.xlsx` / `.xlsm` / `.csv`，不支持 `.xls`、多层合并表头、加密工作簿；
 - 提交成功后暂存目录的 `.mapping.json` 不会被删除（已知小缺陷）；
-- Appsmith 目前仍持有可写数据库账号 `campus_app`，**属待处理的高风险项**。
+- Appsmith 已按 R2 下线（容器停止、compose 移除、数据卷与配置保留，可受控恢复）；`campus_app` 账号仍存在，留待 PR-B 最小权限治理。
 
 ---
 
