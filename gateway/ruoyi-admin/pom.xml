@@ -156,6 +156,22 @@
                 <resources>
                     <resource>
                         <directory>src/main/resources</directory>
+                        <!-- 与根 pom 保持一致：普通资源不过滤 -->
+                        <filtering>false</filtering>
+                        <excludes>
+                            <exclude>application-dev.yml</exclude>
+                            <exclude>application-prod.yml</exclude>
+                        </excludes>
+                    </resource>
+                    <resource>
+                        <directory>src/main/resources</directory>
+                        <includes>
+                            <include>application*</include>
+                            <include>bootstrap*</include>
+                            <include>banner*</include>
+                        </includes>
+                        <!-- 生产构建同样需要替换 @profiles.active@ 等 Maven 占位符 -->
+                        <filtering>true</filtering>
                         <excludes>
                             <exclude>application-dev.yml</exclude>
                             <exclude>application-prod.yml</exclude>
