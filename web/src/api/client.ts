@@ -1,15 +1,14 @@
 /**
- * 统一请求封装。
- * - 基址走 VITE_API_BASE，默认 /api（开发期由 Vite 代理到 127.0.0.1:8010）
- * - 超时用 AbortController 控制，避免导入提交无限等待
- * - 错误统一为 ApiError，页面只消费 message
- * - 不在此文件中存放任何凭据；操作人只是展示标识，未经认证
+ * 统一请求封装（PR-D：业务请求唯一入口是 Java 网关 `/gw`）。
+ *
+ * - 浏览器只携带登录 token 与 clientid，不再发送 `X-Actor`，也无法自行声明角色/学院。
+ * - 身份、权限点、数据范围全部由 Java 网关从登录会话生成，FastAPI 二次验签。
+ * - 超时用 AbortController 控制，避免导入提交无限等待。
+ * - 错误统一为 ApiError，页面只消费 message。
+ * - 不在此文件中存放任何凭据或密钥。
  */
 
 import { GW_BASE, GW_CLIENT_ID, getToken } from './auth';
-
-const BASE = import.meta.env.VITE_API_BASE ?? '/api';
-const ACTOR = import.meta.env.VITE_ACTOR ?? 'local.operator';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -40,61 +39,11 @@ export function buildQuery(params: Record<string, unknown>): string {
   return qs ? `?${qs}` : '';
 }
 
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, timeoutMs = 15000 } = options;
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-
-  options.signal?.addEventListener('abort', () => controller.abort(), { once: true });
-
-  try {
-    const response = await fetch(`${BASE}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Actor': ACTOR,
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let detail = '';
-      try {
-        const payload = (await response.json()) as { detail?: string };
-        detail = payload.detail ?? '';
-      } catch {
-        detail = await response.text().catch(() => '');
-      }
-      throw new ApiError(detail || `请求失败（HTTP ${response.status}）`, response.status, detail);
-    }
-
-    return (await response.json()) as T;
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiError(`请求超时（${Math.round(timeoutMs / 1000)} 秒），请稍后重试或改用批次号恢复`, 0);
-    }
-    throw new ApiError('无法连接后端服务，请确认 Import API 容器运行正常', 0);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-export function get<T>(path: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
-  return request<T>(`${path}${buildQuery(params)}`, { method: 'GET', timeoutMs });
-}
-
-export function post<T>(path: string, body?: unknown, timeoutMs = 60000): Promise<T> {
-  return request<T>(path, { method: 'POST', body, timeoutMs });
-}
-
 /**
- * 网关请求（PR-B：学生域）。
+ * 网关请求：所有业务页面统一走这里。
  *
  * - 已登录时附带 Bearer token 与 clientid，由 Java 网关验签后转发 FastAPI。
  * - RuoYi 的权限/登录错误以 HTTP 200 + {code,msg} 返回，这里统一转成 ApiError。
- * - 未登录时不做拦截，由调用方决定是否跳转登录页。
  */
 export async function requestGateway<T>(
   path: string,
@@ -128,12 +77,21 @@ export async function requestGateway<T>(
     }
 
     if (!response.ok) {
-      throw new ApiError(`网关请求失败（HTTP ${response.status}）`, response.status);
+      // FastAPI 直传的 4xx/5xx 错误体形如 {detail: "..."}
+      const detail =
+        payload && typeof payload === 'object' && typeof (payload as { detail?: string }).detail === 'string'
+          ? (payload as { detail: string }).detail
+          : `网关请求失败（HTTP ${response.status}）`;
+      throw new ApiError(detail, response.status, detail);
     }
     if (payload && typeof payload === 'object' && typeof (payload as { code?: number }).code === 'number') {
       const wrapped = payload as { code: number; msg?: string };
       if (wrapped.code !== 200) {
         throw new ApiError(wrapped.msg || `网关返回 ${wrapped.code}`, wrapped.code);
+      }
+      // RuoYi 成功响应统一包在 data 里；如果存在 data 则返回 data
+      if ('data' in wrapped) {
+        return (wrapped as { data: T }).data;
       }
     }
     return payload as T;
@@ -147,5 +105,3 @@ export async function requestGateway<T>(
     window.clearTimeout(timer);
   }
 }
-
-export const actorName = ACTOR;

@@ -1,7 +1,7 @@
 # 内部请求认证规范（v1）
 
-- **状态**：PR-A 实施中；`INTERNAL_AUTH_ENABLED` 默认关闭
-- **适用**：`import-api` 的 11 个业务路由
+- **状态**：PR-A/B/C/D 已实现；`INTERNAL_AUTH_ENABLED` 默认关闭，正式切换待人工批准
+- **适用**：`import-api` 的 12 个业务路由（学生 3 + 聚合 2 + 导入 7），与网关代理端点一一对应
 - **公开端点（有意豁免）**：`GET /health`（liveness）、`GET /health/ready`（readiness）
 
 ---
@@ -152,7 +152,7 @@ signature = 9d934c4c8c41c5430d040f99bd142ba815b5b85bf738d7c309da80be4f42500a
 3. multipart 只对**文件内容**做摘要，不对整个 body。
 4. `+` 与 `%20` 必须统一为 `%20`（空格也按 `%20` 编码）。
 5. `PERMS` 必须 ASCII 升序、空格分隔、去重。
-6. 签名对象是**后端可见路径**：若 nginx 配置 `proxy_pass .../` 会剥掉 `/api`，网关签 `/api/students` 必定 401。
+6. 签名对象是**后端可见路径**：网关签 `/students` 并转发到 `import-api:8000/students`；nginx 的 `/gw/` 前缀由网关入口消费，不参与 FastAPI 验签。
 7. `X-Internal-Admin` 只接受小写 `true`；`TRUE`/`1` 直接 401。
 
 ---

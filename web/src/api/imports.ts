@@ -1,5 +1,11 @@
-import { get, post } from './client';
+import { requestGateway } from './client';
 import type { BatchDetail, CommitResult, PreviewResult, TargetType, ValidateResult } from './types';
+
+/**
+ * 导入域请求（PR-D）：
+ * - 统一经 Java 网关 `/gw/internal/proxy/imports*`，由网关生成可信签名；
+ * - 上传仍走 base64 JSON（10MB 文件编码后约 13.4MB），避免浏览器 multipart 与签名摘要不一致。
+ */
 
 /** 读取文件为 base64（去掉 data URL 前缀，后端两种都接受，这里统一发纯 base64）。 */
 export function fileToBase64(file: File): Promise<string> {
@@ -27,9 +33,9 @@ export async function previewImport(
   options: PreviewOptions = {},
 ): Promise<PreviewResult> {
   const content = await fileToBase64(file);
-  return post<PreviewResult>(
-    '/imports/preview-base64',
-    {
+  return requestGateway<PreviewResult>('/internal/proxy/imports/preview-base64', {
+    method: 'POST',
+    body: {
       filename: file.name,
       content_base64: content,
       target_type: targetType,
@@ -37,30 +43,36 @@ export async function previewImport(
       header_row: options.headerRow ?? null,
       mapping: options.mapping ?? null,
     },
-    60000,
-  );
+    timeoutMs: 60000,
+  });
 }
 
 export function remapImport(batchId: number, options: PreviewOptions): Promise<PreviewResult> {
-  return post<PreviewResult>(
-    `/imports/${batchId}/remap`,
-    {
+  return requestGateway<PreviewResult>(`/internal/proxy/imports/${batchId}/remap`, {
+    method: 'POST',
+    body: {
       sheet_name: options.sheetName ?? null,
       header_row: options.headerRow ?? null,
       mapping: options.mapping ?? null,
     },
-    60000,
-  );
+    timeoutMs: 60000,
+  });
 }
 
 export function validateImport(batchId: number): Promise<ValidateResult> {
-  return post<ValidateResult>(`/imports/${batchId}/validate`, undefined, 60000);
+  return requestGateway<ValidateResult>(`/internal/proxy/imports/${batchId}/validate`, {
+    method: 'POST',
+    timeoutMs: 60000,
+  });
 }
 
 export function commitImport(batchId: number): Promise<CommitResult> {
-  return post<CommitResult>(`/imports/${batchId}/commit`, undefined, 120000);
+  return requestGateway<CommitResult>(`/internal/proxy/imports/${batchId}/commit`, {
+    method: 'POST',
+    timeoutMs: 120000,
+  });
 }
 
 export function fetchBatch(batchId: number): Promise<BatchDetail> {
-  return get<BatchDetail>(`/imports/${batchId}`);
+  return requestGateway<BatchDetail>(`/internal/proxy/imports/${batchId}`);
 }

@@ -75,8 +75,8 @@
 | **G 文档治理** | 🟢 已完成，待评审（PR #18） | 两套互斥认证方案并存、索引缺失、计数口径不一 | `docs/` 现行 14 + `archive/` 26；索引两节；非 archive 零废弃引用 | `docs/**`、`README.md`、`CONTRIBUTING.md`；**禁止**改代码/compose/SQL | 分类唯一且数量自洽（40=14+26）；`grep` 零命中废弃路线；链接无死链 | PR #17 批准 | `git mv` 破坏相对链接（8 处需同步） |
 | **R Appsmith 处置** | 🟢 R2 已完成，待评审（PR #19） | `campus_app` 可写账号经 Appsmith 暴露 | R2：停服务 + 移出 compose + 保留卷/配置 | 仅 `docker-compose.yml` + 文档同步；**禁止**改数据库授权 | 容器无、端口无监听、compose 无服务、卷在；业务方确认无依赖 | 无（已完成主体） | 未提交、README 未同步、"业务方确认"未完成 |
 | **PR-B 学生域（含网关最小切片）** | 🟢 已完成，待评审（PR #21） | 无网关则签名无从产生；学生域仍是旧行为 | `auth-gateway` 服务 + `campus_gateway` 库 + 登录 + 学生 3 端点签名代理；前端学生页切登录 | 新增 `backend/`（或独立网关目录）、`sql/005`、`web/src/api/client.ts`、compose 新增服务；**禁止**触碰导入域、禁止关 8010 | 登录→网关→验签→DB→审计端到端；跨学院 403；审计 actor=登录用户；关闭态 130 项回归全绿；`gw_app` 对 `campus` 零权限 | G、R 收尾 | RuoYi 精简未实测；JVM + `sys_*` 表重量；引导凭据管理 |
-| **PR-C 导入域** | 🟢 已完成，待评审（独立 PR） | 导入无批次范围/逐行校验/批次审计 | `created_dept_id` + 逐行学院校验 + 语句级审计触发器；解除管理员硬限制 | `sql/006`、`import-api/app/service.py`/`queries.py`、导入测试；**禁止**改网关端点/前端入口 | 跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；审计计数与 POC 一致 | PR-B | 正式库需执行 006（先备份）；POC 审计串设计脆弱 |
-| **PR-D 正式入口** | ⏳ 未开始 | 8010 宿主可直连；前端多入口 | 网关补导入 7 端点；前端导入页切登录；**关闭宿主 8010 发布** | 网关 `InternalProxyController`、`web/nginx.conf`/前端、compose 端口；**禁止**改业务 SQL | ①前端经网关访问全部必需接口（学生3+聚合2+导入7）均 200；②宿主 `curl 8010` 被拒；③容器内 `campus-web`→`import-api:8000` 不受影响；④网关→内网链路正常 | PR-C | multipart 过网关内存峰值；误关容器内链路 |
+| **PR-C 导入域** | 🟢 已完成，待评审（PR #22） | 导入无批次范围/逐行校验/批次审计 | `created_dept_id` + 逐行学院校验 + 语句级审计触发器；解除管理员硬限制 | `sql/006`、`import-api/app/service.py`/`queries.py`、导入测试；**禁止**改网关端点/前端入口 | 跨学院导入被拒且不落库；越权读取被拒；重复提交 409；失败整体回滚；审计计数与 POC 一致 | PR-B | 正式库需执行 006（先备份）；POC 审计串设计脆弱 |
+| **PR-D 正式入口** | 🟢 已完成，待评审（PR #25） | 8010 宿主可直连；前端多入口 | 网关补导入 7 端点；前端导入页切登录；**关闭宿主 8010 发布** | 网关 `InternalProxyController`、`web/nginx.conf`/前端、compose 端口；**禁止**改业务 SQL | ①前端经网关访问全部必需接口（学生3+聚合2+导入7）均 200；②宿主 `curl 8010` 被拒；③容器内 `campus-web`→`import-api:8000` 不受影响；④网关→内网链路正常 | PR-C | multipart 过网关内存峰值；误关容器内链路 |
 | **PR-E 整体验收** | ⏳ 未开始 | 四项未验证项 + 正式库迁移不可逆 | 四项专项测试 + 004/005/006 迁移与回退演练 + Go/No-Go | 仅测试/脚本/演练报告；**禁止**改业务逻辑 | 无 P0/P1；回退 ≤5 分钟；近期匿名新增=0；迁移前后数据一致 | B/C/D | 演练环境与正式环境差异 |
 
 > **对原 PR-B/C/D/E 的调整声明**（不静默扩范围）：
@@ -202,13 +202,14 @@ python -m pytest                                               # 关闭态全量
 
 **为什么**：只要 8010 对宿主发布且前端直连，导入路径就有绕网关的口子。
 
-**具体实现**：
-- 网关补 7 个导入代理端点（multipart：文件 SHA-256 + 非文件字段签名，复用 POC `PocProxyController` 的导入段）；
-- 前端导入页切登录会话；
-- 移除 compose 中 `127.0.0.1:8010:8000` 发布；
-- nginx 保持按服务名 `import-api:8000` 访问（与 8010 无关）。
+**具体实现（已完成）**：
+- 网关补 **导入 7 端点 + 聚合 2 端点**：`/internal/proxy/imports*`、`/meta/filters`、`/stats/overview`；multipart 签名覆盖文件 SHA-256 + 非文件字段规范化串；
+- 前端 `students.ts`/`imports.ts`/`home.ts` 全部改走 `requestGateway`；新增登录守卫（未登录跳 `/login`）；
+- 移除 nginx `/api/` 反代与 Vite `/api` 代理，浏览器只保留 `/gw/` 入口；
+- 移除 compose 中 `127.0.0.1:8010:8000` 发布；`import-api` 仅容器内网；
+- `sql/005` 增加导入域 6 个权限点并授予 `college_scope` 角色（仅网关库）。
 
-**变更边界**：网关控制器、`web/` 前端与 nginx、compose 端口；**禁止**改业务 SQL/数据范围模型。
+**变更边界**：网关控制器、`web/` 前端与 nginx、compose 端口、`sql/005` 权限种子；**禁止**改业务 SQL/数据范围模型。
 
 **验收（D5 前置条件，顺序不可颠倒）**：
 1. **先证明**：前端经网关访问**全部必需接口**（学生 3 + 聚合 2 + 导入 7）均 200；
@@ -217,14 +218,20 @@ python -m pytest                                               # 关闭态全量
 4. **容器内通信未受影响**：`campus-web` → `import-api:8000` 仍 200，healthcheck healthy；
 5. 网关 → import-api 内网签名链路正常。
 
+**实施结果（2026-10-22）**：
+- 开启态（`INTERNAL_AUTH_ENABLED=true`）真实登录 + 网关签名 E2E：**26 项全部 PASS**（含 multipart 预览、validate、commit、跨学院 403、混合学院整批拒绝零写入、审计 actor=`ry:college_a`、未签名/伪造头 401）；
+- 浏览器 UI：登录 → 学生列表（236 条）→ 导入页 → 按批次号恢复 → 退出，7 步全 PASS，控制台无错误；
+- 关闭宿主 8010 后：`127.0.0.1:8010` 连接失败 `000`；容器内 `import-api:8000/health`=200；网关学生/导入/总览均 200；`docker compose config -q` 通过；
+- 验证后开发栈已恢复 `INTERNAL_AUTH_ENABLED=false`。
+
 **测试命令**：
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8010/health   # 期望连接失败
-docker compose exec campus-web wget -qO- http://import-api:8000/health # 期望 200
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8010/health    # 期望 000（连接失败）
+docker exec campus-web curl -s -o /dev/null -w "%{http_code}" http://import-api:8000/health  # 期望 200
 ```
-**回退**：恢复 compose 端口发布 + 前端切回直连。
+**回退**：恢复 compose 端口发布 + 前端切回直连（需同时恢复 nginx `/api` 与 `X-Actor` 路径）。
 
-**风险**：multipart 经网关内存峰值（`getBytes()` 全量读入）→ PR-E 压测项。
+**风险**：multipart 经网关内存峰值（`getBytes()` 全量读入）→ PR-E 压测项。**已知未验证**：网关进程在超大文件（接近 10MB）下的堆占用。
 
 ### 3.6 PR-E — 整体验收
 

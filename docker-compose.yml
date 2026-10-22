@@ -63,8 +63,8 @@ services:
       INTERNAL_AUTH_ENABLED: ${INTERNAL_AUTH_ENABLED:-false}
       INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET:-}
       TZ: Asia/Shanghai
-    ports:
-      - "127.0.0.1:8010:8000"
+    # PR-D：移除 127.0.0.1:8010 宿主发布。业务请求统一经网关（campus-web/gateway → import-api:8000 内网）；
+    # 宿主不再存在可绕过网关直连 import-api 的端口。
     volumes:
       - campus_uploads:/data/uploads
       - ./samples:/app/samples

@@ -1,13 +1,9 @@
-import { buildQuery, get, requestGateway } from './client';
-import { isLoggedIn } from './auth';
+import { buildQuery, requestGateway } from './client';
 import type { FilterOptions, Paged, Student, StudentDetail, StudentQuery } from './types';
 
 /**
- * 学生域请求（PR-B 双模式）：
- * - 已登录：经 Java 网关 `/gw/internal/proxy/students`，由网关生成可信签名；
- * - 未登录：保持旧 `/api/students` 行为，避免破坏现有演示页面。
- *
- * 导入域与筛选项仍走旧入口，PR-D 统一收口。
+ * 学生域请求（PR-D）：全部经 Java 网关，浏览器无法自行决定身份与数据范围。
+ * 未登录时由路由守卫跳转登录页，不再回落到旧的匿名 `/api` 入口。
  */
 export function fetchStudents(query: StudentQuery): Promise<Paged<Student>> {
   const params = {
@@ -19,21 +15,13 @@ export function fetchStudents(query: StudentQuery): Promise<Paged<Student>> {
     page: query.page ?? 1,
     page_size: query.page_size ?? 20,
   };
-
-  if (isLoggedIn()) {
-    return requestGateway<Paged<Student>>(`/internal/proxy/students${buildQuery(params)}`);
-  }
-  return get<Paged<Student>>('/students', params);
+  return requestGateway<Paged<Student>>(`/internal/proxy/students${buildQuery(params)}`);
 }
 
 export function fetchStudent(studentNo: string): Promise<StudentDetail> {
-  const path = `/students/${encodeURIComponent(studentNo)}`;
-  if (isLoggedIn()) {
-    return requestGateway<StudentDetail>(`/internal/proxy${path}`);
-  }
-  return get<StudentDetail>(path);
+  return requestGateway<StudentDetail>(`/internal/proxy/students/${encodeURIComponent(studentNo)}`);
 }
 
 export function fetchFilterOptions(): Promise<FilterOptions> {
-  return get<FilterOptions>('/meta/filters');
+  return requestGateway<FilterOptions>('/internal/proxy/meta/filters');
 }

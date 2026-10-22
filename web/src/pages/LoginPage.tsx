@@ -5,7 +5,7 @@ import { login } from '../api/auth';
 
 /**
  * PR-B 登录页：使用 RuoYi 原生账号登录，成功后进入学生查询。
- * 登录只影响学生域请求；导入域在 PR-D 统一切换。
+ * PR-D 起，学生、聚合与导入域请求全部经 Java 网关注入可信身份。
  */
 export default function LoginPage() {
   const navigate = useNavigate();
