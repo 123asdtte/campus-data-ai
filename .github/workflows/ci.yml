@@ -52,9 +52,12 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      # 真库集成测试的开关。未设置时这组用例会自动 skip，
-      # 但 CI 里必须真的跑，否则「审计与业务同事务」这类结论没有证据。
-      CAMPUS_TEST_DATABASE_URL: postgresql://campus_test:campus_test@127.0.0.1:5432/campus_test
+      # 管理连接：只用于初始化与清理（campus_test 是 superuser）
+      CAMPUS_TEST_ADMIN_DATABASE_URL: postgresql://campus_test:campus_test@127.0.0.1:5432/campus_test
+      # 业务连接：必须以 campus_app 身份跑测试，才能验证 003/004 的授权
+      CAMPUS_TEST_DATABASE_URL: postgresql://campus_app:campus_test_app_pw@127.0.0.1:5432/campus_test
+      CAMPUS_TEST_APP_PASSWORD: campus_test_app_pw
+      INTERNAL_HMAC_SECRET: campus-test-secret-0123456789abcdef0123
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,8 +67,14 @@ jobs:
           cache-dependency-path: import-api/requirements-dev.txt
       - name: 安装依赖
         run: pip install -r import-api/requirements-dev.txt
-      - name: 初始化测试库结构
-        run: python scripts/init-test-db.py
-      - name: 运行 pytest
+      - name: 初始化测试库（001 → 003 → 004，含权限校验）
+        # 002 是演示数据且会宽范围删除审计记录，默认不执行
+        run: python scripts/init-test-db.py --verify
+      - name: pytest（认证关闭，兼容旧行为）
         working-directory: import-api
         run: python -m pytest
+      - name: pytest（认证开启，安全用例）
+        working-directory: import-api
+        env:
+          INTERNAL_AUTH_ENABLED: 'true'
+        run: python -m pytest tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_privileges.py

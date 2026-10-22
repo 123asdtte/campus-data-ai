@@ -50,6 +50,8 @@
 | [IMPORT-API-SECURITY-INVENTORY.md](IMPORT-API-SECURITY-INVENTORY.md) | ✅ | 导入 7 接口的逐条安全取证：全部无认证，commit 写学生表（Issue #9） |
 | [IMPORT-API-SECURITY-PLAN.md](IMPORT-API-SECURITY-PLAN.md) | 📐 | 导入 7 接口的统一认证/权限/范围/审计整改设计（未实施） |
 | [POC-IMPORT-API-PR3-REVIEW.md](POC-IMPORT-API-PR3-REVIEW.md) | 🔍 | POC PR #3 代码审查与复审：5 项 P1 修复证据、48/48 + 12/12 |
+| [INTERNAL-AUTH-SPEC.md](INTERNAL-AUTH-SPEC.md) | 🔐 | 内部请求认证规范：14 段 canonical、11 个头、金标向量 |
+| [SECURITY-MIGRATION-EXECUTION-PLAN.md](SECURITY-MIGRATION-EXECUTION-PLAN.md) | 🗺️ | 安全迁移总路线（阶段 0–5、依赖、验收、回退） |
 
 ## 五、RuoYi POC 验收记录（隔离环境，仓库之外）
 
