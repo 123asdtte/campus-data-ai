@@ -144,7 +144,13 @@ class TestAuditTrail:
 
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT actor_user_id FROM campus.operation_logs")
+                # 只取学生业务表的审计记录：本用例要验证的是“学生写入的操作人
+                # 来自 X-Actor”。导入批次/异常表在 PR-C 也新增了审计触发器，
+                # 其 actor 取自批次上下文，与这里要验证的语义无关。
+                cur.execute(
+                    "SELECT DISTINCT actor_user_id FROM campus.operation_logs "
+                    "WHERE object_type IN ('students', 'student_changes')"
+                )
                 actors = {row["actor_user_id"] for row in cur.fetchall()}
 
         assert actors == {"other.actor"}

@@ -328,14 +328,8 @@ class TestConflictFixture:
         }
         assert "学号" in overridden["unmapped_columns"]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "已知缺陷（Issue #23）：这份夹具没有「入学年份」列，`_pre_coerce` 把该列转成 "
-            "Int64 后缺失值是 pd.NA，`commit_batch` 直接交给 psycopg 报 "
-            "cannot adapt type 'NAType'，整批回滚 → 500。修复后本用例 XPASS，请删标记。"
-        ),
-    )
+    # Issue #23 已由 PR-C 修复：缺失的可选列在入库前归一为 None，
+    # 原 xfail(strict) 标记移除，转为正式断言。
     def test_手动指定后提交应成功(self, db_client, load_sample) -> None:
         content = load_sample("test_conflict_columns.csv")
         batch_id = preview(

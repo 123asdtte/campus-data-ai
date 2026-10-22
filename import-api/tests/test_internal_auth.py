@@ -184,7 +184,7 @@ def test_低权限调用上传返回403(db_client):
 
 
 @pytest.mark.parametrize("method,path,_,kind", IMPORT_ROUTES)
-def test_非管理员即使持全部导入权限也被拒(db_client, method, path, _, kind):
+def test_非管理员持导入权限不再被管理员限制(db_client, method, path, _, kind):
     if kind == "file":
         response = H.request(db_client, method, path, file_bytes=CSV,
                              form={"target_type": "students"}, who=H.WHO_COLLEGE)
@@ -194,7 +194,9 @@ def test_非管理员即使持全部导入权限也被拒(db_client, method, pat
         response = H.request(db_client, method, path, json_body=body, who=H.WHO_COLLEGE)
     else:
         response = H.request(db_client, method, path, who=H.WHO_COLLEGE)
-    assert response.status_code == 403, "PR-C 前导入接口仅限管理员"
+    # PR-C 已解除管理员硬限制：具体状态由权限点、批次归属与数据范围决定
+    assert response.status_code != 403, "PR-C 已解除管理员硬限制"
+    assert response.status_code != 401
 
 
 def test_无学院声明访问聚合接口返回403(db_client):

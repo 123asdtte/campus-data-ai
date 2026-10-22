@@ -31,9 +31,8 @@ _DEPT_RE = re.compile(r"^\d{1,19}$")
 _TS_RE = re.compile(r"^\d{10,13}$")
 _NONCE_RE = re.compile(r"^[A-Za-z0-9._~-]{16,64}$")
 
-# PR-C（批次范围 + 逐行校验）完成前，导入接口只允许服务端认定的管理员。
-# 常量而非环境变量：避免被部署配置意外关闭。
-IMPORT_ADMIN_ONLY = True
+# PR-C 已完成批次范围与逐行校验，导入接口不再只限管理员；
+# 权限点仍由 import:batch:* 控制，数据范围由批次归属与学院声明强制。
 
 
 class Who(Dict[str, str]):
@@ -286,14 +285,6 @@ def scope_colleges(who: Optional[Who]) -> Optional[list[str]]:
     if not colleges:
         raise HTTPException(status_code=403, detail="缺少学院数据范围声明")
     return colleges
-
-
-def require_import_admin(who: Optional[Who]) -> None:
-    """PR-C 前导入接口只允许管理员；关闭态保持旧行为。"""
-    if who is None or not IMPORT_ADMIN_ONLY:
-        return
-    if not who.is_admin:
-        raise HTTPException(status_code=403, detail="导入接口在数据范围改造完成前仅限管理员（PR-C）")
 
 
 def resolve_actor(who: Optional[Who], x_actor: Optional[str]) -> str:

@@ -65,7 +65,7 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 | `GET /students`、`/students/{no}` | `student:list` | `college_name = 签名学院`；越界筛选 → 空集；详情越界 → 403 |
 | `PUT /students/{no}` | `student:write` | 同上（WHERE 内含范围） |
 | `GET /meta/filters`、`/stats/overview` | `student:list` | 聚合按 `ANY(colleges)`；非管理员不返回批次字段 |
-| 导入 7 路由 | `import:batch:list/detail/upload/remap/validate/commit` | **PR-C**：`created_dept_id` 快照 + 逐行校验；**PR-C 前管理员硬限制** |
+| 导入 7 路由 | `import:batch:list/detail/upload/remap/validate/commit` | **PR-C 已实施**：`created_dept_id` 批次范围 + 逐行学院校验 + 批次审计；管理员硬限制已解除 |
 
 ---
 
@@ -109,8 +109,8 @@ campus-gateway (PR-B 已实现) ── X-Internal-* ──► import-api
 | 1 | 网关会话 → 内部签名 | ✅ PR-B 已实现（待评审） | `campus-gateway` 登录后签发 14 段签名；规范见 `INTERNAL-AUTH-SPEC.md` |
 | 2 | FastAPI 验签 + nonce 防重放 | ✅ 已实现（开启态生效） | 60s 窗口、nonce 主键原子消费 |
 | 3 | 权限点 | ✅ 声明链路已实现 | 权限点的**发放**（sys_menu + 网关）在 PR-B |
-| 4 | 学院数据范围 | ✅ 学生/聚合已强制；导入 PR-C | fail-closed：空声明 → 403 |
-| 5 | 审计 | 🟡 触发器在、actor 93% 匿名 | 开启态写路径会带真实 actor；存量匿名行为历史数据 |
+| 4 | 学院数据范围 | ✅ 学生/聚合/导入均已强制（PR-C） | fail-closed：空声明 → 403；导入逐行校验 |
+| 5 | 审计 | ✅ 批次行级审计 + 异常摘要；开启态 actor 可信 | 导入异常明细不再逐行审计；`campus_app` 无 `import_issues` DELETE，删除经受控函数 |
 | 6 | nonce 表 | ✅ 代码已合入 | **正式库未执行 004**；`campus_app` 无 DELETE，清理走受控函数 |
 | 7 | 网络边界 | 🔴 8010 宿主可直连 | PR-D 移除发布 |
 | 8 | Appsmith 可写账号 | 🟢 已停服务（R2） | 容器停止、compose 移除、卷保留；账号仍存在，留待 PR-B 账号治理 |

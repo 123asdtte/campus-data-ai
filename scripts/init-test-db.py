@@ -112,7 +112,7 @@ def verify(admin_dsn: str, app_password: str) -> None:
             checks.append(("internal_nonce 表存在", cur.fetchone()[0]))
 
             for table, privilege, expected in [
-                ("campus.import_issues", "DELETE", True),
+                ("campus.import_issues", "DELETE", False),  # 006 收口：只能经受控函数删除
                 ("campus.students", "DELETE", False),
                 ("campus.operation_logs", "INSERT", False),
                 ("campus.internal_nonce", "DELETE", False),
@@ -179,6 +179,7 @@ def main() -> int:
         run_psql_script(conn, SQL_DIR / "003_roles.sql",
                         {"app_password": args.app_password, "ro_password": args.ro_password})
         apply_sql_file(conn, SQL_DIR / "004_internal_auth.sql")
+        apply_sql_file(conn, SQL_DIR / "006_import_scope.sql")
 
         if args.with_demo:
             apply_sql_file(conn, SQL_DIR / "002_seed_demo.sql")

@@ -365,6 +365,7 @@ def create_batch(
     sheet_name: Optional[str] = None,
     header_row: Optional[int] = None,
     overrides: Optional[Dict[str, Optional[str]]] = None,
+    created_dept_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     if target_type not in TARGETS:
         raise ServiceError(f"不支持的目标类型：{target_type}")
@@ -433,8 +434,8 @@ def create_batch(
                 """
                 INSERT INTO campus.import_batches
                     (batch_code, source_filename, file_sha256, target_type, total_rows,
-                     batch_status, staged_path, created_by, failure_reason)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     batch_status, staged_path, created_by, failure_reason, created_dept_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -447,11 +448,14 @@ def create_batch(
                     staged_path,
                     actor[:150],
                     "缺少必需列" if missing else None,
+                    created_dept_id,
                 ),
             )
             batch_id = cur.fetchone()["id"]
 
             _insert_issues(cur, batch_id, issues)
+            # 首次解析的异常也写一条摘要，保持“每次重写都有摘要”的一致性
+            cur.execute("SELECT campus.record_import_issues(%s, 'preview')", (batch_id,))
 
     preview_rows = []
     for idx, row in mapped.head(20).iterrows():
@@ -501,6 +505,19 @@ def _load_batch(cur, batch_id: int) -> Dict[str, Any]:
     return row
 
 
+def _assert_batch_scope(batch: Dict[str, Any], dept_id: Optional[int]) -> None:
+    """批次级授权：非管理员只能访问本部门创建的批次。
+
+    dept_id 为 None 表示管理员/关闭态全范围；批次没有归属（历史 NULL）
+    时仅管理员可见，避免历史批次被任意学院读取。
+    """
+    if dept_id is None:
+        return
+    owner = batch.get("created_dept_id")
+    if owner is None or int(owner) != int(dept_id):
+        raise ServiceError("无权访问该导入批次", 403)
+
+
 def _revalidate(cur, batch: Dict[str, Any]) -> Tuple[pd.DataFrame, List[Issue], Dict[str, str]]:
     path = batch.get("staged_path")
     if not path or not os.path.exists(path):
@@ -542,6 +559,7 @@ def remap_batch(
     sheet_name: Optional[str] = None,
     header_row: Optional[int] = None,
     overrides: Optional[Dict[str, Optional[str]]] = None,
+    dept_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """用户调整工作表/表头/列映射后重新解析，不重新上传文件。"""
     with pool.connection() as conn:
@@ -551,6 +569,7 @@ def remap_batch(
             batch = cur.fetchone()
             if batch is None:
                 raise ServiceError(f"导入批次不存在：{batch_id}", 404)
+            _assert_batch_scope(batch, dept_id)
             if batch["batch_status"] == "imported":
                 raise ServiceError("该批次已导入，不能再调整映射", 409)
 
@@ -590,7 +609,8 @@ def remap_batch(
                 """,
                 (len(mapped), status, "缺少必需列" if missing else None, batch_id),
             )
-            cur.execute("DELETE FROM campus.import_issues WHERE batch_id = %s", (batch_id,))
+            # 删除收口：旧明细只能经受控函数删除，函数内先写摘要再删
+            cur.execute("SELECT campus.clear_import_issues(%s, 'remap')", (batch_id,))
 
             issues: List[Issue] = []
             if missing:
@@ -599,6 +619,8 @@ def remap_batch(
                     Issue(MAX_TEXT_ISSUE_ROW, "COLUMN_MAPPING_REQUIRED", f"缺少必需列：{labels}")
                 )
                 _insert_issues(cur, batch_id, issues)
+            # 每次重写都留一条摘要，包括“重写后 0 条异常”
+            cur.execute("SELECT campus.record_import_issues(%s, 'remap')", (batch_id,))
 
     preview_rows = []
     for idx, row in mapped.head(20).iterrows():
@@ -639,7 +661,7 @@ def remap_batch(
     }
 
 
-def validate_batch(batch_id: int, actor: str) -> Dict[str, Any]:
+def validate_batch(batch_id: int, actor: str, dept_id: Optional[int] = None) -> Dict[str, Any]:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             _set_actor(cur, actor)
@@ -647,13 +669,16 @@ def validate_batch(batch_id: int, actor: str) -> Dict[str, Any]:
             batch = cur.fetchone()
             if batch is None:
                 raise ServiceError(f"导入批次不存在：{batch_id}", 404)
+            _assert_batch_scope(batch, dept_id)
             if batch["batch_status"] == "imported":
                 raise ServiceError("该批次已导入，不能再次校验", 409)
 
             mapped, issues, mapping = _revalidate(cur, batch)
 
-            cur.execute("DELETE FROM campus.import_issues WHERE batch_id = %s", (batch_id,))
+            # 删除收口 + 重写后摘要（两条摘要，均只有一行，不再是逐行噪声）
+            cur.execute("SELECT campus.clear_import_issues(%s, 'validate')", (batch_id,))
             _insert_issues(cur, batch_id, issues)
+            cur.execute("SELECT campus.record_import_issues(%s, 'validate')", (batch_id,))
 
             error_rows = _row_has_error(issues)
             total = len(mapped)
@@ -694,7 +719,12 @@ def validate_batch(batch_id: int, actor: str) -> Dict[str, Any]:
     }
 
 
-def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
+def commit_batch(
+    batch_id: int,
+    actor: str,
+    dept_id: Optional[int] = None,
+    allowed_colleges: Optional[set[str]] = None,
+) -> Dict[str, Any]:
     inserted = 0
     skipped: List[Dict[str, Any]] = []
 
@@ -702,28 +732,46 @@ def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
         with conn.cursor() as cur:
             _set_actor(cur, actor)
 
-            # 幂等入口：只有 validated 状态可以推进到 imported
-            cur.execute(
-                """
-                UPDATE campus.import_batches
-                   SET batch_status = 'imported', finished_at = now()
-                 WHERE id = %s AND batch_status = 'validated'
-             RETURNING *
-                """,
-                (batch_id,),
-            )
+            # 先锁定并校验状态/归属，再更新；任一步失败都整体回滚
+            cur.execute("SELECT * FROM campus.import_batches WHERE id = %s FOR UPDATE", (batch_id,))
             batch = cur.fetchone()
             if batch is None:
-                cur.execute("SELECT batch_status FROM campus.import_batches WHERE id = %s", (batch_id,))
-                existing = cur.fetchone()
-                if existing is None:
-                    raise ServiceError(f"导入批次不存在：{batch_id}", 404)
-                raise ServiceError(f"批次状态为 {existing['batch_status']}，不能提交（可能已提交或未校验）", 409)
+                raise ServiceError(f"导入批次不存在：{batch_id}", 404)
+            if batch["batch_status"] != "validated":
+                raise ServiceError(
+                    f"批次状态为 {batch['batch_status']}，不能提交（可能已提交或未校验）", 409
+                )
+            _assert_batch_scope(batch, dept_id)
 
             target = batch["target_type"]
             mapped, issues, _mapping = _revalidate(cur, batch)
             error_rows = _row_has_error(issues)
             row_offset = int(mapped.attrs.get("row_offset", 0))
+
+            # 逐行学院授权：非管理员只能提交签名声明学院内的数据；
+            # 发现越权行时整批拒绝，不执行任何写入。
+            if allowed_colleges is not None:
+                out_of_scope = []
+                for idx, row in mapped.iterrows():
+                    row_no = idx + 2 + row_offset
+                    if row_no in error_rows:
+                        continue
+                    college = (row.get("college_name") or "").strip()
+                    if not college or college not in allowed_colleges:
+                        out_of_scope.append(row_no)
+                if out_of_scope:
+                    raise ServiceError(
+                        f"批次包含 {len(out_of_scope)} 行越权学院数据，已整批拒绝且未写入", 403
+                    )
+
+            cur.execute(
+                """
+                UPDATE campus.import_batches
+                   SET batch_status = 'imported', finished_at = now()
+                 WHERE id = %s AND batch_status = 'validated'
+                """,
+                (batch_id,),
+            )
 
             for idx, row in mapped.iterrows():
                 row_no = idx + 2 + row_offset
@@ -740,13 +788,13 @@ def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
                         ON CONFLICT (student_no) DO NOTHING
                         """,
                         (
-                            row["student_no"],
-                            row["student_name"],
-                            row.get("college_name"),
-                            row.get("major_name"),
-                            row.get("class_name"),
-                            row.get("enrollment_year"),
-                            row.get("student_status") or "enrolled",
+                            _cell(row["student_no"]),
+                            _cell(row["student_name"]),
+                            _cell(row.get("college_name")),
+                            _cell(row.get("major_name")),
+                            _cell(row.get("class_name")),
+                            _cell(row.get("enrollment_year")),
+                            _cell(row.get("student_status")) or "enrolled",
                         ),
                     )
                     if cur.rowcount == 1:
@@ -786,6 +834,10 @@ def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
                     else:
                         skipped.append({"row_number": row_no, "reason": "学生不存在，未写入"})
 
+            if skipped:
+                # 提交阶段新增的重复学号警告同样只写一条摘要
+                cur.execute("SELECT campus.record_import_issues(%s, 'commit')", (batch_id,))
+
             cur.execute(
                 "UPDATE campus.import_batches SET valid_rows = %s, invalid_rows = %s WHERE id = %s",
                 (inserted, batch["total_rows"] - inserted, batch_id),
@@ -811,10 +863,11 @@ def commit_batch(batch_id: int, actor: str) -> Dict[str, Any]:
     }
 
 
-def get_batch(batch_id: int) -> Dict[str, Any]:
+def get_batch(batch_id: int, dept_id: Optional[int] = None) -> Dict[str, Any]:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             batch = _load_batch(cur, batch_id)
+            _assert_batch_scope(batch, dept_id)
             cur.execute(
                 """
                 SELECT row_number, field_name, issue_code, severity, issue_message, issue_status
@@ -853,7 +906,7 @@ def get_batch(batch_id: int) -> Dict[str, Any]:
     }
 
 
-def list_batches(limit: int = 50) -> List[Dict[str, Any]]:
+def list_batches(limit: int = 50, dept_id: Optional[int] = None) -> List[Dict[str, Any]]:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -861,10 +914,11 @@ def list_batches(limit: int = 50) -> List[Dict[str, Any]]:
                 SELECT id, batch_code, source_filename, target_type, total_rows,
                        valid_rows, invalid_rows, batch_status, created_by, created_at
                   FROM campus.import_batches
+                 WHERE (%s::bigint IS NULL OR created_dept_id = %s::bigint)
                  ORDER BY created_at DESC
                  LIMIT %s
                 """,
-                (min(max(limit, 1), 200),),
+                (dept_id, dept_id, min(max(limit, 1), 200)),
             )
             rows = cur.fetchall()
     return [

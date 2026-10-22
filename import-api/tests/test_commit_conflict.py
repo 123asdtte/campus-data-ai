@@ -156,16 +156,8 @@ class TestConcurrentWindow:
 
 
 class TestOptionalColumn:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "已知缺陷：名单里没有「入学年份」列时，_pre_coerce 把该列转成 Int64，"
-            "缺失值是 pandas 的 pd.NA，而 commit_batch 直接把它交给 psycopg，"
-            "报 cannot adapt type 'NAType' 并整体回滚（HTTP 500）。"
-            "也就是说任何只含学号+姓名的最小名单都无法提交。"
-            "修复时应像 _cell 一样把 pd.NA/NaT 归一成 None，届时请移除本标记"
-        ),
-    )
+    # Issue #23 已由 PR-C 修复：commit_batch 取值时把 pd.NA/NaT 归一为 None，
+    # 原本的 xfail(strict) 标记在修复后转为正式断言（XPASS 即视为失败）。
     def test_缺少可选列时提交应正常写入(self, db_client) -> None:
         batch_id = preview(db_client, "minimal.csv", MINIMAL_CSV).json()["batch_id"]
         assert validate(db_client, batch_id)["invalid_rows"] == 0
