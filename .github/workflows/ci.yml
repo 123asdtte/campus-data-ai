@@ -83,7 +83,7 @@ jobs:
           cache-dependency-path: import-api/requirements-dev.txt
       - name: 安装依赖
         run: pip install -r import-api/requirements-dev.txt
-      - name: 初始化测试库（001 → 003 → 004，含权限校验）
+      - name: 初始化测试库（001 → 003 → 004 → 006，含权限校验）
         # 002 是演示数据且会宽范围删除审计记录，默认不执行
         run: python scripts/init-test-db.py --verify
       - name: pytest（认证关闭，兼容旧行为）
