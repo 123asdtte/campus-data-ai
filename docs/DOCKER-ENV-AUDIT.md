@@ -54,7 +54,7 @@
 
 | 项 | 现状 |
 |---|---|
-| `.github/workflows/ci.yml` | 前端 `npm ci + tsc + build`；后端语法/导入检查。**无 pytest、无 Docker 构建验证** |
+| `.github/workflows/ci.yml` | 前端 `npm ci + tsc + build`；后端语法/导入检查；**pytest 双模式（关闭态 130 passed / 开启态 88 passed）与 AI 评审**；仍无 Docker 构建验证 |
 | `scripts/fetch-wheels.sh` | 在宿主机按 `manylinux/cp312` 预下载 wheel 到 `import-api/wheels/`（该目录已 gitignore，新克隆为空） |
 | `scripts/backup.sh / restore.sh / check-disk.sh` | 备份/恢复/磁盘检查，restore 需 `.env` 中 `APP_DB_PASSWORD`、`RO_DB_PASSWORD` |
 
@@ -68,6 +68,8 @@
 - **不包含**：`wheels/*.whl`（已 ignore，需跑 `fetch-wheels.sh`）、`web/dist`（须宿主机构建）、`import-api/tests`（尚不存在）。
 
 ### 4.2 仅存在于本机（当前同事拿不到）
+
+> **状态更新（2026-10-22）**：POC 已整理为独立仓库 `campus-ruoyi-poc`（PR #3 合并，origin/main `f1c2856`），下表"仅存在于本机"描述的是整理前状态。
 
 | 内容 | 位置 | 状态 |
 |---|---|---|
@@ -102,7 +104,7 @@
 
 | 级别 | 事项 |
 |---|---|
-| **P0** | 把 POC 的定制代码（backend 5 文件、ui-react 4 文件、import-api-poc 3 处、根目录 8 个文件）整理成可推送的仓库形态——方案见 [POC-SHARING-PLAN.md](POC-SHARING-PLAN.md) |
+| **P0** | ✅ 已完成：POC 定制代码已整理为独立仓库 `campus-ruoyi-poc`（PR #3），方案见 `../../ruoyi-plus-poc/README.md` |
 | P1 | 前端「宿主机构建 → 静态托管 → 代理」流程脚本化（`scripts/dev/up-web.ps1` 等），消除对手工命令的依赖 |
 | P1 | `fetch-wheels.sh` 纳入主栈首次启动前置检查（检测 wheels 为空时提示） |
 | P2 | CI 增加「Compose 配置语法校验」与「Dockerfile 构建」任务 |

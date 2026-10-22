@@ -17,7 +17,7 @@
 | `test_db_integration.py` | 14 | 真库：全链路、状态机、幂等、审计、行号偏移 |
 | `conftest.py` | — | 夹具：`samples/` 读取、`api_client`、`db_session`/`clean_db`/`db_client` |
 
-夹具：`samples/` 12 个文件。其中 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 在测试中零引用**（前者仅出现在 `docs/IMPORT-MAPPING-TEST.md` 手工场景 7）。
+夹具：`samples/` 12 个文件。其中 **`test_conflict_columns.csv`、`bad_headers.xlsx`、`students_demo.xlsx` 在测试中零引用**（前者仅出现在 `docs/archive/IMPORT-MAPPING-TEST.md` 手工场景 7）。
 
 ---
 

@@ -1,5 +1,8 @@
 # RuoYi-Vue-Plus 6.X 集成评估（只读，未实施）
 
+> **⚠️ 已被取代（归档）**：本文"plus-ui MIT 没问题"的表述早于 Issue #11。plus-ui `6.X-React` @ `25e69f1` 分支**无 LICENSE 文件、package.json 无 license 字段**，许可**未确认**，**不得引用本文作为许可背书**。
+> 现行许可结论见 `ruoyi-plus-poc/THIRD-PARTY-NOTICES.md`；现行路线见 [`../../PROJECT-ROADMAP.md`](../../PROJECT-ROADMAP.md)。
+
 - **日期**：2026-10-20
 - **状态**：评估完成，**未修改任何代码、数据库、容器或配置**
 - **结论**：**有条件推进 POC**——先做最小验证，再决定是否迁移；不直接进入正式迁移

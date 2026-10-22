@@ -4,7 +4,7 @@
 - **日期**：2026-10-20
 - **决策者**：项目负责人
 - **影响范围**：`import-api` 的全部解析与映射逻辑；前端导入页的交互设计
-- **相关文档**：`docs/IMPORT-API.md`、`docs/IMPORT-MAPPING-TEST.md`、`docs/DATA-DICTIONARY.md`
+- **相关文档**：`docs/IMPORT-API.md`、`docs/archive/IMPORT-MAPPING-TEST.md`（历史验收）、`docs/DATA-DICTIONARY.md`
 
 ---
 

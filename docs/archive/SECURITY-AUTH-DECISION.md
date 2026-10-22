@@ -1,5 +1,8 @@
 # 技术选型决策：复用成熟组件，不迁移若依
 
+> **⚠️ 已被取代（归档）**：本文"不迁移若依"的结论已被后续 POC 与 D1 决策推翻。现行认证架构为 **RuoYi 登录 + Java 网关签名 + FastAPI 二次验证**。
+> 现行契约见 [`../INTERNAL-AUTH-SPEC.md`](../INTERNAL-AUTH-SPEC.md)，阶段定义见 [`../../PROJECT-ROADMAP.md`](../../PROJECT-ROADMAP.md)。本文件仅作"为什么改向"的历史档案。
+
 - **状态**：已决策（2026-10-20），待评审后实施
 - **范围**：认证、路由授权、审计链路、后台管理
 - **前提**：保留 React + TypeScript + FastAPI + PostgreSQL，不重写已跑通的解析与导入闭环
