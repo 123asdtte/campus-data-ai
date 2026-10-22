@@ -115,6 +115,18 @@ docker compose --profile monitoring up -d prometheus alertmanager blackbox-expor
 默认不启动，避免给每台开发机增加常驻资源。`scripts/preflight.py` 的“监控组件”
 要求这三个容器**正在运行**，只定义不启动会判 FAIL。详见 [MONITORING.md](MONITORING.md)。
 
+### TLS 模板（可选）
+
+```bash
+./scripts/gen-dev-cert.sh                     # 生成 30 天自签名证书到 certs/
+docker compose -p campus-web -f docker-compose.web.yml -f docker-compose.tls.yml up -d --build
+curl -k --noproxy '*' https://127.0.0.1:8443/healthz
+```
+
+- HTTP 8082 与 HTTPS 8443 并存；证书目录 `certs/` 不入库。
+- Windows 下可用 `.\scripts\dev\smoke-test.ps1 -BaseUrl https://127.0.0.1:8443/gw -Insecure` 验证完整链路。
+- **正式证书、域名、443 对外与流量切换属 C 类**，清单见 [TLS.md](TLS.md)。
+
 ### 停止与清理（红线）
 
 - **日常停止只用 `down-main.ps1`**，等价于 `compose down`，**不带 `-v`**，数据卷保留。

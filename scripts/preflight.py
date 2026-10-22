@@ -210,13 +210,31 @@ def check_health() -> None:
 
 
 def check_tls() -> None:
-    """生产入口必须具备 443 与证书配置。"""
+    """生产入口必须具备 443 与证书配置。
+
+    若默认入口仍是 HTTP，但 TLS 模板（web/nginx.tls.conf）已就绪，
+    单独说明“模板就绪、正式入口未启用”，避免与“完全没做”混淆。
+    模板存在不等于可以上线：证书、域名与流量切换仍需人工授权。
+    """
+    def has_tls(text: str) -> bool:
+        return "listen" in text and "443" in text and "ssl_certificate" in text
+
     conf = ROOT / "web/nginx.conf"
     text = conf.read_text(encoding="utf-8") if conf.exists() else ""
-    if "listen" in text and "443" in text and "ssl_certificate" in text:
-        add("PASS", "TLS 入口", "nginx 已配置 443 与证书")
+    tls_conf = ROOT / "web/nginx.tls.conf"
+    tls_text = tls_conf.read_text(encoding="utf-8") if tls_conf.exists() else ""
+
+    if has_tls(text):
+        add("PASS", "TLS 入口", "nginx 默认入口已启用 443 与证书")
+    elif has_tls(tls_text):
+        add(
+            "FAIL",
+            "TLS 入口",
+            "模板已就绪（web/nginx.tls.conf），但默认入口仍为 HTTP；"
+            "正式启用需受控证书与 C 类人工授权",
+        )
     else:
-        add("FAIL", "TLS 入口", "nginx 仅 80，未配置证书")
+        add("FAIL", "TLS 入口", "nginx 仅 80，未配置证书，也没有 TLS 模板")
 
 
 def check_monitoring(config: dict) -> None:

@@ -24,6 +24,7 @@
 | D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Verified（#39 已合并 `146548d`；本分支叠加后实测通过） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
 | D-009 | 2026-10-22 | 前端 nginx 动态解析网关，避免网关重建后 502 | Verified（已合并 `cfeec7a`） | `fix/web-nginx-dns` | 前端可用性、部署 |
 | D-010 | 2026-10-22 | 监控最小集：Prometheus + blackbox + Alertmanager | Verified（本分支 `ops/monitoring-minimal`） | `ops/monitoring-minimal` | 上线预检、运维 |
+| D-011 | 2026-10-22 | TLS 入口模板与开发验证（正式切换仍需授权） | Verified（本分支 `ops/tls-dev-template`） | `ops/tls-dev-template` | 前端入口、上线准备 |
 
 ---
 
@@ -317,3 +318,37 @@
   - `scripts/preflight.py`：“监控组件”PASS（运行中），FAIL 由 3 降到 **2**（仅 TLS 与 dev jar 配置）。
 - **回退**：`docker compose --profile monitoring stop ...` 并回退 compose/preflight 改动；数据卷 `campus_prometheus`/`campus_alertmanager` 可保留或删除。回退后预检“监控组件”重新 FAIL，属预期。
 - **授权**：无需人工授权（A/B 类：开发环境新增非生产监控依赖与预检口径）；正式告警渠道与值班安排需运维确认。
+
+---
+
+## D-011 TLS 入口模板与开发验证
+
+- **状态**：Verified（模板与开发验证完成；正式切换未执行）
+- **Decision owner**：AI
+- **问题与背景**：预检“TLS 入口”FAIL，`web/nginx.conf` 只有 80；正式上线需要 HTTPS，但证书、域名与流量切换属 C 类，不能由本轮自行启用。
+- **证据**：
+  - 预检原文：`[FAIL] TLS 入口 nginx 仅 80，未配置证书`；
+  - 现有 nginx 配置把 `/healthz`、`/gw/`、静态资源与 SPA 回退混在一个 server 块中，直接复制一份 TLS 配置会产生漂移；
+  - 本机镜像已有 `nginx:1.29-alpine`，无需新增依赖。
+- **可选方案**：
+  1. 只在 `web/nginx.conf` 增加 443 并提交自签证书——会把开发证书带进仓库，且默认入口变成 TLS，超出本轮授权；
+  2. 抽取公共 location 片段，新增独立 TLS 模板 + compose 覆盖文件，开发用自签证书验证，默认仍走 HTTP；
+  3. 在前置负载均衡终止 TLS——需要域名与运维环境，当前无法验证。
+- **决定**：方案 2：
+  - `web/nginx-common.conf` 承载公共 location（HTTP/HTTPS 共用，避免漂移）；
+  - `web/nginx.tls.conf` 为 443 模板（TLS 1.2/1.3、证书路径、动态解析网关）；
+  - `docker-compose.tls.yml` 仅增加 `127.0.0.1:8443→443` 与证书挂载，保留 80/8082；
+  - `scripts/gen-dev-cert.sh` 生成 30 天自签名证书到 `certs/`（`.gitignore` 已忽略）；
+  - 冒烟脚本增加 `-Insecure`（仅显式启用时 `curl -k`）；
+  - 预检仍将 TLS 判为 FAIL，但说明改为“模板已就绪，正式入口仍为 HTTP”，避免与“完全没做”混淆。
+- **理由**：验证了 TLS 模板的可用性与共存方式，同时不触碰正式证书与流量；公共片段消除了两套配置的漂移风险。
+- **影响与兼容性**：默认 HTTP 行为不变；只有显式使用 `docker-compose.tls.yml` 才监听 8443；前端镜像需重建（新增片段文件）；证书不进入仓库。
+- **安全风险与权衡**：自签名证书只用于本地验证，客户端默认仍校验证书；TLS 1.2/1.3，禁用弱套件；正式启用前必须替换受控证书并补 HSTS/跳转/续期告警（见 `docs/TLS.md` §4）。
+- **涉及文件**：`web/nginx.conf`、`web/nginx-common.conf`、`web/nginx.tls.conf`、`web/Dockerfile.web`、`docker-compose.tls.yml`、`scripts/gen-dev-cert.sh`、`scripts/dev/smoke-test.ps1`、`scripts/preflight.py`、`.gitignore`、`docs/TLS.md`、`docs/DECISION-LOG.md`、`docs/README.md`、`docs/DEVELOPMENT-ENVIRONMENT.md`、`PROJECT-ROADMAP.md`。
+- **验证方法（实测）**：
+  - `docker exec campus-web nginx -t` = syntax ok；
+  - `https://127.0.0.1:8443/healthz` 与 `/gw/healthz` 均 200；`http://127.0.0.1:8082/healthz` 仍 200；
+  - 完整冒烟 `-BaseUrl https://127.0.0.1:8443/gw -Insecure` = `FAIL=0`；
+  - 预检 TLS 仍 FAIL，但说明为“模板已就绪，默认入口仍为 HTTP”。
+- **回退**：`docker compose -p campus-web -f docker-compose.web.yml up -d --force-recreate` 恢复 HTTP-only；回退分支即移除模板。
+- **授权**：模板与开发验证属 A 类；正式证书、域名、443 对外与流量切换属 C 类，未执行。

@@ -31,8 +31,13 @@
 .PARAMETER ForceContainer
     跳过网关检测，强制使用容器内直连模式（排查用）。
 
+.PARAMETER Insecure
+    允许自签名证书（仅用于本地 TLS 模板验证；等价于 curl -k）。
+
 .EXAMPLE
     .\scripts\dev\smoke-test.ps1
+.EXAMPLE
+    .\scripts\dev\smoke-test.ps1 -BaseUrl https://127.0.0.1:8443/gw -Insecure
 #>
 [CmdletBinding()]
 param(
@@ -40,13 +45,15 @@ param(
     [string]$Username = 'admin',
     [string]$Password = 'admin123',
     [switch]$SkipCommit,
-    [switch]$ForceContainer
+    [switch]$ForceContainer,
+    [switch]$Insecure
 )
 
 . (Join-Path $PSScriptRoot '_common.ps1')
 $repo = Get-RepoRoot
 $fail = 0
 $token = $null
+$script:UseInsecureTls = [bool]$Insecure
 
 # 与 web/src/api/auth.ts 的 GW_CLIENT_ID 一致（sql/005 的 sys_client 种子）
 $ClientId = 'e5cd7e4891bf95d1d19206ce24a7b32e'
@@ -58,7 +65,10 @@ function Check([bool]$Ok, [string]$Message) {
 # curl 的多行输出在 PowerShell 里是字符串数组，直接喂 ConvertFrom-Json 会报
 # “传入的数组无效”，必须先拼成单个字符串。
 function Invoke-Curl([string[]]$CurlArgs) {
-    $raw = (& curl.exe -sS --noproxy '*' --max-time 60 @CurlArgs 2>&1) -join "`n"
+    # 本地 TLS 模板使用自签证书；只有显式 -Insecure 才放行，避免默认忽略证书错误
+    $tlsArgs = @()
+    if ($script:UseInsecureTls) { $tlsArgs = @('-k') }
+    $raw = (& curl.exe -sS --noproxy '*' --max-time 60 @tlsArgs @CurlArgs 2>&1) -join "`n"
     return @{ Output = $raw; Code = $LASTEXITCODE }
 }
 

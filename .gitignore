@@ -40,6 +40,7 @@ Thumbs.db
 .DS_Store
 
 # 私钥与证书（严禁入库）
+certs/
 *.pem
 *.key
 *.p12
