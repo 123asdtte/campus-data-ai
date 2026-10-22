@@ -31,6 +31,10 @@ HEADERS = {"X-Actor": "ci.tester"}
 
 
 # ------------------------------------------------------------------ 造数工具
+# 注意：下面两个 insert 直接走 SQL，只用于给「只读接口」准备数据。它们不经过
+# service 层，因此**不覆盖**「业务写入与审计同事务」这条链路——那条由
+# test_db_integration.py / test_queries_read.py 负责。这里仍显式设置 actor，
+# 只是为了不给审计表留 NULL 噪声。
 def insert_student(
     student_no: str,
     *,
@@ -106,6 +110,8 @@ def make_xlsx(rows) -> bytes:
 def table_count(table: str) -> int:
     from app.db import pool
 
+    # 表名是拼接进 SQL 的，只允许白名单内的常量，避免将来有人把外部变量传进来
+    assert table in {"students", "student_changes", "import_batches", "import_issues"}
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT count(*) AS n FROM campus.{table}")
@@ -178,9 +184,12 @@ class TestOverview:
 
     def test_最近批次最多五条且最新在前(self, db_client, load_sample) -> None:
         content = load_sample("test_acceptance.csv")
-        codes = [preview(db_client, "acceptance.csv", content).json()["batch_code"] for _ in range(6)]
+        batches = [preview(db_client, "acceptance.csv", content).json() for _ in range(6)]
+        codes = [item["batch_code"] for item in batches]
+        ids = [item["batch_id"] for item in batches]
         # 六次 preview 落在同一瞬间，created_at 会完全相同；显式改成递增时间戳，
-        # 否则「倒序」这条断言是在赌数据库的物理行序
+        # 否则「倒序」这条断言是在赌数据库的物理行序。只改本用例创建的批次，
+        # 不做全表 UPDATE——真库上可能还有别的用例留下的数据。
         from app.db import pool
 
         with pool.connection() as conn:
@@ -188,7 +197,9 @@ class TestOverview:
                 cur.execute("SELECT set_config('campus.actor_user_id', %s, true)", ("ci.tester",))
                 cur.execute(
                     "UPDATE campus.import_batches "
-                    "SET created_at = timestamptz '2026-01-01 00:00:00+08' + (id || ' minutes')::interval"
+                    "SET created_at = timestamptz '2026-01-01 00:00:00+08' + (id || ' minutes')::interval "
+                    "WHERE id = ANY(%s)",
+                    (ids,),
                 )
 
         body = db_client.get("/stats/overview", headers=HEADERS).json()
@@ -272,7 +283,9 @@ class TestAbnormalFileOverHttp:
         """期望 400，当前 500——openpyxl 的异常没被转成 `ServiceError`（矩阵 §10-4）。
 
         `TestClient` 默认把服务端异常抛出来，这里关掉才能断言「用户看到的状态码」，
-        否则用例会变成一个与生产行为无关的 raise 断言。
+        否则用例会变成一个与生产行为无关的 raise 断言。新 client 复用同一个 `app`
+        实例（连接池与 `settings` 都是模块级单例），所以与 `db_client` 夹具看到的环境
+        一致；`db_client` 只负责清库与切上传目录。
         """
         from fastapi.testclient import TestClient
 
@@ -358,6 +371,9 @@ class TestDemoFixture:
     文档口径（`docs/TEST-PLAN.md`、`docs/REACT-TEST-REPORT.md`）：15 行 / 10 有效 /
     5 异常（行号 12–16）。这条用例把这个口径变成可执行的断言——文档与实现一旦
     对不上，CI 会先报错。
+
+    计数断言依赖「每个用例开始前清库」：`db_client` 夹具会 TRUNCATE 业务表，
+    所以这里是绝对行数而不是增量。
     """
 
     def test_演示文件十五行中十行有效并可提交(self, db_client, load_sample) -> None:
