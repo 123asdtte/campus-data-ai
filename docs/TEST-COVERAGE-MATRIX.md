@@ -148,6 +148,10 @@
 
 按 issue #8 边界「不修改业务代码，除非测试/盘点暴露真实缺陷，需单独开 Issue 说明」：
 
+> 其中第 1、2、3、5 条属于「先定行为再补测」，四张决策单见
+> [`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md)（D-1 ~ D-4，含选项、成本与验证方式）。
+> 第 4 条（损坏 xlsx 应 400）与第 6 条（#23）已定案，只剩实现。
+
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|
 | 1 | sidecar 映射文件从不清理，每次成功导入永久残留一个 `.mapping.json` | `service.py:794-805` | 补删 sidecar；顺带确认孤儿文件是否需要 TTL 机制 |
@@ -198,6 +202,7 @@ sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides
 2. ~~`get_overview` / `get_filters`~~ → §12 已补
 3. ~~`samples/` 中 `bad_headers.xlsx`、`students_demo.xlsx` 仍零引用~~ → §12 已补
 4. §10-2、§10-3、§10-5 三项（扩展名白名单、编码替换、死代码）需先定行为再补测
+   → 决策单已出：[`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md) D-2 / D-3 / D-4
 
 ---
 
