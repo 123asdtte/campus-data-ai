@@ -155,3 +155,39 @@
 | 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py:182-186` | 至少对替换字符出现的情况给 warning |
 | 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py:74` | 捕获 openpyxl 异常转 `ServiceError` |
 | 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py:57`、`:84` | 删除，避免误判为已覆盖 |
+
+---
+
+## 11. 第二步补测（2026-10-22）
+
+按 §9 的排序补齐，只补「无」和「部分」，不重复已有用例。新增 5 个文件、37 个用例。
+
+| 新增文件 | 层 | 用例数 | 补的缺口 |
+|---|---|---|---|
+| `test_remap.py` | 真库 | 8 | §4 remap 接口（此前整接口零行为测试）：改映射后预览/列映射同步、手动指定解除原占用列、取消必需列转 failed、校验后 remap 状态回退 `uploaded`、回退后必须重新校验、已导入批次 409、并行批次互不干扰 |
+| `test_staging.py` | 真库 + 纯 FS | 7 | §6/§7 暂存文件生命周期：预览/校验后必须保留、提交后删除且 `staged_path` 置空、`keep_upload_files` 为真时保留、文件被外部删除后 409；sidecar 残留固化为 xfail（§10-1） |
+| `test_commit_conflict.py` | 真库 | 3 | §2 ON CONFLICT 分支（见下方新发现） |
+| `test_queries_read.py` | 真库 | 11 | §8 只读查询层（此前零行为覆盖）：分页与总数、参数夹取、keyword ILIKE、学院筛选与 `forced_college` 取交集、`get_student` 异动排序 |
+| `test_parsing_edge.py` | 纯函数 | 8 | §3 解析边界：未知后缀按内容识别（现状固化）、非法字节替换（现状固化）、损坏 xlsx（xfail，§10-4）、sidecar 读写往返与损坏兜底 |
+
+### 新发现（补测过程中确认，不在本轮修）
+
+**`commit_batch` 的 ON CONFLICT / `skipped_rows` 分支在正常流程下不可达。**
+
+`commit_batch` 在 INSERT 之前会调 `_revalidate` 重算业务问题，同学号会被判
+`DUPLICATE_STUDENT_NO`（severity=error）从而在循环里被 `continue` 掉，根本到不了
+`INSERT ... ON CONFLICT`。串行导入走的是 `invalid_rows_excluded`，不是 `skipped_rows`。
+
+`ON CONFLICT` 实际是**并发兜底**：只有「校验完成后、提交开始前」被另一个事务插入同学号
+时才会命中。`test_commit_conflict.py` 用 monkeypatch 让 `_fetch_known_students` 返回空集
+来模拟这个窗口，另设一条用例固化正常路径，避免有人误以为 `skipped_rows` 是常规可达路径。
+
+这条同时意味着：§2「幂等」的承压点不在 ON CONFLICT，而在提交前的二次校验——后者现在有测试了。
+
+### 仍未覆盖（按 §9 顺序，建议后续处理）
+
+1. 异常文件的 **API 层**行为（`test_parsing_edge.py` 只覆盖了解析层；「损坏 xlsx 返回 500」
+   要在 HTTP 层固化，得先按 §10-4 定行为）
+2. `get_overview` / `get_filters`（`queries.py` 另两个只读函数，零行为覆盖）
+3. `samples/` 中 `bad_headers.xlsx`、`students_demo.xlsx` 仍零引用
+4. §10-2、§10-3、§10-5 三项（扩展名白名单、编码替换、死代码）需先定行为再补测
