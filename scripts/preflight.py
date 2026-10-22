@@ -20,6 +20,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -233,6 +234,29 @@ def check_internal_auth(env_map: dict[str, str]) -> None:
         add("WARN", "内部认证开关", "当前已开启，请确认已获正式切换批准")
 
 
+def check_artifact() -> None:
+    """生产镜像 jar 不得包含 application-dev.yml / application-prod.yml。
+
+    这两份文件被 .gitignore 排除，但默认构建仍会把本地文件打进 jar；
+    生产必须使用 -Pprod 构建（见 ruoyi-admin/pom.xml 的 prod profile）。
+    """
+    jar = ROOT / "gateway/ruoyi-admin/target/ruoyi-admin.jar"
+    if not jar.exists():
+        add("SKIP", "镜像配置卫生", "未找到构建产物 jar")
+        return
+    try:
+        with zipfile.ZipFile(jar) as archive:
+            names = archive.namelist()
+    except (OSError, zipfile.BadZipFile) as exc:
+        add("FAIL", "镜像配置卫生", f"jar 无法读取：{exc}")
+        return
+    leaked = sorted({n for n in names if n.endswith(("application-dev.yml", "application-prod.yml"))})
+    if leaked:
+        add("FAIL", "镜像配置卫生", f"jar 含本地配置（{len(leaked)} 项），请用 -Pprod 构建")
+    else:
+        add("PASS", "镜像配置卫生", "jar 未包含本地配置")
+
+
 def main() -> int:
     env_map = read_env()
     if not env_map:
@@ -252,6 +276,7 @@ def main() -> int:
     check_health()
     check_tls()
     check_internal_auth(env_map)
+    check_artifact()
 
     width = max(len(name) for _, name, _ in RESULTS)
     for level, name, detail in RESULTS:
