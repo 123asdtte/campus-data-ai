@@ -151,7 +151,7 @@
 > 其中第 1、2、3、5 条属于「先定行为再补测」，四张决策单见
 > [`TEST-BEHAVIOR-DECISIONS.md`](TEST-BEHAVIOR-DECISIONS.md)（D-1 ~ D-4，含选项、成本与验证方式）。
 > **第 1、2、3、5 条均已实施**（D-1 ~ D-4），第 4 条（损坏 xlsx 应 400）随 D-3 一并修掉；
-> 本表只剩第 6 条（#23）未修。
+> 本表 6 条全部闭环：第 6 条（#23）由 PR-C 修复。
 
 | # | 发现 | 位置 | 建议 |
 |---|---|---|---|
@@ -160,7 +160,7 @@
 | 3 | 编码非法时静默替换为 U+FFFD，乱码学号可入库 | `parsing.py` 的 `_read_raw_rows` / `load_frame` | **已修复**：`_decode_text()` 严格解码；**实测发现比「替换字符」更严重的问题**——旧实现先用 UTF-8 解一份、再用 GBK 严格解一次并覆盖，`学号,姓名\n2026001,\n` 这类「中文表头 + ASCII 数据」的 UTF-8 文件整份恰好能被 GBK 解出，表头变成「瀛﹀彿,濮撳悕」，映射全失配后表现为「200 + failed / 缺少必需列」 |
 | 4 | 损坏的 xlsx 返回 500 而非 400 | `parsing.py` 的 `_open_workbook` | **已修复**：openpyxl / pandas 的异常统一收成 `parsing.WorkbookError`，由 `service._prepare` 转 `ServiceError`（400） |
 | 5 | `_read_frame` / `_map_columns` 为死代码 | `service.py`（原 `:57`、`:84`） | **已删除**（D-4），随之移除未使用的 `import io` |
-| 6 | **缺少「入学年份」等可选列时提交 500**：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚。任何只含学号+姓名的最小名单都提交不了 | `service.py:116`（`_pre_coerce`）、`service.py:733-751`（取值直接入库） | 取值处按 `_cell` 的规则把 `pd.NA`/`NaT` 归一成 `None`；已由 `test_commit_conflict.py::TestOptionalColumn` 以 xfail 固化 |
+| 6 | **缺少「入学年份」等可选列时提交 500**：`_pre_coerce` 把该列转成 `Int64`，缺失值是 pandas 的 `pd.NA`，`commit_batch` 直接交给 psycopg 报 `cannot adapt type 'NAType'` 并整体回滚。任何只含学号+姓名的最小名单都提交不了 | `service.py:116`（`_pre_coerce`）、`service.py:733-751`（取值直接入库） | **已修复**（PR-C，Issue #23）：取值处按 `_cell` 的规则把 `pd.NA`/`NaT` 归一成 `None`；原 xfail(strict) 标记已移除，`test_commit_conflict.py::TestOptionalColumn` 与 `test_meta_and_files.py::TestConflictFixture` 转为正式断言 |
 
 ---
 
