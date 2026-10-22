@@ -1,5 +1,7 @@
 # import-api 测试覆盖矩阵
 
+> **2026-10-22 更新（PR-E）**：现行用例总数为 **关闭态 130 passed / 开启态 116 passed**（另 101 skipped、1 xfailed）；本矩阵正文是 `c28ec94` 的 112 用例基线，缺口描述已部分被 PR-A/B/C/E 关闭，详见 `PR-E-ACCEPTANCE-REPORT.md`。
+>
 > Issue #8 第一步交付物（盘点，不改任何测试代码）。
 > 基线：`main` @ `c28ec94`；用例数统计口径：`grep -c "def test_"` + 参数化展开，共 **112 个用例**（111 passed / 1 xfailed）。
 > 盘点方式：逐行比对 7 个测试文件与 `import-api/app/` 全部源码，对照本矩阵 7 类场景。

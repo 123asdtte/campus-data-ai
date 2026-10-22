@@ -1,6 +1,6 @@
 # 文档索引
 
-> **2026-10-22 文档治理完成**：`docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
+> **2026-10-22 文档治理完成**：治理时 `docs/` 现行 **14** 份 + `archive/` 历史 **26** 份 = 40 份；PR-E 新增验收报告 1 份，现为 **15 + 26 = 41** 份。根目录 `PROJECT-ROADMAP.md` 单独计数，根 `README.md`/`CONTRIBUTING.md` 仅更新不计入。
 >
 > **唯一年有效认证方案**：RuoYi 登录会话 → Java 网关 `X-Internal-*` 签名 → FastAPI 二次验签。任何 pwdlib/PyCasbin 或"不迁移若依"的旧方案都只在 `archive/` 中作历史追溯，**不得作为实施依据**。
 
@@ -8,7 +8,7 @@
 
 ---
 
-## 一、现行规范（docs/ 14 份）
+## 一、现行规范（docs/ 15 份）
 
 ### 入口与路线
 
@@ -36,6 +36,7 @@
 | [DATA-DICTIONARY.md](DATA-DICTIONARY.md) | ✅ | 表结构、字段、枚举、约束 |
 | [TEST-COVERAGE-MATRIX.md](TEST-COVERAGE-MATRIX.md) | 📐 | 覆盖矩阵与缺口分析（基线 `c28ec94`，待更新为 `d10946f`） |
 | [ADR-001-import-mapping.md](ADR-001-import-mapping.md) | ✅ | 表头识别与字段映射采用规则而非大模型 |
+| [PR-E-ACCEPTANCE-REPORT.md](PR-E-ACCEPTANCE-REPORT.md) | ✅ | 全量回归、并发/大文件/nonce、迁移回退演练与 Go/No-Go |
 
 ### 盘点、部署与协作
 
