@@ -211,7 +211,7 @@ sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides
 | `TestMetaFilters` | 3 | `GET /meta/filters` 从零行为覆盖到：学院/班级去重、停用学生剔除、空库零值 |
 | `TestOverview` | 3 | `GET /stats/overview`：`students_active` 与 `students_total` 口径差异、`pending_review`、`change_type_counts` 排序、`recent_batches` 最多 5 条且最新在前、空库边界 |
 | `TestAbnormalFileOverHttp` | 5 | §3 在 HTTP 层：坏表头、仅表头 xlsx、未知后缀、`.xlsm`、损坏 xlsx |
-| `TestConflictFixture` | 2 | §4 冲突场景端到端：`test_conflict_columns.csv` 上传 → 冲突提示 → 手动指定解除 → 校验 → 提交 |
+| `TestConflictFixture` | 2 | §4 冲突场景端到端：`test_conflict_columns.csv` 上传 → 冲突提示 → 手动指定解除（提交环节被 #23 阻断，另设 xfail 用例固化） |
 | `TestDemoFixture` | 1 | `students_demo.xlsx` 的文档口径（15 行 / 10 有效 / 5 异常）变成可执行断言 |
 
 ### 新发现
@@ -221,6 +221,12 @@ sidecar 只保存正向映射（源列 → 目标字段）。把某列 overrides
 （置信度 0.78），于是表头明显不规范的名单被 `status=uploaded` 正常接收，用户收不到任何提示。
 现状已由 `test_meta_and_files.py::TestAbnormalFileOverHttp::test_无可识别表头被包含匹配接受`
 固化；是否要给 contains 命中加 warning，需先定行为（并入 §10 的待定项一起评估）。
+
+**#23 的第二个复现入口：`test_conflict_columns.csv`。** 这份夹具同样没有「入学年份」列，
+于是「冲突 → 手动指定 → 校验通过 → 提交」这条完整链路在提交环节 500（`cannot adapt type
+'NAType'`），与 #23 完全同因。校验阶段仍返回 `valid_rows=1`，用户的体感是「校验通过却提交
+失败」。已由 `TestConflictFixture::test_手动指定后提交应成功` 以 `xfail(strict=True)` 固化——
+这说明 #23 不是「某一份样例文件的偶发问题」，而是**所有缺可选列的名单**都会踩到。
 
 ### 口径说明
 
