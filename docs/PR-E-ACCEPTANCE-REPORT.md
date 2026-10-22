@@ -12,12 +12,12 @@
 
 | 阶段 | 结论 | 关键证据 |
 |---|---|---|
-| G 文档治理 | **PASS** | 治理基线 40 = 14 + 26；同事 PR #24 新增设计文档、PR-E 新增验收报告后为 16 + 26 = 42；链接与废弃路线检查通过；PR #18 |
+| G 文档治理 | **PASS** | 治理基线 40 = 14 + 26；同事 #24/#28 新增设计/决策文档、PR-E 新增验收报告后为 17 + 26 = 43；链接与废弃路线检查通过；PR #18 |
 | R Appsmith 下线 | **PASS**（含 1 项未验证） | 容器 `Exited (137)`、8081/8443 监听数 0、compose 无服务、卷 `campus_appsmith_stacks` 保留；PR #19 |
 | PR-B 学生域 | **PASS** | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计；PR #21 |
-| PR-C 导入域 | **PASS** | 批次归属 + 逐行学院校验 + 方案 C 审计（批次行级 + 异常摘要）；关闭态 183 passed、开启态 120 passed；PR #22 |
+| PR-C 导入域 | **PASS** | 批次归属 + 逐行学院校验 + 方案 C 审计（批次行级 + 异常摘要）；关闭态 195 passed、开启态 120 passed；PR #22 |
 | PR-D 统一入口 | **PASS** | 12 端点经网关；26 项 E2E + 浏览器 7 步；宿主 8010 关闭；PR #25 |
-| PR-E 全量验收 | **PASS** | 关闭态 183 passed；开启态 120 passed；迁移/回退演练通过；PR-E 专项 11 passed |
+| PR-E 全量验收 | **PASS** | 关闭态 195 passed；开启态 120 passed；迁移/回退演练通过；PR-E 专项 11 passed |
 
 ---
 
@@ -27,10 +27,10 @@
 
 ```text
 python -m pytest -q
-183 passed, 102 skipped, 4 xfailed
+195 passed, 102 skipped, 1 xfailed
 ```
 
-包含同事 PR #20/#27 新增的 6 个测试文件（聚合、异常文件、remap、staging、冲突、覆盖矩阵第二步）；#23 的两处 strict xfail 已随 PR-C 修复转为正式断言。
+包含同事 #20/#27/#29/#30 合并后的全部测试：#23 的两处 strict xfail 已随 PR-C 修复转为正式断言；sidecar 与损坏 xlsx 的两处 xfail 已由 #29/#30 转为正式断言。剩余 1 个 xfail 为中文 `X-Actor` 的已知限制。
 
 ### 2.2 开启态安全专项（`INTERNAL_AUTH_ENABLED=true`）
 
@@ -76,19 +76,22 @@ pytest -q tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_p
 
 PR #21、#22、#25、#26 的 CI 全部 SUCCESS（后端语法、接口测试、网关构建、前端构建、AI 评审）。其中 #26 的开启态步骤已纳入 PR-C/PR-E 安全用例（`test_import_scope`、`test_student_write`、`test_pr_e_hardening`、`test_import_audit_summary`）。
 
-### 2.7 同事成果集成（PR #20 / #24 / #27）
+### 2.7 同事成果集成（PR #20 / #24 / #27 / #28 / #29 / #30）
 
-三个 PR 均由同事 hjy-helloy 完成并已合并到 `main`（我方堆叠链原基于 `d10946f`，本次已同步）：
+六个 PR 均由同事 hjy-helloy 完成并已合并到 `main`（当前 `fd24024`；我方堆叠链原基于 `d10946f`，已同步）：
 
 | PR | 内容 | 判定 | 集成处理 |
 |---|---|---|---|
-| #20 | 覆盖矩阵第二步：6 个测试文件（commit 冲突、parsing 边界、queries、remap、staging） | **A** | 全部保留；在本方分支复跑，48 项通过 |
+| #20 | 覆盖矩阵第二步：6 个测试文件（commit 冲突、parsing 边界、queries、remap、staging） | **A** | 全部保留；在本方分支复跑通过 |
 | #24 | `IMPORT-AUDIT-DESIGN.md`：方案 C 设计（只读） | **B** | 设计成立；据此把 PR-C 的 006 从“逐行审计异常表”收敛为“批次行级 + 异常摘要 + 删除收口” |
 | #27 | 覆盖矩阵第三步：`test_meta_and_files.py`（聚合/筛选/异常文件/冲突夹具） | **A**（含 2 处标记需调整） | 保留；其两处 `#23 strict xfail` 因 PR-C 修复而 XPASS，已改为正式断言 |
-| #29（open） | D-4 删死代码 + D-1 sidecar 与暂存文件同删 | **B** | 质量与 CI 通过；但与 PR-C 同改 `service.py`，且覆盖 `test_staging.py`/`test_parsing_edge.py`。建议 #22 合并后由作者 rebase，暂不合并；合并后文档计数将变为 17+26=43 |
-| #30（open） | D-2 后缀白名单 + D-3 严格解码 + §10-4 损坏 xlsx 返回 400 | **B** | 修的是真实缺陷（UTF-8 被 GBK 覆盖），质量高、CI 通过；但改 `parsing.py`/`service.py` 与两个测试，声明 stacked 于 #29，且改变用户可见错误行为。需在 #22、#29 之后 rebase，合并前需产品确认 |
+| #28 | `TEST-BEHAVIOR-DECISIONS.md`：D-1~D-4 决策单 | **A** | 文档保留，纳入 docs 索引，计数 17+26=43 |
+| #29 | D-4 删死代码 + D-1 sidecar 与暂存文件同删（已合并 `d3493cd`） | **A**（集成后） | 与 PR-C 的 `service.py` 改动已合并：保留 `_remove_staged()`，同时保留 006 的 `_set_actor` 清理审计；195 项测试通过 |
+| #30 | D-2 后缀白名单 + D-3 严格解码 + §10-4 损坏 xlsx 400（已合并 `fd24024`） | **B（治理待追认）** | 技术质量与 CI 通过，已随 main 进入本链；但三项用户可见行为变化**未获你明确批准**，需追认或另提回退方案，不得视为已授权 |
 
-已合并三个 PR 的重叠面只有 `docs/TEST-COVERAGE-MATRIX.md`（已合并双方内容）；`#29`/`#30` 另与 PR-C 在 `service.py`、`parsing.py` 及测试文件上重叠，按 B 类暂缓。同事成果没有依赖本链未合并的前置改动，也未触及认证、数据库权限或密钥。
+> **治理提示**：`main` 已包含 #30 的三项用户可见行为变化（拒绝未知后缀、坏编码 400、损坏 xlsx 400）。本报告不将其标记为“已批准”，仅记录其已进入主线的事实；是否保留由你在合并审批中决定。
+
+集成后 `service.py` 同时包含：#29 的死代码删除与 `_remove_staged()`、PR-C 的批次范围/逐行校验/审计函数调用、以及清理事务的可信 actor 注入；`parsing.py` 采用 #30 的严格解码与 `WorkbookError`。同事成果没有依赖本链未合并的前置改动，也未触及认证、密钥或正式数据。
 
 ---
 
@@ -167,8 +170,7 @@ PASS 清理演练数据库
 | P2 | nonce 清理为应用内定时任务，容器长期停机期间不清理 | 过期行不影响安全（仅占空间）；启动时会补一次清理 |
 | P3 | 关闭态仍允许 `X-Actor` 演示身份 | 生产必须开启认证；文档已显著标注 |
 | P3 | 中文操作人无法经 HTTP 头传递（xfail 固化） | 开启态 actor 来自登录用户，不受影响；关闭态仅演示 |
-| P3 | 提交后 sidecar `.mapping.json` 残留（同事用例 xfail 固化，§10-1） | 不影响数据正确性；后续可随清理逻辑一并修复 |
-| P3 | 损坏 xlsx 返回 500 而非 400（同事用例 xfail 固化，§10-4） | 用户侧错误码不友好；不影响数据安全 |
+| P3 | #30 三项用户可见行为已进入 main 但未获你批准 | 需在合并审批中追认，或准备独立回退 PR；不得视为已批准 |
 
 无 P0 / P1 未处理项。
 
@@ -201,7 +203,7 @@ PASS 清理演练数据库
 | 7 | #26 | `feat/gateway-entry-pr-d` ← `test/pr-e-acceptance` | PR-E 验收、专项测试与演练脚本 |
 
 按上表顺序合并；每个 PR 只包含相对其 base 的独立改动。
-**注**：`main` 已由同事合并 #20/#24/#27；本堆叠链已同步这些提交并解决 `TEST-COVERAGE-MATRIX.md` 冲突，合并顺序不变。
+**注**：`main` 已由同事合并 #20/#24/#27/#28/#29/#30（当前 `fd24024`）；本堆叠链已同步这些提交并解决 `TEST-COVERAGE-MATRIX.md` 与 `service.py` 的合并，合并顺序不变。
 
 ---
 
