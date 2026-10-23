@@ -38,6 +38,18 @@
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>dynamic-datasource-spring-boot4-starter</artifactId>
+            <exclusions>
+                <!-- 校园平台只使用 PostgreSQL；排除 Oracle UCP 传递依赖，
+                     避免把 ojdbc11/FUTC 许可组件打进生产包（D-020）。 -->
+                <exclusion>
+                    <groupId>com.oracle.database.spring</groupId>
+                    <artifactId>oracle-spring-boot-starter-ucp</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.oracle.database.jdbc</groupId>
+                    <artifactId>ucp</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- MyBatis Plus 启动器 -->
