@@ -11,6 +11,7 @@ import ChangesPage from './pages/ChangesPage';
 import CounselorPage from './pages/CounselorPage';
 import StudentPortalPage from './pages/StudentPortalPage';
 import PipelinePage from './pages/PipelinePage';
+import AssistantPage from './pages/AssistantPage';
 import LoginPage from './pages/LoginPage';
 import { isLoggedIn } from './api/auth';
 
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="counselor" element={<CounselorPage />} />
         <Route path="portal" element={<StudentPortalPage />} />
         <Route path="pipeline" element={<PipelinePage />} />
+        <Route path="assistant" element={<AssistantPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

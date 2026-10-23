@@ -1,5 +1,5 @@
 import { Layout } from 'antd';
-import { AppstoreOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, FormOutlined, InboxOutlined, LogoutOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, FormOutlined, InboxOutlined, LogoutOutlined, RobotOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
 import BrandMark from './BrandMark';
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/workbench', label: '数据工作台', icon: <DatabaseOutlined /> },
   { to: '/pipeline', label: '资料库流水线', icon: <InboxOutlined /> },
   { to: '/reports', label: '报表中心', icon: <FileTextOutlined /> },
+  { to: '/assistant', label: 'AI 问数', icon: <RobotOutlined /> },
   { to: '/changes', label: '学籍异动', icon: <SwapOutlined /> },
   { to: '/counselor', label: '辅导员台', icon: <UserOutlined /> },
   { to: '/portal', label: '学生自助', icon: <FormOutlined /> },
@@ -25,6 +26,7 @@ const TITLE: Record<string, string> = {
   '/workbench': '数据工作台',
   '/pipeline': '资料库流水线',
   '/reports': '报表中心',
+  '/assistant': 'AI 问数',
   '/changes': '学籍异动',
   '/counselor': '辅导员工作台',
   '/portal': '学生自助填报',

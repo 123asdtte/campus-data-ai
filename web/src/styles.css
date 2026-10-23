@@ -2626,3 +2626,134 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* ---------- AI 问数 ---------- */
+.ai-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.ai-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 620px;
+}
+
+.ai-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 360px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 4px 2px 12px;
+}
+
+.ai-message {
+  display: flex;
+}
+
+.ai-message.is-user {
+  justify-content: flex-end;
+}
+
+.ai-message.is-assistant {
+  justify-content: flex-start;
+}
+
+.ai-bubble {
+  max-width: 82%;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.ai-message.is-user .ai-bubble {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ai-bubble p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.ai-bubble small {
+  display: block;
+  margin-top: 6px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  line-height: 1.5;
+}
+
+.ai-action {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.ai-thinking {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.ai-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px dashed var(--line);
+}
+
+.ai-suggestions button {
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.ai-suggestions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ai-input {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-input .ant-input {
+  flex: 1;
+}
+
+.ai-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .ai-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-chat {
+    min-height: 560px;
+  }
+}

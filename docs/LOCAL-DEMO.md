@@ -20,6 +20,7 @@
 | 学籍异动 | 发起异动 → 待教务确认 → 状态联动 → 异动台账 | 流失率人工统计、状态不一致 |
 | 辅导员工作台 | 只显示所带班级、本班待办、导出本班名单 | 辅导员权限与数据范围 |
 | 学生自助填报 | 学生补联系方式/家长信息 → 辅导员审核 → 完整度提升 | 问卷星收集、手工抄录 |
+| AI 问数 | 本地规则问数：学院/状态/质量/异动/报表引导，范围与审计 | 数据安全、AI 顾虑 |
 | 学生信息 / 数据导入 | 原有主系统页面保留 | — |
 
 ### 演示故事线（约 5 分钟）
@@ -30,6 +31,7 @@
 4. **学籍异动**：选一名学生发起休学 → 教务确认 → 学生状态更新为休学，操作记录留痕。
 5. **辅导员工作台**：切换辅导员，只看到本班学生，导出本班名单。
 6. **学生自助**：学生补电话/家长信息 → 辅导员审核 → 信息完整度从 1/3 变 3/3。
+7. **AI 问数**：问“人工智能学院有多少学生”“全校休学和退学各有多少人”，展示本地规则、范围与问数记录；Dify 后续替换 planner。
 
 ---
 
@@ -86,11 +88,12 @@ python scripts/demo/build_demo_dataset.py \
 
 - `npm run build`：TypeScript + Vite 构建通过
 - Docker 镜像构建通过；`campus-web-demo` 健康
-- 8083 路由验收：总览 / 数据工作台 / 资料库流水线 / 报表中心 / 学籍异动 / 辅导员台 / 学生自助 / 学生信息 / 数据导入
+- 8083 路由验收：总览 / 数据工作台 / 资料库流水线 / 报表中心 / AI 问数 / 学籍异动 / 辅导员台 / 学生自助 / 学生信息 / 数据导入
 - 报表中心：模板切换、字段选择、退学名单 6 行 CSV 导出、浏览器导出记录
 - 学籍异动：发起 → 待审 → 教务确认 → 状态联动
 - 辅导员台：按辅导员切换范围、本班名单导出
 - 学生自助：填报 → 审核 → 字段更新、完整度变化
+- AI 问数：5 个建议问题全部返回本地规则答案；范围统计、数据质量、异动和报表引导正常
 - 生产构建登录页不再显示默认账号提示
 
 ---
@@ -101,7 +104,7 @@ python scripts/demo/build_demo_dataset.py \
 - 异动、学生自助、导出记录目前是**前端本地状态 / 浏览器 localStorage**，刷新或换容器会重置；正式版必须落到后端与审计表。
 - 资料库流水线是**用已生成数据模拟**；正式版需要接后端上传/解析/任务队列。
 - 页面按桌面 1920 设计；移动端尚未做专门适配。
-- 未接入 Dify；当前 AI 仍是独立的只读 POC，不在这套演示入口内。
+- AI 问数当前是**本地规则版**，不是 Dify/LLM；当前独立的只读 AI POC 不在这套演示入口内。
 - 不包含正式库迁移、正式认证切换、TLS/域名、生产监控；这些仍按 `PRODUCTION-READINESS-REPORT.md` 的 C 类事项处理。
 
 ---
@@ -119,7 +122,7 @@ python scripts/demo/build_demo_dataset.py \
 
 ## 7. 文件位置
 
-- 页面：`web/src/pages/WorkbenchPage.tsx`、`PipelinePage.tsx`、`ReportsPage.tsx`、`ChangesPage.tsx`、`CounselorPage.tsx`、`StudentPortalPage.tsx`
+- 页面：`web/src/pages/WorkbenchPage.tsx`、`PipelinePage.tsx`、`ReportsPage.tsx`、`ChangesPage.tsx`、`CounselorPage.tsx`、`StudentPortalPage.tsx`、`AssistantPage.tsx`
 - 共享类型/数据加载：`web/src/demo/`
 - 数据生成：`scripts/demo/build_demo_dataset.py`
 - 演示数据：`web/public/demo/`
