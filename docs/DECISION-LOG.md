@@ -446,7 +446,7 @@
   - 本机 `.env`（已忽略）写入真实 key、`AI_LLM_BASE_URL=https://maas-api.cn-huabei-1.xf-yun.com/v2`、`AI_LLM_MODEL=spark-x2.6`、`AI_PLANNER=llm`、`AI_LLM_TIMEOUT=20` 与宿主代理。
 - **理由**：保持“默认不联网、显式开启”的安全默认值；密钥不进入版本库；容器代理问题用配置解决，不改代码；LLM 不可用或超时仍自动回退规则 planner，业务可用性不受影响。
 - **影响与兼容性**：仓库默认行为不变（rule）；本机 POC 通过 LLM planner 解析问题。模型只收到“问题原文 + 固定意图模式”，不接收任何学生数据；返回仍经 intent/参数白名单清洗，非法输出回退规则。
-- **安全风险与权衡**：问题原文可能包含用户输入的学生姓名/学号，外部模型会看到这些文本；因此仅限虚构数据 POC，真实数据接入仍属 C 类。密钥只在本机 `.env`，不得复制到共享环境；供应商可用性与限流不受我们控制，超时/失败已 fail-open 到规则 planner。
+- **安全风险与权衡**：问题原文可能包含用户输入的学生姓名/学号，外部模型会看到这些文本；因此仅限虚构数据 POC，真实数据接入仍属 C 类。密钥只在本机 `.env`，不得复制到共享环境；密钥经环境变量传入，`docker inspect` 可见，POC 接受该风险，正式环境应改用 secrets 管理。供应商可用性与限流不受我们控制，超时/失败已 fail-open 到规则 planner。代理变量为容器级，`NO_PROXY` 已包含回环、`host.docker.internal` 与 `ai-db`，避免内部请求误经代理。
 - **涉及文件**：`docker-compose.ai-poc.yml`、`.env.example`、`docs/AI-ASSISTANT-POC.md`、`docs/DECISION-LOG.md`；本机 `.env` 不入库。
 - **验证方法（实测）**：
   - 宿主机直调 Spark：HTTP 200，意图 JSON 正确；

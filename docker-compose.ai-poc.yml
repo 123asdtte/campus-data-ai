@@ -62,8 +62,9 @@ services:
       HTTPS_PROXY: ${AI_HTTPS_PROXY:-}
       http_proxy: ${AI_HTTP_PROXY:-}
       https_proxy: ${AI_HTTPS_PROXY:-}
-      NO_PROXY: ${AI_NO_PROXY:-localhost,127.0.0.1}
-      no_proxy: ${AI_NO_PROXY:-localhost,127.0.0.1}
+      # 内部服务与回环地址不经过代理，避免内部请求被转发到宿主代理
+      NO_PROXY: ${AI_NO_PROXY:-localhost,127.0.0.1,::1,host.docker.internal,ai-db}
+      no_proxy: ${AI_NO_PROXY:-localhost,127.0.0.1,::1,host.docker.internal,ai-db}
       TZ: Asia/Shanghai
     ports:
       - "127.0.0.1:8100:8100"
