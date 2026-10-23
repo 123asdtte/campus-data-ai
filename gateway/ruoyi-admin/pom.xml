@@ -62,11 +62,8 @@
             <artifactId>ruoyi-common-mail</artifactId>
         </dependency>
 
-        <!-- mcp模块 -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-common-mcp</artifactId>
-        </dependency>
+        <!-- mcp 模块已移除：校园平台不提供 MCP 服务端，也不连接外部 MCP Server。
+             原依赖会随 spring.ai.mcp.server.enabled 在 /mcp 暴露工具端点（见 D-015）。 -->
 
         <!-- api模块 -->
         <dependency>
@@ -80,33 +77,21 @@
             <artifactId>ruoyi-system</artifactId>
         </dependency>
 
-        <!-- 调度任务模块 -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-job</artifactId>
-        </dependency>
+        <!-- 调度任务模块已移除：校园平台没有使用 quartz 定时任务。
+             如后续需要定时任务，再恢复本依赖与对应菜单/表结构。 -->
 
-        <!-- AI业务模块 -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-ai</artifactId>
-        </dependency>
+        <!-- AI 业务模块已移除：校园平台不提供 RuoYi AI 对话/知识库页面；
+             面向校园数据的只读助手在独立 ai-assistant 服务中实现（D-012）。 -->
 
         <!--  demo模块  -->
         <!-- 校园平台不使用 RuoYi demo 示例接口；移除依赖以缩小生产暴露面。
              如需再次启用，请恢复本依赖、ruoyi-modules 的 module 声明与 Knife4j 扫描分组。 -->
 
-        <!--  工作流模块  -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-workflow</artifactId>
-        </dependency>
+        <!-- 工作流模块已移除：校园平台没有审批流需求，
+             原 warm-flow 会注册设计器与流程接口（见 D-015）。 -->
 
-        <!-- Spring Boot Admin 客户端 -->
-        <dependency>
-            <groupId>de.codecentric</groupId>
-            <artifactId>spring-boot-admin-starter-client</artifactId>
-        </dependency>
+        <!-- Spring Boot Admin 客户端已移除：本机/生产均未配置 admin server，
+             去掉后不再持有对外注册能力。 -->
 
         <!-- 单元测试 -->
         <dependency>
@@ -131,21 +116,9 @@
 
 
     <profiles>
-        <!-- 仅在激活 'gen' profile 时，才引入代码生成模块 -->
-        <profile>
-            <id>gen</id>
-            <dependencies>
-                <!-- 代码生成-->
-                <dependency>
-                    <groupId>org.dromara</groupId>
-                    <artifactId>ruoyi-gen</artifactId>
-                </dependency>
-            </dependencies>
-            <activation>
-                <!-- 默认激活 -->
-                <activeByDefault>true</activeByDefault>
-            </activation>
-        </profile>
+        <!-- 代码生成模块已移除（D-015）：校园平台不对外提供代码生成/数据库表结构探查接口。
+             原 gen profile 默认激活，会让开发构建也包含 /tool/gen 端点。
+             如确需生成代码，请在独立工具分支临时恢复，不要合并进主线。 -->
 
         <!-- 生产构建：不把本地/生产环境配置文件打进 jar，由部署环境挂载经过过滤的配置 -->
         <profile>

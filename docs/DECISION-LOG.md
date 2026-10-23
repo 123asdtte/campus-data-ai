@@ -27,6 +27,7 @@
 | D-011 | 2026-10-22 | TLS 入口模板与开发验证（正式切换仍需授权） | Verified（已合并 `c6d03d3`） | `ops/tls-dev-template` | 前端入口、上线准备 |
 | D-012 | 2026-10-22 | AI 校园助手只读原型（隔离数据、固定意图、审计） | Verified（已合并 `762b433`） | `feat/ai-assistant-poc` | 阶段 7、安全边界 |
 | D-013 | 2026-10-22 | Alertmanager webhook 投递机制（地址运行时渲染） | Verified（本分支 `ops/alert-delivery`） | `ops/alert-delivery` | 告警可达性、上线准备 |
+| D-015 | 2026-10-23 | RuoYi 未使用模块裁剪（gen/job/ai/workflow/mcp/admin-client） | Verified（本分支 `chore/trim-unused-gateway-modules`） | `chore/trim-unused-gateway-modules` | 攻击面收敛、上线准备 |
 
 ---
 
@@ -421,3 +422,38 @@
   - 恢复默认：重新空渲染并用基础 compose 重建 Alertmanager，测试 sink 已移除。
 - **回退**：不设置 `ALERT_WEBHOOK_URL` 重新渲染，`docker compose --profile monitoring -f docker-compose.yml up -d --force-recreate alertmanager`。
 - **授权**：机制属 A/B 类；真实 webhook 地址、第三方接收方与值班安排需运维确认。
+
+---
+
+## D-015 RuoYi 未使用模块裁剪
+
+- **状态**：Verified（本分支 `chore/trim-unused-gateway-modules`，待合并）
+- **Decision owner**：AI
+- **问题与背景**：上线准备报告把 `job/ai/workflow/mail/social/mcp/admin-client` 列为待评估项。网关是完整 RuoYi-Vue-Plus 发行版，未使用的业务模块会把控制器、调度器、工作流设计器和 MCP 端点一并打进包；`gen` profile 默认激活，开发构建也包含代码生成与数据库表结构探查接口。
+- **证据**：
+  - `ruoyi-admin/pom.xml` 直接依赖 `ruoyi-job`、`ruoyi-ai`、`ruoyi-workflow`、`ruoyi-common-mcp`、`spring-boot-admin-starter-client`，并通过默认激活的 `gen` profile 引入 `ruoyi-gen`；
+  - `application.yml` 中 `spring.ai.mcp.server.enabled: true`，端点 `/mcp`；另有 warm-flow UI/流程接口与 `springdoc` 的 gen/workflow 分组；
+  - 全仓检索确认 `ruoyi-admin`、`ruoyi-system`、`ruoyi-common-*` 均未 import `org.dromara.job/ai/workflow/gen`；`ruoyi-api` 只有工作流 DTO/接口定义，无实现类；
+  - `ruoyi-common-social`、`ruoyi-common-mail` 仍被 `AuthController`/`CaptchaController`/`SocialAuthStrategy` 引用，不能直接删除。
+- **可选方案**：
+  1. 全部保留——暴露面最大，`/mcp`、`/tool/gen/**`、`/workflow/**`、`/monitor/job/**`、`/ai/**` 均存在；
+  2. 仅靠鉴权拦截——端点仍注册，已登录管理员或未来权限配置失误即可触达；
+  3. 移出未使用的模块与配置，保留登录/验证码仍依赖的 social/mail（采用）。
+- **决定**：方案 3。
+  - 移除 `ruoyi-job`、`ruoyi-ai`、`ruoyi-workflow`、`ruoyi-common-mcp`、`spring-boot-admin-starter-client` 依赖；
+  - 移除默认激活的 `gen` profile 与 `ruoyi-modules` 中 gen/job/workflow/ai 的 module 声明；
+  - 清理 `application.yml`：MCP 服务端/客户端、warm-flow、liteflow、springdoc 的 gen/workflow 分组、security/xss 中对应排除路径。
+- **理由**：校园平台只使用登录、系统管理与内部代理；删除无引用模块不会改变业务能力，但能实际减少可被枚举的端点与后台线程，并缩短构建/启动路径。社媒与邮件仍被现有登录/验证码代码引用，属于行为变更，不在本次裁剪范围。
+- **影响与兼容性**：
+  - `/mcp`、`/tool/gen/**`、`/workflow/**`、`/monitor/job/**`、`/ai/**` 不再注册，返回业务码 `404`（HTTP 200，遵循 RuoYi 统一响应）；
+  - 登录、`/system/user/list`、`/internal/proxy/**` 行为不变；
+  - 不涉及数据库迁移；quartz/warm-flow 历史表即使存在也不再被访问，保留不删（避免不可逆操作）。
+- **安全风险与权衡**：删除模块降低了攻击面，但也移除了后续可能需要的能力；恢复成本是重新加依赖与配置（可逆）。未处理的 `mail/social` 仍需在业务确认“不需要邮件验证码/第三方登录”后单独裁剪。`springdoc` 文档端点仍开启，属后续加固项。
+- **涉及文件**：`gateway/ruoyi-admin/pom.xml`、`gateway/ruoyi-modules/pom.xml`、`gateway/ruoyi-admin/src/main/resources/application.yml`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - `mvn -B -DskipTests -pl ruoyi-admin -am package`（JDK 21）→ **BUILD SUCCESS**；
+  - 重建镜像并重建 `campus-gateway` → `healthy`，启动日志无 Bean 创建失败（仅探测不存在端点产生 404 日志）；
+  - 登录 HTTP 200；带 token 访问 `/mcp`、`/tool/gen/list`、`/workflow/definition/list`、`/monitor/job/list`、`/ai/chat/list` 均返回 `{"code":404,"msg":"请求地址不存在"}`；`/system/user/list` 返回 `code=200`；
+  - 冒烟（`http://127.0.0.1:8082/gw`）：**FAIL=0**（登录、无 token 拒绝、学生列表、导入预览/校验/提交）。
+- **回退**：revert 本分支提交并重新构建镜像；不涉及数据迁移，回退后端点与后台线程恢复。
+- **授权**：A/B 类（攻击面收敛，不改变校园业务功能）；如后续要恢复定时任务/工作流，需重新评审并补回配置与菜单。
