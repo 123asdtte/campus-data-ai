@@ -83,9 +83,17 @@ public interface SystemConstants {
     Long DEFAULT_DEPT_ID = 1761000000000000100L;
 
     /**
-     * 排除敏感属性字段
+     * 排除敏感属性字段（请求参数日志、操作日志与脱敏输出共用）。
+     *
+     * <p>匹配规则为 JSON 属性名精确匹配（区分大小写），调用方应使用常见的小驼峰写法。
+     * 在原有口令字段基础上补充令牌、凭据与密钥类字段，避免登录/刷新令牌、
+     * 内部签名凭据或第三方密钥被写入运行日志和操作日志。</p>
      */
-    String[] EXCLUDE_PROPERTIES = {"password", "oldPassword", "newPassword", "confirmPassword"};
+    String[] EXCLUDE_PROPERTIES = {
+        "password", "oldPassword", "newPassword", "confirmPassword",
+        "token", "accessToken", "refreshToken", "authorization",
+        "secret", "clientSecret", "apiKey", "apiSecret"
+    };
 
 
 }
