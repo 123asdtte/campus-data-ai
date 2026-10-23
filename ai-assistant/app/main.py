@@ -30,20 +30,37 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
 
+def _deny_unauthenticated(username: str | None, reason: str) -> None:
+    """认证失败也要留痕（含尝试的用户名），审计失败则 fail-closed。"""
+    try:
+        write_audit(
+            requester=(username or "unknown")[:64],
+            role="unknown",
+            college=None,
+            question="（认证失败）",
+            intent="auth",
+            status="denied",
+            detail={"reason": reason},
+        )
+    except AuditError as exc:
+        raise HTTPException(status_code=503, detail="审计不可用，已拒绝请求") from exc
+    raise HTTPException(status_code=401, detail=reason)
+
+
 def authenticate(
     x_ai_user: str | None = Header(default=None, alias="X-AI-User"),
     x_ai_token: str | None = Header(default=None, alias="X-AI-Token"),
 ) -> dict[str, Any]:
     if not SETTINGS.poc_token or not x_ai_token:
-        raise HTTPException(status_code=401, detail="缺少访问口令")
+        _deny_unauthenticated(x_ai_user, "缺少访问口令")
     if not hmac.compare_digest(x_ai_token, SETTINGS.poc_token):
-        raise HTTPException(status_code=401, detail="访问口令无效")
+        _deny_unauthenticated(x_ai_user, "访问口令无效")
     if not x_ai_user:
-        raise HTTPException(status_code=401, detail="缺少用户标识")
+        _deny_unauthenticated(None, "缺少用户标识")
     with read_cursor() as cur:
         user = load_user(cur, x_ai_user)
     if user is None:
-        raise HTTPException(status_code=401, detail="未知用户")
+        _deny_unauthenticated(x_ai_user, "未知用户")
     return user
 
 
@@ -125,8 +142,11 @@ def query(
 ) -> dict[str, Any]:
     question = body.question.strip()
     plan = planner.plan(question)
-    # 明确请求“帮助”记为 ok；无法识别的问题记为 unknown
-    status = "unknown" if plan.intent == "help" and plan.note else "ok"
+    # help 且带 note = 无法识别；其余（含主动求助）记为 ok
+    if plan.intent == "help":
+        status = "unknown" if plan.note else "ok"
+    else:
+        status = "ok"
     scope: str | None = None
 
     try:
@@ -161,8 +181,9 @@ def query(
                 status="error",
                 detail={"error": type(exc).__name__},
             )
-        except AuditError:
-            pass
+        except AuditError as audit_exc:
+            # 错误请求同样必须留痕；审计不可用时 fail-closed
+            raise HTTPException(status_code=503, detail="审计不可用，已拒绝返回数据") from audit_exc
         raise HTTPException(status_code=500, detail="查询执行失败") from exc
 
     try:

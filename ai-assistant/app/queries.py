@@ -28,6 +28,11 @@ def _scope_sql(scope: str | None, column: str = "college_code") -> tuple[str, li
     return f" AND {column} = %s", [scope]
 
 
+def _escape_like(value: str) -> str:
+    """转义 LIKE/ILIKE 通配符，避免用户输入 % / _ 扩大匹配范围。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def count_students(cur: psycopg.Cursor, scope: str | None, status: str | None) -> dict[str, Any]:
     where, params = _scope_sql(scope)
     sql = "SELECT count(*) AS total FROM ai.students WHERE 1=1" + where
@@ -55,12 +60,13 @@ def search_students(
 ) -> dict[str, Any]:
     limit = max(1, min(limit, MAX_SEARCH_ROWS))
     where, params = _scope_sql(scope)
+    pattern = "%" + _escape_like(keyword) + "%"
     cur.execute(
         "SELECT student_no, name, college_code, major, class_name, status "
-        "FROM ai.students WHERE (student_no ILIKE %s OR name ILIKE %s)"
+        "FROM ai.students WHERE (student_no ILIKE %s ESCAPE '\\' OR name ILIKE %s ESCAPE '\\')"
         + where
         + " ORDER BY student_no LIMIT %s",
-        ["%" + keyword + "%", "%" + keyword + "%"] + params + [limit],
+        [pattern, pattern] + params + [limit],
     )
     rows = [
         {
@@ -115,12 +121,14 @@ def import_summary(cur: psycopg.Cursor, scope: str | None, limit: int = 5) -> di
         for row in cur.fetchall()
     ]
 
+    # 异常统计也必须按学院收口：显式指定带表别名的列，避免字符串替换失效
+    issue_where, issue_params = _scope_sql(scope, "b.college_code")
     cur.execute(
         "SELECT i.issue_code, sum(i.count) AS total FROM ai.import_issues i "
         "JOIN ai.import_batches b ON b.id = i.batch_id WHERE 1=1"
-        + where.replace("college_code", "b.college_code")
+        + issue_where
         + " GROUP BY i.issue_code ORDER BY total DESC",
-        params,
+        issue_params,
     )
     issues = [{"issue_code": row["issue_code"], "count": int(row["total"])} for row in cur.fetchall()]
     return {"batches": batches, "issues": issues}

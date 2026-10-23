@@ -27,13 +27,10 @@ class Settings:
 
     @staticmethod
     def from_env() -> "Settings":
-        return Settings(
-            ro_dsn=_env("AI_RO_DSN", "postgresql://ai_ro:ai_ro_pw@ai-db:5432/campus_ai_poc"),
-            audit_dsn=_env(
-                "AI_AUDIT_DSN",
-                "postgresql://ai_audit_writer:ai_audit_pw@ai-db:5432/campus_ai_poc",
-            ),
-            poc_token=_env("AI_POC_TOKEN", ""),
+        settings = Settings(
+            ro_dsn=_env("AI_RO_DSN"),
+            audit_dsn=_env("AI_AUDIT_DSN"),
+            poc_token=_env("AI_POC_TOKEN"),
             planner=_env("AI_PLANNER", "rule").lower(),
             llm_base_url=_env("AI_LLM_BASE_URL", "").rstrip("/"),
             llm_api_key=_env("AI_LLM_API_KEY", ""),
@@ -41,6 +38,19 @@ class Settings:
             max_rows=max(1, int(_env("AI_MAX_ROWS", "20"))),
             llm_timeout=float(_env("AI_LLM_TIMEOUT", "10")),
         )
+        # fail-fast：不在代码里保留任何默认口令，缺失即启动失败
+        missing = [
+            name
+            for name, value in (
+                ("AI_RO_DSN", settings.ro_dsn),
+                ("AI_AUDIT_DSN", settings.audit_dsn),
+                ("AI_POC_TOKEN", settings.poc_token),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError("缺少必需环境变量：" + "、".join(missing))
+        return settings
 
 
 SETTINGS = Settings.from_env()

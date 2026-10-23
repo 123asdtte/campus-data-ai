@@ -125,9 +125,33 @@ def test_data_quality() -> None:
     result = query("缺手机号和邮箱的情况", user="ai_cs")
     assert result["status"] == 200
     data = result["body"]["data"]
-    assert data["total"] == 40
-    assert data["missing_phone"] == 8   # i % 5 == 0 且属于 CS 的 40 人中
-    assert data["missing_email"] >= 1
+    expected = admin_rows(
+        "SELECT count(*) AS total, "
+        "count(*) FILTER (WHERE phone IS NULL OR btrim(phone) = '') AS missing_phone, "
+        "count(*) FILTER (WHERE email IS NULL OR btrim(email) = '') AS missing_email "
+        "FROM ai.students WHERE college_code = 'CS'"
+    )[0]
+    assert data["total"] == expected["total"] == 40
+    assert data["missing_phone"] == expected["missing_phone"]
+    assert data["missing_email"] == expected["missing_email"]
+
+
+def test_like_wildcards_are_escaped() -> None:
+    # 若未转义，`_` 会匹配 AIC20260001..00009；转义后应无命中
+    result = query("查一下学号 AIC2026000_", user="ai_cs")
+    assert result["status"] == 200
+    assert result["body"]["data"]["rows"] == []
+
+
+def test_auth_failures_are_audited() -> None:
+    client.post(
+        "/query", json={"question": "有多少学生"}, headers=headers("ai_admin", "wrong-token")
+    )
+    row = admin_rows(
+        "SELECT requester, intent, status FROM ai.audit "
+        "WHERE intent = 'auth' AND status = 'denied' ORDER BY id DESC LIMIT 1"
+    )[0]
+    assert row["requester"] == "ai_admin"
 
 
 def test_audit_written_for_every_request() -> None:

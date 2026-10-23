@@ -11,6 +11,15 @@
 
 \set ON_ERROR_STOP on
 
+-- 硬保护：禁止对非 POC 库执行（会 DROP SCHEMA）
+DO $$
+BEGIN
+    IF current_database() <> 'campus_ai_poc' THEN
+        RAISE EXCEPTION '本脚本仅允许在 campus_ai_poc 执行，当前数据库：%', current_database();
+    END IF;
+END
+$$;
+
 DROP SCHEMA IF EXISTS ai CASCADE;
 DROP ROLE IF EXISTS ai_ro;
 DROP ROLE IF EXISTS ai_audit_writer;

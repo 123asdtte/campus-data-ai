@@ -46,6 +46,8 @@ COLLEGE_ALIASES = {
 }
 
 STOPWORDS = {"学生", "一下", "所有", "全部", "多少", "人数", "情况", "数据"}
+# LLM 返回的 keyword 与规则 planner 使用同一字符集，避免通配符等意外输入
+KEYWORD_RE = re.compile(r"^[A-Za-z0-9\u4e00-\u9fa5_-]{1,32}$")
 
 
 @dataclass
@@ -167,7 +169,7 @@ def _sanitize(raw: dict[str, Any]) -> Plan | None:
             continue
         if key == "keyword":
             value = str(value).strip()[:32]
-            if not value:
+            if not KEYWORD_RE.match(value):
                 continue
         clean[key] = value
     return Plan(intent, clean, source="llm")
