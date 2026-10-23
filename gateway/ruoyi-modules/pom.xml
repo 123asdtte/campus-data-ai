@@ -17,11 +17,10 @@
 
     <modules>
         <!-- demo 模块已从校园平台移除（含示例密钥与 /demo/** 演示接口） -->
-        <module>ruoyi-gen</module>
-        <module>ruoyi-job</module>
+        <!-- gen/job/workflow/ai 已从校园平台移除（D-015）：
+             代码生成、quartz 调度、warm-flow 工作流与 RuoYi AI 均不在业务范围内，
+             保留模块声明只会延长构建并让后续误加依赖更容易发生。 -->
         <module>ruoyi-system</module>
-        <module>ruoyi-workflow</module>
-        <module>ruoyi-ai</module>
     </modules>
 
 </project>
