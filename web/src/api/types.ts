@@ -37,6 +37,21 @@ export interface StudentDetail extends Student {
   change_total: number;
 }
 
+/** 字段级编辑审计（对应后端 campus.operation_logs）。 */
+export interface StudentAuditLog {
+  id: number;
+  actor_user_id: string | null;
+  actor_db_role: string;
+  action: 'insert' | 'update' | 'delete';
+  object_type: string;
+  object_id: string | null;
+  changed_fields: string[] | null;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  result: string;
+  created_at: string;
+}
+
 export interface Paged<T> {
   items: T[];
   total: number;
@@ -87,6 +102,85 @@ export interface StudentQuery {
   include_inactive?: boolean;
   page?: number;
   page_size?: number;
+}
+
+/** 可导出字段选项（与后端 EXPORT_FIELD_LABELS 白名单保持一致）。 */
+export const EXPORT_FIELD_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'student_no', label: '学号' },
+  { value: 'student_name', label: '姓名' },
+  { value: 'college_name', label: '学院' },
+  { value: 'major_name', label: '专业' },
+  { value: 'class_name', label: '班级' },
+  { value: 'enrollment_year', label: '入学年份' },
+  { value: 'student_status', label: '在校状态' },
+];
+
+/** 全局操作审计条目（后端 /audit-logs，学生类关联出学号与姓名）。 */
+export interface AuditLogEntry {
+  id: number;
+  created_at: string;
+  actor_user_id: string | null;
+  actor_db_role: string;
+  action: 'insert' | 'update' | 'delete';
+  object_type: string;
+  object_id: string | null;
+  student_no: string | null;
+  student_name: string | null;
+  changed_fields: string[] | null;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  result: string;
+}
+
+export interface AuditQuery {
+  keyword?: string;
+  actor?: string;
+  action?: string;
+  from_date?: string;
+  until_date?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface PagedAudit {
+  items: AuditLogEntry[];
+  total: number;
+}
+
+/** 按操作人维度的增改删统计（后端 /audit-logs/summary）。 */
+export interface AuditSummaryItem {
+  actor_user_id: string | null;
+  actor_db_role: string;
+  display_name: string;
+  total: number;
+  inserts: number;
+  updates: number;
+  deletes: number;
+}
+
+export interface AuditSummary {
+  items: AuditSummaryItem[];
+}
+
+/** 数据质量看板（后端 /meta/data-quality）。 */
+export interface DataQualityCollege {
+  college_name: string;
+  total: number;
+  missing_major: number;
+  missing_class: number;
+  missing_year: number;
+  complete: number;
+}
+
+export interface DataQuality {
+  total: number;
+  missing_college: number;
+  missing_major: number;
+  missing_class: number;
+  missing_year: number;
+  complete: number;
+  duplicate_names: number;
+  by_college: DataQualityCollege[];
 }
 
 export interface ImportIssue {

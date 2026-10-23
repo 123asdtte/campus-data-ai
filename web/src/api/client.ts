@@ -27,6 +27,8 @@ interface RequestOptions {
   body?: unknown;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** 附加请求头（演示态用于携带 X-Actor 操作人；生产态由网关注入，前端不设置）。 */
+  headers?: Record<string, string>;
 }
 
 export function buildQuery(params: Record<string, unknown>): string {
@@ -58,6 +60,7 @@ export async function requestGateway<T>(
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       clientid: GW_CLIENT_ID,
+      ...(options.headers ?? {}),
     };
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;

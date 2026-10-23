@@ -5,6 +5,8 @@ import AppLayout from './components/AppLayout';
 import HomePage from './pages/HomePage';
 import StudentsPage from './pages/StudentsPage';
 import ImportPage from './pages/ImportPage';
+import AuditPage from './pages/AuditPage';
+import QualityPage from './pages/QualityPage';
 import LoginPage from './pages/LoginPage';
 import { isLoggedIn } from './api/auth';
 
@@ -51,6 +53,8 @@ export default function App() {
         <Route index element={<HomePage />} />
         <Route path="students" element={<StudentsPage />} />
         <Route path="import" element={<ImportPage />} />
+        <Route path="audit" element={<AuditPage />} />
+        <Route path="quality" element={<QualityPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
