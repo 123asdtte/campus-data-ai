@@ -95,6 +95,33 @@ jobs:
           INTERNAL_AUTH_ENABLED: 'true'
         run: python -m pytest tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_privileges.py tests/test_import_scope.py tests/test_student_write.py tests/test_pr_e_hardening.py tests/test_import_audit_summary.py
 
+  compose-config:
+    name: Compose 组合校验
+    runs-on: ubuntu-latest
+    env:
+      # config 只做插值与语法校验，使用一次性占位值即可
+      POSTGRES_PASSWORD: ci-placeholder
+      APP_DB_PASSWORD: ci-placeholder
+      RO_DB_PASSWORD: ci-placeholder
+      GATEWAY_DB_PASSWORD: ci-placeholder
+      GATEWAY_REDIS_PASSWORD: ci-placeholder
+      INTERNAL_HMAC_SECRET: ci-placeholder-hmac-secret-0123456789
+      JWT_SECRET_KEY: ci-placeholder-jwt-secret-0123456789abcdef
+      AI_DB_PASSWORD: ci-placeholder
+      AI_RO_PASSWORD: ci-placeholder
+      AI_AUDIT_PASSWORD: ci-placeholder
+      AI_POC_TOKEN: ci-placeholder-token
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验主栈与各覆盖文件
+        run: |
+          set -e
+          docker compose config -q
+          docker compose -f docker-compose.web.yml config -q
+          docker compose -f docker-compose.web.yml -f docker-compose.tls.yml config -q
+          docker compose -f docker-compose.ai-poc.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+
   ai-assistant-tests:
     name: AI 助手原型测试
     runs-on: ubuntu-latest
