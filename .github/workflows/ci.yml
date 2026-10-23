@@ -117,6 +117,8 @@ jobs:
       AI_RO_PASSWORD: ai_ro_pw
       AI_AUDIT_PASSWORD: ai_audit_pw
       AI_POC_TOKEN: ci-poc-token
+      # services.postgres 映射到 5432（本地 compose 默认 55435）
+      AI_DB_PORT: '5432'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
