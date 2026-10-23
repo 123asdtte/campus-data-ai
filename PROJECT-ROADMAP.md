@@ -1,6 +1,6 @@
 # PROJECT-ROADMAP — 校园数据 AI 项目总路线图
 
-- **版本**：v2.2（2026-10-23；主分支与 PR 数量以 `git log` / `gh pr list --state merged` 为准，本次核对为 `fea1054`；决策见 D-001~D-020）
+- **版本**：v2.3（2026-10-23；主分支与 PR 数量以 `git log` / `gh pr list --state merged` 为准；决策见 D-001~D-020）
 - **地位**：本项目唯一总路线图。安全迁移细节见 `docs/SECURITY-MIGRATION-EXECUTION-PLAN.md`（专项细化，阶段定义以本文为准）。
 - **审批状态**：开放 PR 为 0；正式库迁移、正式开启认证、正式流量切换**仍未批准、未执行**。
 - **本轮边界**：合并后只读验收 + 开发/隔离环境准备；未改正式库、未开启认证、未切换流量。
@@ -24,11 +24,11 @@
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 主分支 | 以 `git log` 为准（本次核对 `fea1054`）；PR 数量以 `gh pr list --state merged` 为准；开关 `INTERNAL_AUTH_ENABLED=false` | `git log` / 容器 env |
+| 主分支 | 以 `git log` 为准；PR 数量以 `gh pr list --state merged` 为准；开关 `INTERNAL_AUTH_ENABLED=false` | `git log` / 容器 env |
 | 规划分支 | 全部堆叠分支已合并，保留未删除 | `gh pr list` |
 | 开放 PR | **0** | `gh pr list --state open` |
 | 合并方式 | 逐个 merge commit；#33 为单提交，使用 squash；#39 为同事分支 merge commit | GitHub |
-| 未提交改动 | 无；本地 `main` 与 `origin/main` 一致（本次核对 `fea1054`） | `git status` |
+| 未提交改动 | 无；本地 `main` 与 `origin/main` 一致（以 `git status` 为准） | `git status` |
 | 认证基础设施 | 已合入并验证（`internal_auth.py`、11 个 `X-Internal-*` 头、14 段 canonical、`sql/004`）；**正式库是否执行 004：未核验** | 代码 + 测试 |
 | 业务路由 | 关闭态 11 业务路由 + 2 健康端点（`PUT /students` 不注册）；开启态 12 个 | `routes/*.py` |
 | 正式库角色 | **未核验**（无正式库访问）；开发/测试库含 `campus_app`/`campus_ro` | 未验证 |

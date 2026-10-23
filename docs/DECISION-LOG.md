@@ -33,7 +33,7 @@
 | D-017 | 2026-10-23 | CI 校验生产 jar 不含 dev/prod 配置（强制 clean） | Verified（已合并 `2396ce6`） | `hardening/gateway-api-docs` | 构建卫生、发布流程 |
 | D-018 | 2026-10-23 | 移除 application.yml 中硬编码的接口加密密钥与 MQTT 默认口令 | Verified（已合并 `2396ce6`） | `hardening/gateway-api-docs` | 密钥卫生、上线准备 |
 | D-019 | 2026-10-23 | AI 助手接入 OpenAI 兼容 LLM（Spark-x2.6，密钥仅本机） | Verified（已合并 `cba66ef`） | `feat/ai-llm-provider` | 阶段 7、AI 原型 |
-| D-020 | 2026-10-23 | 移除未使用的 MySQL/Oracle JDBC 驱动 | Verified（本分支 `chore/drop-mysql-driver`） | `chore/drop-mysql-driver` | 依赖许可、攻击面 |
+| D-020 | 2026-10-23 | 移除未使用的 MySQL/Oracle JDBC 驱动 | Verified（已合并 `d5b8332`） | `chore/drop-mysql-driver` | 依赖许可、攻击面 |
 
 ---
 
@@ -622,7 +622,7 @@
 
 ## D-020 移除未使用的 MySQL/Oracle JDBC 驱动
 
-- **状态**：Verified（本分支 `chore/drop-mysql-driver`，待合并）
+- **状态**：Verified（已合并 `d5b8332`）
 - **Decision owner**：AI
 - **问题与背景**：依赖许可审查把 Oracle FUTC（`ojdbc11`/`ucp`）与 MySQL Connector（GPLv2 + FOSS 例外）列为需法务确认项。校园平台实际只连接 PostgreSQL，这些驱动不参与运行，却会被打进生产 jar，既增加体积也扩大许可与攻击面。
 - **证据**：
