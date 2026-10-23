@@ -13,6 +13,7 @@ import pytest
 
 # 默认指向 docker-compose.ai-poc.yml 暴露的 127.0.0.1:55435；
 # CI 的 services.postgres 使用 5432，通过 AI_DB_PORT 覆盖。
+# 下面的默认口令仅用于本地/CI 的一次性测试库，禁止用于任何共享环境。
 _admin_pw = os.environ.get("AI_DB_PASSWORD", "ai_dba_pw")
 _ro_pw = os.environ.get("AI_RO_PASSWORD", "ai_ro_pw")
 _audit_pw = os.environ.get("AI_AUDIT_PASSWORD", "ai_audit_pw")

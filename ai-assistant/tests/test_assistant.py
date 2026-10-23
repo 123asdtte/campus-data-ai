@@ -120,6 +120,11 @@ def test_import_summary_scoped() -> None:
     )
     assert [b["batch_code"] for b in batches] == [r["batch_code"] for r in expected]
 
+    # admin（scope=None）走无过滤分支，params 为空列表也必须可执行
+    admin_view = query("最近的导入情况怎么样", user="ai_admin")
+    assert admin_view["status"] == 200
+    assert len(admin_view["body"]["data"]["batches"]) == 5
+
 
 def test_data_quality() -> None:
     result = query("缺手机号和邮箱的情况", user="ai_cs")
@@ -175,6 +180,13 @@ def test_read_role_cannot_write() -> None:
         with conn.cursor() as cur:
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 cur.execute("DELETE FROM ai.students")
+        conn.rollback()
+
+    # 审计账号只能写审计，读不到业务表
+    with psycopg.connect(os.environ["AI_AUDIT_DSN"]) as conn:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                cur.execute("SELECT * FROM ai.students")
         conn.rollback()
 
 
