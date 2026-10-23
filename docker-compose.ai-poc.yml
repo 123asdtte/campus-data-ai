@@ -53,7 +53,17 @@ services:
       AI_LLM_BASE_URL: ${AI_LLM_BASE_URL:-}
       AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
       AI_LLM_MODEL: ${AI_LLM_MODEL:-gpt-4o-mini}
+      AI_LLM_TIMEOUT: ${AI_LLM_TIMEOUT:-10}
       AI_MAX_ROWS: ${AI_MAX_ROWS:-20}
+      # 容器访问外部 LLM 时使用的代理（仅本机开发需要）。
+      # 必须同时覆盖大小写：Docker Desktop 会把宿主 127.0.0.1 代理注入容器，
+      # 而容器内的 127.0.0.1 并没有代理，会导致连接被拒。
+      HTTP_PROXY: ${AI_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AI_HTTPS_PROXY:-}
+      http_proxy: ${AI_HTTP_PROXY:-}
+      https_proxy: ${AI_HTTPS_PROXY:-}
+      NO_PROXY: ${AI_NO_PROXY:-localhost,127.0.0.1}
+      no_proxy: ${AI_NO_PROXY:-localhost,127.0.0.1}
       TZ: Asia/Shanghai
     ports:
       - "127.0.0.1:8100:8100"
