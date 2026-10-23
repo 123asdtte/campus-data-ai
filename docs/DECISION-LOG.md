@@ -30,6 +30,7 @@
 | D-015 | 2026-10-23 | RuoYi 未使用模块裁剪（gen/job/ai/workflow/mcp/admin-client） | Verified（本分支 `chore/trim-unused-gateway-modules`） | `chore/trim-unused-gateway-modules` | 攻击面收敛、上线准备 |
 | D-016 | 2026-10-23 | 关闭网关 OpenAPI 文档与免鉴权白名单 | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 接口枚举、上线准备 |
 | D-017 | 2026-10-23 | CI 校验生产 jar 不含 dev/prod 配置（强制 clean） | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 构建卫生、发布流程 |
+| D-018 | 2026-10-23 | 移除 application.yml 中硬编码的接口加密密钥与 MQTT 默认口令 | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 密钥卫生、上线准备 |
 
 ---
 
@@ -516,3 +517,34 @@
   - CI 步骤逻辑与上述命令一致（需在推送后由 CI 实际执行确认）。
 - **回退**：删除 CI 步骤即可；不影响构建产物本身。
 - **授权**：A/B 类（测试基线与发布流程）。
+
+---
+
+## D-018 移除 application.yml 中硬编码的接口加密密钥与 MQTT 默认口令
+
+- **状态**：Verified（本分支 `hardening/gateway-api-docs`，待合并）
+- **Decision owner**：AI
+- **问题与背景**：`application.yml` 的 `api-decrypt.enabled` 为 `true`，并直接写入了完整的 RSA 公私钥；MQTT 客户端也带有 `username: ruoyi / password: 123456`。虽然开发与生产 compose 的启动命令都把 `--api-decrypt.enabled` 覆盖为 `false`，但仓库内的密钥材料与默认口令仍是潜在泄露源：任何直接运行 prod jar 而不带该参数的方式都会启用加密并使用公开密钥；MQTT 一旦启用也会带着默认口令连接。
+- **证据**：
+  - `application.yml` 原第 145-160 行包含 `enabled: true` 与两段 `MIGf... / MIIC...` 密钥；
+  - `docker-compose.yml` 的 `command` 显式传入 `--api-decrypt.enabled=false`，因此当前运行态未启用；
+  - `application-prod.yml` 未覆盖 `api-decrypt`，依赖上述 command；
+  - MQTT `enabled: false`，但默认口令仍可被复制使用。
+- **可选方案**：
+  1. 保留现状——依赖启动参数兜底，仓库仍保存私钥，不可接受；
+  2. 只删除密钥、保留 `enabled: true`——一旦忘记覆盖参数就会在启动/登录时因空密钥失败或产生不可预期行为；
+  3. 默认 `enabled: false`，删除密钥材料与 MQTT 默认口令，启用时由部署环境注入（采用）。
+- **决定**：方案 3。
+  - `api-decrypt.enabled: false`，`publicKey`/`privateKey` 留空并注明由密钥管理注入；
+  - MQTT `username`/`password` 留空，保留 `enabled: false`；
+  - 不改变 compose 启动参数，运行态行为与现在一致。
+- **理由**：消除仓库中的私钥与默认口令，同时保持当前“不启用接口加密”的实际行为；需要加密时可通过环境变量或挂载配置显式开启，符合“默认安全、显式开启”。
+- **影响与兼容性**：运行态不变（当前已由 command 关闭）；登录、学生接口与内部代理不受影响。若未来启用 `api-decrypt`，前端与网关必须同步配置密钥，属于新的接口契约变更，需另行评审。
+- **安全风险与权衡**：历史提交中仍可检索到旧密钥，若曾用于任何环境，应视为已泄露并轮换；本次仅阻止继续使用。仓库不再保存任何接口加密密钥。
+- **涉及文件**：`gateway/ruoyi-admin/src/main/resources/application.yml`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - `mvn -B clean package -DskipTests -pl ruoyi-admin -am` → **BUILD SUCCESS**；
+  - 从 jar 解出 `BOOT-INF/classes/application.yml` 检索 `MIGfMA0|MIICdwIB|password: 123456` → **无匹配**；
+  - 重建镜像与容器 → `healthy`；登录 HTTP 200；冒烟（`/gw`）**FAIL=0**。
+- **回退**：如需临时恢复接口加密，通过环境变量/挂载配置提供密钥并显式设 `enabled: true`；不建议把密钥重新写回仓库。代码回退可直接 revert 本提交。
+- **授权**：B 类（密钥卫生与安全默认值）。
