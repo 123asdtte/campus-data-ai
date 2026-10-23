@@ -1,8 +1,8 @@
 # PROJECT-ROADMAP — 校园数据 AI 项目总路线图
 
-- **版本**：v1.9（2026-10-22 第七次更新：main 至 `762b433`；AI 只读原型已合并，20 个 PR 全部落地）
+- **版本**：v2.0（2026-10-23 第八次更新：main 至 `65c7fda`；23 个 PR 全部落地，含告警投递 #47 与 CI 组合校验 #46）
 - **地位**：本项目唯一总路线图。安全迁移细节见 `docs/SECURITY-MIGRATION-EXECUTION-PLAN.md`（专项细化，阶段定义以本文为准）。
-- **审批状态**：20 个 PR 已合并；当前仅剩文档状态刷新 PR。正式库迁移、正式开启认证、正式流量切换**仍未批准、未执行**。
+- **审批状态**：23 个 PR 已合并，开放 PR 为 0；正式库迁移、正式开启认证、正式流量切换**仍未批准、未执行**。
 - **本轮边界**：合并后只读验收 + 开发/隔离环境准备；未改正式库、未开启认证、未切换流量。
 
 ---
@@ -20,15 +20,15 @@
 
 ---
 
-## 1. 项目当前状态（事实基线，2026-10-22 合并后核对）
+## 1. 项目当前状态（事实基线，2026-10-23 合并后核对）
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 主分支 | `762b433`（20 个 PR 已合并）；开关 `INTERNAL_AUTH_ENABLED=false` | `git log` / 容器 env |
+| 主分支 | `65c7fda`（23 个 PR 已合并）；开关 `INTERNAL_AUTH_ENABLED=false` | `git log` / 容器 env |
 | 规划分支 | 全部堆叠分支已合并，保留未删除 | `gh pr list` |
-| 开放 PR | **1**（文档状态刷新） | `gh pr list --state open` |
+| 开放 PR | **0** | `gh pr list --state open` |
 | 合并方式 | 逐个 merge commit；#33 为单提交，使用 squash；#39 为同事分支 merge commit | GitHub |
-| 未提交改动 | 当前分支 `docs/post-merge-status`（仅文档） | `git status` |
+| 未提交改动 | 无；本地 `main` 与 `origin/main` 一致（`65c7fda`） | `git status` |
 | 认证基础设施 | 已合入并验证（`internal_auth.py`、11 个 `X-Internal-*` 头、14 段 canonical、`sql/004`）；**正式库是否执行 004：未核验** | 代码 + 测试 |
 | 业务路由 | 关闭态 11 业务路由 + 2 健康端点（`PUT /students` 不注册）；开启态 12 个 | `routes/*.py` |
 | 正式库角色 | **未核验**（无正式库访问）；开发/测试库含 `campus_app`/`campus_ro` | 未验证 |
