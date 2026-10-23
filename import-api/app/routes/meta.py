@@ -21,3 +21,10 @@ def get_filters(current: Optional[Who] = Depends(identity)) -> Dict[str, Any]:
 def get_overview(current: Optional[Who] = Depends(identity)) -> Dict[str, Any]:
     require_perm(current, "student:list")
     return queries.get_overview(colleges=scope_colleges(current))
+
+
+@router.get("/meta/data-quality")
+def get_data_quality(current: Optional[Who] = Depends(identity)) -> Dict[str, Any]:
+    """数据质量看板（命中教务#5/#6/#9 数据核对痛点）。"""
+    require_perm(current, "student:list")
+    return queries.get_data_quality(colleges=scope_colleges(current))

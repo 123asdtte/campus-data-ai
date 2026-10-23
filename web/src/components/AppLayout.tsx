@@ -1,5 +1,12 @@
 import { Layout } from 'antd';
-import { AppstoreOutlined, CloudUploadOutlined, LogoutOutlined, TeamOutlined } from '@ant-design/icons';
+import {
+  AppstoreOutlined,
+  CloudUploadOutlined,
+  DatabaseOutlined,
+  LogoutOutlined,
+  SafetyCertificateOutlined,
+  TeamOutlined,
+} from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
 import BrandMark from './BrandMark';
@@ -10,12 +17,16 @@ const NAV = [
   { to: '/', label: '总览', icon: <AppstoreOutlined /> },
   { to: '/students', label: '学生信息', icon: <TeamOutlined /> },
   { to: '/import', label: '数据导入', icon: <CloudUploadOutlined /> },
+  { to: '/audit', label: '操作审计', icon: <SafetyCertificateOutlined /> },
+  { to: '/quality', label: '数据质量', icon: <DatabaseOutlined /> },
 ];
 
 const TITLE: Record<string, string> = {
   '/': '总览',
   '/students': '学生信息',
   '/import': '数据导入',
+  '/audit': '操作审计',
+  '/quality': '数据质量',
 };
 
 export default function AppLayout() {

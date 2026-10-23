@@ -16,7 +16,7 @@ from fastapi import FastAPI
 
 from . import internal_auth
 from .db import close_pool, open_pool
-from .routes import health, imports, meta, students
+from .routes import audit, health, imports, meta, students
 
 log = logging.getLogger("import-api")
 
@@ -73,7 +73,9 @@ app.include_router(health.router)      # 公开：liveness + readiness
 app.include_router(imports.router)     # 7 条导入路由
 app.include_router(students.router)    # 2 条只读学生路由
 app.include_router(meta.router)        # 筛选项与总览
+app.include_router(audit.router)        # 全局操作审计（管理员视角）
 
-if internal_auth.AUTH_ENABLED:
-    # 新增写接口只在认证开启时存在；关闭时物理不注册（同路径 GET 存在 → 405）
-    app.include_router(students.write_router)
+# 写接口始终注册：认证开启时由 require_internal 验签并强制权限/数据范围；
+# 关闭时（本地演示/单用户）走匿名身份，操作人回落到 ACTOR_FALLBACK 或由
+# 调用方通过 X-Actor 头声明。字段级编辑经触发器自动写入 operation_logs 留痕。
+app.include_router(students.write_router)

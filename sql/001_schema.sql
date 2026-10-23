@@ -74,7 +74,8 @@ BEGIN
 
         SELECT array_agg(k ORDER BY k) INTO v_changed
         FROM jsonb_object_keys(v_after) AS k
-        WHERE (v_before -> k) IS DISTINCT FROM (v_after -> k);
+        WHERE (v_before -> k) IS DISTINCT FROM (v_after -> k)
+          AND k <> 'updated_at';
     ELSE
         v_action := 'delete';
         v_before := campus.audit_payload(to_jsonb(OLD));
