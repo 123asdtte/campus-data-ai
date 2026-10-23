@@ -94,3 +94,47 @@ jobs:
         env:
           INTERNAL_AUTH_ENABLED: 'true'
         run: python -m pytest tests/test_internal_auth.py tests/test_route_matrix.py tests/test_db_privileges.py tests/test_import_scope.py tests/test_student_write.py tests/test_pr_e_hardening.py tests/test_import_audit_summary.py
+
+  ai-assistant-tests:
+    name: AI 助手原型测试
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_USER: ai_dba
+          POSTGRES_PASSWORD: ai_dba_pw
+          POSTGRES_DB: campus_ai_poc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_dba -d campus_ai_poc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AI_DB_PASSWORD: ai_dba_pw
+      AI_RO_PASSWORD: ai_ro_pw
+      AI_AUDIT_PASSWORD: ai_audit_pw
+      AI_POC_TOKEN: ci-poc-token
+      # services.postgres 映射到 5432（本地 compose 默认 55435）
+      AI_DB_PORT: '5432'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: import-api/requirements-dev.txt
+      - name: 安装依赖
+        run: pip install -r import-api/requirements-dev.txt
+      - name: 初始化 AI POC 库（虚构数据 + 最小权限角色）
+        run: |
+          psql "postgresql://ai_dba:ai_dba_pw@127.0.0.1:5432/campus_ai_poc" \
+            -v ON_ERROR_STOP=1 \
+            -v ai_ro_password=ai_ro_pw \
+            -v ai_audit_password=ai_audit_pw \
+            -f ai-assistant/sql/001_schema.sql
+      - name: pytest（权限、脱敏、审计、注入、LLM 白名单）
+        working-directory: ai-assistant
+        run: python -m pytest

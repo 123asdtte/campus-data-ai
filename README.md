@@ -85,7 +85,7 @@ Z:\ai\本地部署\ruoyi-plus-poc\        ← 不在本仓库
 | 学生域网关（PR-B） | ✅ 已合并（#21） | 真实 RuoYi 登录 → 网关签名 → FastAPI 验签 → 学院范围 → 审计 actor | [DECISION-LOG.md](docs/DECISION-LOG.md) |
 | 导入域隔离（PR-C） | ✅ 已合并（#22） | 批次归属部门 + 逐行学院校验 + 批次/异常表审计；管理员硬限制已解除 | [DECISION-LOG.md](docs/DECISION-LOG.md) |
 | 统一入口（PR-D） | ✅ 已合并（#25） | 学生/聚合/导入全部经 `/gw`；移除 `/api` 与宿主 8010；multipart 经网关签名 | [DECISION-LOG.md](docs/DECISION-LOG.md) |
-| AI 能力（Dify 等） | ❌ 未开始 | 按计划排在认证与权限之后 | [ADR-001-import-mapping.md](docs/ADR-001-import-mapping.md) |
+| AI 能力（只读原型） | 🧪 隔离环境通过 | 独立库/网络 + 虚构数据 + 固定意图 + 审计；未接真实数据 | [AI-ASSISTANT-POC.md](docs/AI-ASSISTANT-POC.md) |
 
 🧪 = 结论仅在隔离 POC 成立，**不代表生产环境已具备同等保护**。
 
