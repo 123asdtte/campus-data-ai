@@ -14,18 +14,21 @@
 行为：
 - 未设置 ALERT_WEBHOOK_URL：生成空 receiver（与仓库默认一致）；
 - 设置后：生成 webhook receiver，send_resolved=true；
-- 只接受 http/https；不打印 URL（避免 token 进入日志）；
-- 输出文件权限尽量设为 600，目录 700（Windows 上忽略 chmod）。
+- 只接受 http/https，拒绝换行/控制字符；不打印 URL（避免 token 进入日志）；
+- 输出默认位于仓库根 runtime-config/，可用 --output 覆盖；
+- 非 Windows 上设置 600/700 失败会直接报错退出（避免含 token 的文件权限过宽）。
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import pathlib
 import sys
 import urllib.parse
 
-OUTPUT = pathlib.Path("runtime-config/alertmanager.yml")
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+DEFAULT_OUTPUT = REPO_ROOT / "runtime-config" / "alertmanager.yml"
 
 
 def build_null() -> str:
@@ -61,8 +64,16 @@ receivers:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="渲染 Alertmanager 配置")
+    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="输出文件路径")
+    args = parser.parse_args()
+    output = pathlib.Path(args.output)
+
     url = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
     if url:
+        if any(ch in url for ch in "\r\n\x00"):
+            print("ERROR: ALERT_WEBHOOK_URL 不得包含换行或控制字符", file=sys.stderr)
+            return 1
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             print("ERROR: ALERT_WEBHOOK_URL 必须是 http(s) 地址", file=sys.stderr)
@@ -73,15 +84,19 @@ def main() -> int:
         content = build_null()
         mode = "null"
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(content, encoding="utf-8")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(content, encoding="utf-8")
     try:
-        os.chmod(OUTPUT.parent, 0o700)
-        os.chmod(OUTPUT, 0o600)
-    except OSError:
-        pass
+        os.chmod(output.parent, 0o700)
+        os.chmod(output, 0o600)
+    except OSError as exc:
+        if os.name == "nt":
+            print(f"WARN: Windows 上跳过 chmod：{exc}", file=sys.stderr)
+        else:
+            print(f"ERROR: 设置文件权限失败：{exc}", file=sys.stderr)
+            return 1
 
-    print(f"written: {OUTPUT} ({len(content)} bytes, receiver={mode})")
+    print(f"written: {output} ({len(content)} bytes, receiver={mode})")
     return 0
 
 
