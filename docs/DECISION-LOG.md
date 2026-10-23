@@ -33,6 +33,7 @@
 | D-017 | 2026-10-23 | CI 校验生产 jar 不含 dev/prod 配置（强制 clean） | Verified（已合并 `2396ce6`） | `hardening/gateway-api-docs` | 构建卫生、发布流程 |
 | D-018 | 2026-10-23 | 移除 application.yml 中硬编码的接口加密密钥与 MQTT 默认口令 | Verified（已合并 `2396ce6`） | `hardening/gateway-api-docs` | 密钥卫生、上线准备 |
 | D-019 | 2026-10-23 | AI 助手接入 OpenAI 兼容 LLM（Spark-x2.6，密钥仅本机） | Verified（已合并 `cba66ef`） | `feat/ai-llm-provider` | 阶段 7、AI 原型 |
+| D-020 | 2026-10-23 | 移除未使用的 MySQL/Oracle JDBC 驱动 | Verified（本分支 `chore/drop-mysql-driver`） | `chore/drop-mysql-driver` | 依赖许可、攻击面 |
 
 ---
 
@@ -616,3 +617,35 @@
   - `ai-assistant` 测试 **15 passed**；`docker compose -f docker-compose.ai-poc.yml config -q` 通过。
 - **回退**：将 `.env` 的 `AI_PLANNER` 改回 `rule` 并重建 `ai-assistant`；或删除 LLM 变量。无数据变更。
 - **授权**：B 类（非生产依赖与本地配置）；用户已提供模型与密钥并明确允许使用；真实学生数据接入仍需 C 类授权。
+
+---
+
+## D-020 移除未使用的 MySQL/Oracle JDBC 驱动
+
+- **状态**：Verified（本分支 `chore/drop-mysql-driver`，待合并）
+- **Decision owner**：AI
+- **问题与背景**：依赖许可审查把 Oracle FUTC（`ojdbc11`/`ucp`）与 MySQL Connector（GPLv2 + FOSS 例外）列为需法务确认项。校园平台实际只连接 PostgreSQL，这些驱动不参与运行，却会被打进生产 jar，既增加体积也扩大许可与攻击面。
+- **证据**：
+  - `ruoyi-admin/pom.xml` 直接声明 `com.mysql:mysql-connector-j`；
+  - `mvn dependency:tree` 显示 `ruoyi-system → ruoyi-common-mybatis → dynamic-datasource-spring-boot4-starter → dynamic-datasource-spring-boot-common → oracle-spring-boot-starter-ucp → ojdbc11`，另有 `com.oracle.database.jdbc:ucp`；
+  - `application.yml`/`application-dev.yml` 的 JDBC URL 只有 `jdbc:postgresql`，无 MySQL/Oracle 配置；
+  - 修改前 jar 内含 `ojdbc11`、`ucp`、`mysql-connector-j`。
+- **可选方案**：
+  1. 保留驱动——许可审查无法收敛，jar 体积更大；
+  2. 仅移除直接依赖——Oracle 驱动仍经 dynamic-datasource 传递进来；
+  3. 移除 MySQL 直接依赖，并在 `ruoyi-common-mybatis` 中排除 Oracle starter 与 `ucp`（采用）。
+- **决定**：方案 3。
+  - 删除 `ruoyi-admin` 的 `mysql-connector-j`；
+  - 在 `dynamic-datasource-spring-boot4-starter` 上排除 `oracle-spring-boot-starter-ucp` 与 `com.oracle.database.jdbc:ucp`；
+  - 保留 `org.postgresql:postgresql` 作为唯一 JDBC 驱动。
+- **理由**：删除的是运行时完全未使用的组件，PostgreSQL 路径不受影响；同时把 Oracle FUTC 与 MySQL GPL 组件移出分发物，减少法务确认范围与 jar 体积。
+- **影响与兼容性**：仅支持 PostgreSQL 的现状不变；未来若要接 MySQL/Oracle，需要恢复依赖并显式配置数据源。不涉及数据库迁移或接口契约。
+- **安全风险与权衡**：减少了可加载的数据库驱动类；`dynamic-datasource` 仍保留其他数据库支持代码，但不会加载未引入的驱动。许可方面仍需法务确认 Logback/Jakarta/JSQLParser 等剩余项。
+- **涉及文件**：`gateway/ruoyi-admin/pom.xml`、`gateway/ruoyi-common/ruoyi-common-mybatis/pom.xml`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - `mvn -B clean package -DskipTests -pl ruoyi-admin -am`（JDK 21）→ **BUILD SUCCESS**；
+  - `jar tf ruoyi-admin/target/ruoyi-admin.jar` 检索 `ojdbc|ucp|mysql-connector|oracle|orai18n` → **无匹配**；
+  - 重建镜像并重建 `campus-gateway` → `healthy`，启动无 Bean 异常；
+  - 登录 HTTP 200；冒烟（`/gw`）**FAIL=0**（含学生列表与导入）。
+- **回退**：恢复 `mysql-connector-j` 依赖、删除两处 exclusion 并重新构建；无数据变更。
+- **授权**：B 类（非生产关键依赖与许可收敛）。

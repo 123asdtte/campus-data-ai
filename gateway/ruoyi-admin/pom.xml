@@ -17,12 +17,11 @@
 
     <dependencies>
 
-        <!-- Mysql驱动包 -->
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-        </dependency>
+        <!-- MySQL 驱动已移除（D-020）：校园平台只使用 PostgreSQL，
+             原依赖会引入 GPLv2 + FOSS 例外的 mysql-connector-j，增加许可与体积负担。
+             如未来确实需要 MySQL，再恢复本依赖并在 datasource 中显式配置。 -->
 
+        <!-- Oracle 驱动未启用；如未来需要，再恢复以下依赖。 -->
 <!--        &lt;!&ndash; mp支持的数据库均支持 只需要增加对应的jdbc依赖即可 &ndash;&gt;-->
 <!--        &lt;!&ndash; Oracle &ndash;&gt;-->
 <!--        <dependency>-->
