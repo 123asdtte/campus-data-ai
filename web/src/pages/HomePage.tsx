@@ -61,6 +61,9 @@ export default function HomePage() {
             <Link className="hv-link is-quiet" to="/import">
               导入一份表格 <span>→</span>
             </Link>
+            <Link className="hv-link is-quiet" to="/workbench">
+              打开数据工作台 <span>→</span>
+            </Link>
           </div>
         </div>
         <div className="hv-figure" aria-hidden>

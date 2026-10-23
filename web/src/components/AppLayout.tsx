@@ -1,5 +1,5 @@
 import { Layout } from 'antd';
-import { AppstoreOutlined, CloudUploadOutlined, LogoutOutlined, TeamOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, FormOutlined, InboxOutlined, LogoutOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
 import BrandMark from './BrandMark';
@@ -8,6 +8,12 @@ const { Sider, Content } = Layout;
 
 const NAV = [
   { to: '/', label: '总览', icon: <AppstoreOutlined /> },
+  { to: '/workbench', label: '数据工作台', icon: <DatabaseOutlined /> },
+  { to: '/pipeline', label: '资料库流水线', icon: <InboxOutlined /> },
+  { to: '/reports', label: '报表中心', icon: <FileTextOutlined /> },
+  { to: '/changes', label: '学籍异动', icon: <SwapOutlined /> },
+  { to: '/counselor', label: '辅导员台', icon: <UserOutlined /> },
+  { to: '/portal', label: '学生自助', icon: <FormOutlined /> },
   { to: '/students', label: '学生信息', icon: <TeamOutlined /> },
   { to: '/import', label: '数据导入', icon: <CloudUploadOutlined /> },
 ];
@@ -16,6 +22,12 @@ const TITLE: Record<string, string> = {
   '/': '总览',
   '/students': '学生信息',
   '/import': '数据导入',
+  '/workbench': '数据工作台',
+  '/pipeline': '资料库流水线',
+  '/reports': '报表中心',
+  '/changes': '学籍异动',
+  '/counselor': '辅导员工作台',
+  '/portal': '学生自助填报',
 };
 
 export default function AppLayout() {

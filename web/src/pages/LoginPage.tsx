@@ -54,9 +54,11 @@ export default function LoginPage() {
             登录
           </Button>
         </Form>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
-          开发环境默认账号：admin / admin123（仅限本地隔离环境）。
-        </Typography.Paragraph>
+        {import.meta.env.DEV ? (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+            开发环境默认账号：admin / admin123（仅限本地隔离环境）。
+          </Typography.Paragraph>
+        ) : null}
       </Card>
     </div>
   );
