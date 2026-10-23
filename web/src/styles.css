@@ -2757,3 +2757,264 @@ body {
     min-height: 560px;
   }
 }
+
+
+/* ---------- 学生课表 ---------- */
+.ss-profile {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.ss-avatar {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  font-size: 22px;
+}
+
+.ss-profile-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ss-profile-main b {
+  font-size: 16px;
+}
+
+.ss-profile-main p {
+  margin: 2px 0 3px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.ss-profile-main small {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ss-profile-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  max-width: 42%;
+}
+
+.ss-profile-meta > span {
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.ss-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.ss-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.ss-today-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ss-today-item {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.ss-today-item b {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--accent);
+}
+
+.ss-today-item span {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.ss-today-item small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ss-table-wrap {
+  overflow-x: auto;
+}
+
+.ss-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.ss-table th,
+.ss-table td {
+  border: 1px solid var(--line);
+  padding: 7px 6px;
+  vertical-align: top;
+  font-size: 10px;
+}
+
+.ss-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+  text-align: center;
+}
+
+.ss-table tbody > tr > th {
+  width: 72px;
+  background: var(--surface-2);
+  text-align: left;
+  color: var(--ink-2);
+}
+
+.ss-table tbody > tr > th b {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.ss-table tbody > tr > th small {
+  display: block;
+  margin-top: 3px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 400;
+}
+
+.ss-table .is-today {
+  background: rgba(37, 99, 235, 0.045);
+}
+
+.ss-table thead th.is-today {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ss-course {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 6px;
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  line-height: 1.45;
+}
+
+.ss-course + .ss-course {
+  margin-top: 4px;
+}
+
+.ss-course b {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ss-course small {
+  color: var(--ink-2);
+  font-size: 9px;
+}
+
+.ss-course span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.ss-empty {
+  display: block;
+  color: var(--faint);
+  text-align: center;
+}
+
+.ss-ai {
+  position: sticky;
+  top: 76px;
+}
+
+.ss-ai-messages {
+  min-height: 260px;
+  max-height: 390px;
+}
+
+.ss-ai .ai-bubble p {
+  font-size: 11.5px;
+}
+
+.ss-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 9px 0;
+  border-top: 1px dashed var(--line);
+}
+
+.ss-suggestions button {
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  cursor: pointer;
+}
+
+.ss-suggestions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (max-width: 1200px) {
+  .ss-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ss-ai {
+    position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .ss-profile {
+    align-items: flex-start;
+  }
+
+  .ss-profile-meta {
+    display: none;
+  }
+}
+
+
+.co-identity-bound {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}

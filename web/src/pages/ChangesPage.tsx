@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   Empty,
@@ -12,8 +12,9 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, SearchOutlined, SwapOutlined } from '@ant-design/icons';
+import { PlusOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
 import { PageHeader } from '../components/ui';
+import { useSession } from '../session/SessionContext';
 import { fmt, todayStamp } from '../demo/format';
 import type { DemoChange, DemoStudent } from '../demo/types';
 import { useDemoData } from '../demo/useDemoData';
@@ -30,6 +31,7 @@ interface ChangeRow {
   reason: string;
   target: string;
   status: string;
+  platform_status: string;
   student_status: string;
 }
 
@@ -41,15 +43,6 @@ interface AuditEntry {
 
 const CHANGE_TYPES = ['休学', '复学', '退学', '转专业', '保留学籍', '跟读生转正式', '预科生转正', '留级'];
 
-const STATUS_BY_TYPE: Record<string, string> = {
-  休学: '休学',
-  复学: '在籍',
-  退学: '退学',
-  保留学籍: '保留学籍',
-  跟读生转正式: '在籍',
-  预科生转正: '在籍',
-};
-
 function tone(status: string): string {
   if (status.includes('已批')) return 'green';
   if (status.includes('退回')) return 'red';
@@ -57,10 +50,10 @@ function tone(status: string): string {
 }
 
 function toCsv(rows: ChangeRow[]): string {
-  const headers = ['UID', '姓名（掩码）', '二级学院', '班级', '异动类型', '异动日期', '审批状态', '去向'];
+  const headers = ['UID', '姓名（掩码）', '二级学院', '班级', '异动类型', '异动日期', '正式审批（源表）', '平台核对', '去向'];
   const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
   const lines = rows.map((row) =>
-    [row.uid, row.name, row.college, row.class_name, row.type, row.date, row.status, row.target]
+    [row.uid, row.name, row.college, row.class_name, row.type, row.date, row.status, row.platform_status, row.target]
       .map((value) => escape(value))
       .join(','),
   );
@@ -69,8 +62,11 @@ function toCsv(rows: ChangeRow[]): string {
 
 export default function ChangesPage() {
   const { data, error } = useDemoData();
+  const { session } = useSession();
+  const isCounselor = session?.roles.includes('counselor') ?? false;
+  const counselorName = isCounselor ? session?.user.nickName ?? '' : '';
   const [changes, setChanges] = useState<DemoChange[]>([]);
-  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [platformChecked, setPlatformChecked] = useState<Set<string>>(new Set());
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [keyword, setKeyword] = useState('');
   const [type, setType] = useState('all');
@@ -78,9 +74,12 @@ export default function ChangesPage() {
   const [college, setCollege] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
+  const fileInput = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (data) setChanges(data.changes);
+    if (!data) return;
+    setChanges(data.changes);
+    setPlatformChecked(new Set(data.changes.filter((change) => change.status.includes('已批')).map((change) => change.change_no)));
   }, [data]);
 
   const studentMap = useMemo(() => {
@@ -88,6 +87,20 @@ export default function ChangesPage() {
     data?.students.forEach((student) => map.set(student.uid, student));
     return map;
   }, [data]);
+
+  const scopedUids = useMemo(() => {
+    if (!isCounselor || !data) return null;
+    const keys = new Set(
+      data.class_summary
+        .filter((item) => item.counselor === counselorName)
+        .flatMap((item) => [item.class_name, item.class_short]),
+    );
+    return new Set(
+      data.students
+        .filter((student) => keys.has(student.class_name) || keys.has(student.class_short))
+        .map((student) => student.uid),
+    );
+  }, [data, isCounselor, counselorName]);
 
   const rows = useMemo<ChangeRow[]>(
     () =>
@@ -106,9 +119,11 @@ export default function ChangesPage() {
             reason: change.reason,
             target: change.target,
             status: change.status,
-            student_status: statusOverrides[change.uid] ?? student?.status ?? '—',
+            platform_status: platformChecked.has(change.change_no) ? '已核对' : '待核对',
+            student_status: student?.status ?? '—',
           };
         })
+        .filter((row) => !scopedUids || scopedUids.has(row.uid))
         .sort((a, b) => {
           const aLocal = a.change_no.startsWith('YD-LOCAL') ? 1 : 0;
           const bLocal = b.change_no.startsWith('YD-LOCAL') ? 1 : 0;
@@ -118,7 +133,7 @@ export default function ChangesPage() {
           if (aPending !== bPending) return bPending - aPending;
           return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
         }),
-    [changes, studentMap, statusOverrides],
+    [changes, studentMap, platformChecked, scopedUids],
   );
 
   const filtered = useMemo(() => {
@@ -148,8 +163,8 @@ export default function ChangesPage() {
   const types = [...new Set(rows.map((row) => row.type))];
   const statuses = [...new Set(rows.map((row) => row.status))];
   const colleges = data.metrics.college_counts.map((item) => item.name);
-  const pending = rows.filter((row) => row.status.includes('审批中')).length;
-  const approved = rows.filter((row) => row.status.includes('已批')).length;
+  const pending = rows.filter((row) => row.platform_status === '待核对').length;
+  const approved = rows.filter((row) => row.platform_status === '已核对').length;
 
   const addAudit = (action: string, detail: string) => {
     setAudit((current) => [
@@ -158,18 +173,62 @@ export default function ChangesPage() {
     ].slice(0, 6));
   };
 
-  const confirmChange = (row: ChangeRow) => {
-    setChanges((current) =>
-      current.map((change) =>
-        change.change_no === row.change_no ? { ...change, status: '已批' } : change,
-      ),
-    );
-    const nextStatus = STATUS_BY_TYPE[row.type];
-    if (nextStatus) {
-      setStatusOverrides((current) => ({ ...current, [row.uid]: nextStatus }));
+  const markChecked = (row: ChangeRow) => {
+    setPlatformChecked((current) => {
+      const next = new Set(current);
+      next.add(row.change_no);
+      return next;
+    });
+    addAudit('平台核对', `${row.change_no} ${row.type}`);
+    void message.success(`${row.change_no} 已标记平台核对；正式审批状态不变`);
+  };
+
+  const importWorkbook = async (file: File) => {
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      const normalizeDate = (value: unknown): string => {
+        if (typeof value === 'number') {
+          const parsed = XLSX.SSF.parse_date_code(value);
+          if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
+        }
+        return String(value ?? '').trim();
+      };
+      const existing = new Set(changes.map((item) => item.change_no));
+      const imported: DemoChange[] = [];
+      let skipped = 0;
+      records.forEach((row, index) => {
+        const uid = String(row.UID ?? row.uid ?? '').trim();
+        if (!studentMap.has(uid) || (scopedUids && !scopedUids.has(uid))) {
+          skipped += 1;
+          return;
+        }
+        const baseNo = String(row['异动编号'] ?? row['编号'] ?? `IMP-${Date.now()}-${index + 1}`).trim();
+        const changeNo = existing.has(baseNo) ? `${baseNo}-IMP${index + 1}` : baseNo;
+        existing.add(changeNo);
+        imported.push({
+          uid,
+          change_no: changeNo,
+          type: String(row['异动类型'] ?? row['类型'] ?? '其他').trim() || '其他',
+          date: normalizeDate(row['异动日期'] ?? row['日期']),
+          reason: String(row['异动原因'] ?? row['原因'] ?? '').trim(),
+          target: String(row['异动后去向'] ?? row['去向'] ?? '—').trim() || '—',
+          status: String(row['正式审批状态'] ?? row['审批状态'] ?? '审批中').trim() || '审批中',
+        });
+      });
+      if (imported.length) {
+        setChanges((current) => [...imported, ...current]);
+        addAudit('导入异动', `${file.name} · 导入 ${imported.length} 条 · 跳过 ${skipped} 条`);
+        void message.success(`已导入 ${imported.length} 条异动${skipped ? `，跳过 ${skipped} 条无匹配 UID 的记录` : ''}`);
+      } else {
+        void message.warning(`没有导入记录；请检查模板中的 UID。跳过 ${skipped} 条。`);
+      }
+    } catch (reason) {
+      void message.error(`导入失败：${reason instanceof Error ? reason.message : '文件无法解析'}`);
     }
-    addAudit('教务确认', `${row.change_no} ${row.type} → ${nextStatus || '状态不变'}`);
-    void message.success(`${row.change_no} 已确认，学生状态${nextStatus ? `更新为「${nextStatus}」` : '不变'}`);
   };
 
   const submitChange = async () => {
@@ -218,7 +277,7 @@ export default function ChangesPage() {
       render: (value: string, row) => (
         <span className="wb-two-line">
           <b>{row.uid}</b>
-          <small>{value} · {row.student_status}</small>
+          <small>{value} · 学籍：{row.student_status}</small>
         </span>
       ),
     },
@@ -247,22 +306,28 @@ export default function ChangesPage() {
       ),
     },
     {
-      title: '审批状态',
+      title: '正式审批（源表）',
       dataIndex: 'status',
-      width: 100,
+      width: 120,
       render: (value: string) => <Tag color={tone(value)}>{value}</Tag>,
+    },
+    {
+      title: '平台核对',
+      dataIndex: 'platform_status',
+      width: 100,
+      render: (value: string) => <Tag color={value === '已核对' ? 'green' : 'orange'}>{value}</Tag>,
     },
     {
       title: '操作',
       key: 'action',
       width: 110,
       render: (_, row) =>
-        row.status.includes('审批中') ? (
-          <Button size="small" type="link" onClick={() => confirmChange(row)}>
-            教务确认
+        row.platform_status !== '已核对' ? (
+          <Button size="small" type="link" onClick={() => markChecked(row)}>
+            平台核对
           </Button>
         ) : (
-          <span className="wb-muted">—</span>
+          <span className="wb-muted">已核对</span>
         ),
     },
   ];
@@ -273,7 +338,7 @@ export default function ChangesPage() {
     <div className="wb">
       <PageHeader
         title="学籍异动"
-        description="辅导员登记异动，教务确认后联动学籍状态；所有操作留在本地演示记录里，不写正式库。"
+        description={isCounselor ? '只显示本人所带班级的异动台账；正式审批仍在青果或线下，本页只做登记与平台核对。' : '辅导员登记/导入异动，学工处做平台核对；正式审批仍在青果或线下，本页只做台账与核对，不改变正式学籍状态。'}
         extra={
           <div className="wb-badges">
             <span className="wb-badge is-local">LOCAL DEMO</span>
@@ -284,8 +349,8 @@ export default function ChangesPage() {
 
       <section className="wb-kpis ch-kpis">
         <div className="wb-kpi"><div className="wb-kpi-label">异动总数</div><div className="wb-kpi-value">{fmt(rows.length)}</div><div className="wb-kpi-hint">工作台 {data.metrics.change_total} 条 · {data.metrics.orphan_changes} 条学号未匹配</div></div>
-        <div className="wb-kpi"><div className="wb-kpi-label">待教务确认</div><div className="wb-kpi-value">{fmt(pending)}</div><div className="wb-kpi-hint">含新增与初始待审</div></div>
-        <div className="wb-kpi"><div className="wb-kpi-label">已批</div><div className="wb-kpi-value">{fmt(approved)}</div><div className="wb-kpi-hint">状态已联动</div></div>
+        <div className="wb-kpi"><div className="wb-kpi-label">待平台核对</div><div className="wb-kpi-value">{fmt(pending)}</div><div className="wb-kpi-hint">正式审批状态另列</div></div>
+        <div className="wb-kpi"><div className="wb-kpi-label">平台已核对</div><div className="wb-kpi-value">{fmt(approved)}</div><div className="wb-kpi-hint">不改变源系统审批</div></div>
         <div className="wb-kpi"><div className="wb-kpi-label">异动类型</div><div className="wb-kpi-value">{types.length}</div><div className="wb-kpi-hint">休学 / 退学 / 转专业等</div></div>
       </section>
 
@@ -321,19 +386,32 @@ export default function ChangesPage() {
           ) : (
             <Empty description="还没有本地操作；发起一次异动试试" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
-          <p className="wb-note">正式版会把发起、确认、退回写入审计表；演示版刷新页面即重置。</p>
+          <p className="wb-note">导入模板使用 UID；正式版由后端按学号 → UID 映射并校验权限。演示版刷新页面即重置。</p>
         </section>
       </div>
 
       <section className="wb-panel wb-table-panel">
-        <header className="wb-panel-head"><h2>异动台账</h2><span>点击“教务确认”演示状态联动</span></header>
+        <header className="wb-panel-head"><h2>异动台账</h2><span>平台核对与源表正式审批分开显示 · 支持 Excel 导入</span></header>
         <div className="wb-toolbar">
           <Input allowClear prefix={<SearchOutlined />} placeholder="异动编号 / UID / 班级" value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ width: 230 }} />
           <Select value={type} onChange={setType} style={{ width: 150 }} options={[{ value: 'all', label: '全部类型' }, ...types.map((item) => ({ value: item, label: item }))]} />
-          <Select value={status} onChange={setStatus} style={{ width: 150 }} options={[{ value: 'all', label: '全部审批状态' }, ...statuses.map((item) => ({ value: item, label: item }))]} />
+          <Select value={status} onChange={setStatus} style={{ width: 170 }} options={[{ value: 'all', label: '全部正式审批状态' }, ...statuses.map((item) => ({ value: item, label: item }))]} />
           <Select value={college} onChange={setCollege} style={{ width: 170 }} options={[{ value: 'all', label: '全部学院' }, ...colleges.map((item) => ({ value: item, label: item }))]} />
           <Button icon={<SwapOutlined />} onClick={exportChanges}>导出异动清单</Button>
+          <Button icon={<UploadOutlined />} onClick={() => fileInput.current?.click()}>导入 Excel</Button>
+          <a className="wb-download" href="/demo/change-import-template.csv" download>下载导入模板</a>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>发起异动</Button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void importWorkbook(file);
+              event.currentTarget.value = '';
+            }}
+          />
           <span className="wb-result-count">命中 {fmt(filtered.length)} 条</span>
         </div>
         <Table<ChangeRow>
@@ -353,7 +431,7 @@ export default function ChangesPage() {
         title="发起学籍异动"
         open={modalOpen}
         onOk={submitChange}
-        okText="提交（待教务确认）"
+        okText="提交（待平台核对）"
         cancelText="取消"
         onCancel={() => setModalOpen(false)}
       >
@@ -363,10 +441,12 @@ export default function ChangesPage() {
               showSearch
               optionFilterProp="label"
               placeholder="按 UID / 姓名 / 班级搜索"
-              options={data.students.map((student) => ({
-                value: student.uid,
-                label: `${student.uid} · ${student.name} · ${student.class_short || student.class_name}`,
-              }))}
+              options={data.students
+                .filter((student) => !scopedUids || scopedUids.has(student.uid))
+                .map((student) => ({
+                  value: student.uid,
+                  label: `${student.uid} · ${student.name} · ${student.class_short || student.class_name}`,
+                }))}
             />
           </Form.Item>
           <div className="ch-form-row">
@@ -376,7 +456,7 @@ export default function ChangesPage() {
           <Form.Item name="reason" label="异动原因" rules={[{ required: true, message: '请填写原因' }]}><Input.TextArea rows={2} placeholder="如：身体原因 / 新生转专业（笔试面试通过）" /></Form.Item>
           <Form.Item name="target" label="异动后去向（可选）"><Input placeholder="如：转入汽车工程学院新能源汽车检测与维修技术2601" /></Form.Item>
         </Form>
-        <p className="wb-note">提交后进入“审批中”；点击台账里的“教务确认”才会更新学生状态。本地演示不写正式库。</p>
+        <p className="wb-note">提交后进入“待平台核对”；正式审批仍在青果/线下完成。本地演示不写正式库，也不回写源系统。</p>
       </Modal>
     </div>
   );

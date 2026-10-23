@@ -208,7 +208,7 @@ export default function AssistantPage() {
     <div className="wb">
       <PageHeader
         title="AI 问数"
-        description="用自然语言查聚合、看异动、查数据质量。当前是本地规则模式，只返回脱敏/聚合结果，不调用外部模型。"
+        description="管理员演示视角：全校聚合问数；学生账号在“我的课表”里使用只读课表助手，不进入这个全局问数页。"
         extra={
           <div className="wb-badges">
             <span className="wb-badge is-local">LOCAL RULE</span>

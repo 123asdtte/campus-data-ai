@@ -145,6 +145,7 @@ def build(source: Path, out_dir: Path, private_dir: Path) -> dict[str, Any]:
     admissions_path = source / "全校教学基础数据/13_招生录取数据（UTF-8）.csv"
     affairs_path = source / "思科职院AI资料库（共享）/02_学工业务数据（只读）/学工业务数据_2026年9-10月.xlsx"
     registration_path = source / "思科职院AI资料库（共享）/03_教务业务数据（只读）/学籍注册进度_2026-2027学年.xlsx"
+    schedule_path = source / "全校教学基础数据/08_排课表（2026-2027学年第一学期）.xlsx"
 
     for path in [roster_path, class_path, change_path, admissions_path]:
         if not path.exists():
@@ -379,6 +380,63 @@ def build(source: Path, out_dir: Path, private_dir: Path) -> dict[str, Any]:
         if info.get("辅导员"):
             counselor_set.add(display_counselor(info["辅导员"]))
 
+    # Class schedule (read-only, by class) from the academic affairs export.
+    # The schedule file uses class short names; normalize to the class table.
+    schedule_rows = read_sheet(schedule_path, "数据") if schedule_path.exists() else []
+    short_to_full = {
+        row.get("班级简称", ""): row.get("班级名称", "")
+        for row in class_rows
+        if row.get("班级简称") and row.get("班级名称")
+    }
+    full_to_short = {full: short for short, full in short_to_full.items()}
+    full_names = {row.get("班级名称", "") for row in class_rows if row.get("班级名称")}
+
+    def resolve_class(raw: str) -> tuple[str, str] | None:
+        raw = raw.strip()
+        if raw in full_names:
+            return raw, full_to_short.get(raw, raw)
+        if raw in short_to_full:
+            return short_to_full[raw], raw
+        trimmed = raw[:-1] if raw.endswith("班") else raw
+        if trimmed in short_to_full:
+            return short_to_full[trimmed], trimmed
+        if raw + "班" in full_names:
+            return raw + "班", raw
+        return None
+
+    schedule: list[dict[str, Any]] = []
+    schedule_unmatched = 0
+    for row in schedule_rows:
+        resolved = resolve_class(row.get("上课班级", ""))
+        if not resolved:
+            schedule_unmatched += 1
+            continue
+        class_name, class_short = resolved
+        weekday = row.get("星期", "").replace("星期", "周")
+        schedule.append(
+            {
+                "class_name": class_name,
+                "class_short": class_short,
+                "course": row.get("课程名称", ""),
+                "teacher": row.get("任课教师", ""),
+                "weekday": weekday,
+                "period": row.get("节次", ""),
+                "weeks": row.get("周次", ""),
+                "room": row.get("教室", ""),
+                "campus": row.get("校区", ""),
+                "term": row.get("学年学期", ""),
+                "note": row.get("备注", ""),
+            }
+        )
+
+    period_times = [
+        {"period": "1-2节", "start": "08:00", "end": "09:40", "slot": "上午"},
+        {"period": "3-4节", "start": "10:00", "end": "11:40", "slot": "上午"},
+        {"period": "5-6节", "start": "14:00", "end": "15:40", "slot": "下午"},
+        {"period": "7-8节", "start": "16:00", "end": "17:40", "slot": "下午"},
+        {"period": "9-10节", "start": "19:00", "end": "20:40", "slot": "晚上"},
+    ]
+
     # Student-affairs sheets: counts only, no personal details.
     affairs: list[dict[str, Any]] = []
     if affairs_path.exists():
@@ -526,6 +584,14 @@ def build(source: Path, out_dir: Path, private_dir: Path) -> dict[str, Any]:
         "registration": registration,
         "data_quality": data_quality,
         "affairs": affairs,
+        "schedule_meta": {
+            "rows": len(schedule),
+            "unmatched_rows": schedule_unmatched,
+            "classes": len({row["class_name"] for row in schedule}),
+            "current_week": 8,
+            "period_times": period_times,
+            "note": "按 2026-2027 学年第一学期第 8 周演示；作息时间待教务处确认。",
+        },
         "source_files": [
             {"name": p.name, "rows": len(rows) if isinstance(rows, list) else 0}
             for p, rows in [
@@ -533,6 +599,7 @@ def build(source: Path, out_dir: Path, private_dir: Path) -> dict[str, Any]:
                 (class_path, class_rows),
                 (change_path, change_rows),
                 (admissions_path, admissions),
+                (schedule_path, schedule_rows),
             ]
         ],
     }
@@ -549,6 +616,7 @@ def build(source: Path, out_dir: Path, private_dir: Path) -> dict[str, Any]:
         "students": public_students,
         "changes": public_changes,
         "class_summary": class_summary,
+        "schedule": schedule,
         "anomalies": [
             data_quality["duplicate_rows"],
             data_quality["same_name_groups"],

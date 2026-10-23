@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../api/auth';
+import { useSession } from '../session/SessionContext';
 
 /**
  * PR-B 登录页：使用 RuoYi 原生账号登录，成功后进入学生查询。
@@ -9,6 +10,7 @@ import { login } from '../api/auth';
  */
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { refresh } = useSession();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -17,7 +19,16 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(values.username.trim(), values.password);
-      navigate('/students');
+      const session = await refresh();
+      if (!session) throw new Error('登录成功但读取身份失败，请重试');
+      const target = session.roles.includes('student_portal')
+        ? '/my-schedule'
+        : session.roles.includes('counselor')
+          ? '/counselor'
+          : session.roles.includes('xgb')
+            ? '/workbench'
+            : '/';
+      navigate(target);
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败');
     } finally {

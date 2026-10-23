@@ -40,6 +40,36 @@ export interface DemoStudent {
   flags: string[];
 }
 
+export interface ScheduleRow {
+  class_name: string;
+  class_short: string;
+  course: string;
+  teacher: string;
+  weekday: string;
+  period: string;
+  weeks: string;
+  room: string;
+  campus: string;
+  term: string;
+  note: string;
+}
+
+export interface PeriodTime {
+  period: string;
+  start: string;
+  end: string;
+  slot: string;
+}
+
+export interface ScheduleMeta {
+  rows: number;
+  unmatched_rows: number;
+  classes: number;
+  current_week: number;
+  period_times: PeriodTime[];
+  note: string;
+}
+
 export interface DemoChange {
   uid: string;
   change_no: string;
@@ -80,8 +110,10 @@ export interface DemoData {
     data_quality: Record<string, QualityItem>;
     affairs: Array<{ sheet: string; rows: number }>;
     source_files: Array<{ name: string; rows: number }>;
+    schedule_meta: ScheduleMeta;
   };
   students: DemoStudent[];
+  schedule: ScheduleRow[];
   changes: DemoChange[];
   class_summary: Array<{
     class_name: string;

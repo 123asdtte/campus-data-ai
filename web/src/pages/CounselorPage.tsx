@@ -13,8 +13,11 @@ import type { ColumnsType } from 'antd/es/table';
 import { DownloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { PageHeader } from '../components/ui';
 import { fmt, todayStamp } from '../demo/format';
-import type { DemoStudent } from '../demo/types';
+import type { DemoData, DemoStudent } from '../demo/types';
 import { useDemoData } from '../demo/useDemoData';
+import { useSession } from '../session/SessionContext';
+
+type CounselorClass = DemoData['class_summary'][number] & { keys: string[] };
 
 const TONE_COLOR: Record<string, string> = {
   success: 'green',
@@ -26,6 +29,9 @@ const TONE_COLOR: Record<string, string> = {
 
 export default function CounselorPage() {
   const { data, error } = useDemoData();
+  const { session } = useSession();
+  const isCounselor = session?.roles.includes('counselor') ?? false;
+  const boundCounselor = isCounselor ? session?.user.nickName ?? '' : '';
   const [counselor, setCounselor] = useState<string>('');
   const [classFilter, setClassFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
@@ -34,21 +40,39 @@ export default function CounselorPage() {
     () => [...new Set((data?.class_summary ?? []).map((item) => item.counselor).filter(Boolean))].sort(),
     [data],
   );
-  const currentCounselor = counselor || counselors[0] || '';
-  const classes = useMemo(
-    () => (data?.class_summary ?? []).filter((item) => item.counselor === currentCounselor),
-    [data, currentCounselor],
-  );
-  const classNames = useMemo(() => new Set(classes.map((item) => item.class_name)), [classes]);
+  const currentCounselor = boundCounselor || counselor || counselors[0] || '';
+  const classes = useMemo<CounselorClass[]>(() => {
+    const grouped = new Map<string, CounselorClass>();
+    for (const item of data?.class_summary ?? []) {
+      if (item.counselor !== currentCounselor) continue;
+      const keys = [item.class_name, item.class_short].filter(Boolean);
+      const key = (item.class_short || item.class_name).replace(/\s+/g, '').replace(/班$/, '');
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.students += item.students;
+        keys.forEach((value) => {
+          if (!existing.keys.includes(value)) existing.keys.push(value);
+        });
+        Object.entries(item.status).forEach(([status, count]) => {
+          existing.status[status] = (existing.status[status] ?? 0) + count;
+        });
+      } else {
+        grouped.set(key, { ...item, keys: [...keys], status: { ...item.status } });
+      }
+    }
+    return [...grouped.values()].sort((a, b) => a.class_name.localeCompare(b.class_name, 'zh-CN'));
+  }, [data, currentCounselor]);
+  const classKeys = useMemo(() => new Set(classes.flatMap((item) => item.keys)), [classes]);
   const students = useMemo(
-    () => (data?.students ?? []).filter((student) => classNames.has(student.class_name)),
-    [data, classNames],
+    () => (data?.students ?? []).filter((student) => classKeys.has(student.class_name) || classKeys.has(student.class_short)),
+    [data, classKeys],
   );
 
   const filtered = useMemo(() => {
     const q = keyword.trim().toLowerCase();
+    const selected = classFilter === 'all' ? null : classes.find((item) => item.class_name === classFilter);
     return students.filter((student) => {
-      if (classFilter !== 'all' && student.class_name !== classFilter) return false;
+      if (selected && !selected.keys.some((key) => key === student.class_name || key === student.class_short)) return false;
       if (q && !`${student.uid} ${student.name} ${student.major} ${student.class_short}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -94,7 +118,7 @@ export default function CounselorPage() {
     void message.success(`已导出 ${fmt(filtered.length)} 名学生`);
   };
 
-  const classColumns: ColumnsType<(typeof classes)[number]> = [
+  const classColumns: ColumnsType<CounselorClass> = [
     {
       title: '班级',
       dataIndex: 'class_name',
@@ -170,19 +194,29 @@ export default function CounselorPage() {
       />
 
       <div className="co-identity">
-        <span className="co-identity-label">当前演示身份</span>
-        <Select
-          showSearch
-          value={currentCounselor}
-          onChange={(value) => {
-            setCounselor(value);
-            setClassFilter('all');
-            setKeyword('');
-          }}
-          style={{ width: 220 }}
-          options={counselors.map((name) => ({ value: name, label: `辅导员 · ${name}` }))}
-        />
-        <span className="co-identity-note">正式版：从登录会话读取班级范围，前端不能自选身份。</span>
+        {isCounselor ? (
+          <>
+            <span className="co-identity-label">当前登录辅导员</span>
+            <b className="co-identity-bound">{boundCounselor}</b>
+            <span className="co-identity-note">班级范围由登录账号绑定，页面不能切换身份。</span>
+          </>
+        ) : (
+          <>
+            <span className="co-identity-label">管理员预览</span>
+            <Select
+              showSearch
+              value={currentCounselor}
+              onChange={(value) => {
+                setCounselor(value);
+                setClassFilter('all');
+                setKeyword('');
+              }}
+              style={{ width: 220 }}
+              options={counselors.map((name) => ({ value: name, label: `辅导员 · ${name}` }))}
+            />
+            <span className="co-identity-note">仅管理员可预览其他辅导员；辅导员登录后自动锁定本人班级。</span>
+          </>
+        )}
       </div>
 
       <section className="wb-kpis">
@@ -196,7 +230,7 @@ export default function CounselorPage() {
 
       <div className="wb-grid co-grid">
         <section className="wb-panel">
-          <header className="wb-panel-head"><h2>我的班级</h2><span>{classes.length} 个班</span></header>
+          <header className="wb-panel-head"><h2>我的班级</h2><span>{classes.length} 个班 · 名称变体已归并</span></header>
           <Table
             rowKey="class_name"
             size="small"

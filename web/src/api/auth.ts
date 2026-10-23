@@ -20,6 +20,17 @@ export interface LoginResult {
   expires_in?: number;
 }
 
+export interface SessionInfo {
+  user: {
+    userName: string;
+    nickName: string;
+    deptId?: number | string | null;
+    dept?: { deptName?: string } | null;
+  };
+  roles: string[];
+  permissions: string[];
+}
+
 export function getToken(): string | null {
   return window.localStorage.getItem(TOKEN_KEY);
 }
@@ -35,6 +46,28 @@ export function isLoggedIn(): boolean {
 export function logout(): void {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
+}
+
+/** 读取网关当前登录用户、角色与权限；角色由服务端账号绑定，不由前端选择。 */
+export async function fetchSession(): Promise<SessionInfo> {
+  const token = getToken();
+  if (!token) throw new Error('未登录');
+  const response = await fetch(`${GW_BASE}/system/user/getInfo`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      clientid: GW_CLIENT_ID,
+    },
+  });
+  let payload: { code?: number; msg?: string; data?: SessionInfo } = {};
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`读取登录身份失败（HTTP ${response.status}）`);
+  }
+  if (!response.ok || payload.code !== 200 || !payload.data) {
+    throw new Error(payload.msg || `读取登录身份失败（HTTP ${response.status}）`);
+  }
+  return payload.data;
 }
 
 /**
