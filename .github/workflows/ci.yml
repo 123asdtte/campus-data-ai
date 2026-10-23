@@ -52,6 +52,18 @@ jobs:
       # 日志脱敏回归：校验敏感字段名单，以及嵌套对象/数组的递归清理行为。
       # 父 POM 默认 maven.test.skip=true，这里只对目标模块显式开启并限定测试类。
       - run: mvn -B -pl ruoyi-common/ruoyi-common-web -am -Dmaven.test.skip=false -Dprofiles.active=dev -Dtest=LogRedactionTest -Dsurefire.failIfNoSpecifiedTests=false test
+      # 生产构建配置卫生：-Pprod 必须配合 clean，否则 target/classes 中残留的
+      # application-dev.yml / application-prod.yml 会被打进 jar（D-005）。
+      - name: 生产构建配置卫生
+        run: |
+          set -e
+          mvn -B -Pprod clean package -DskipTests -pl ruoyi-admin -am
+          if unzip -l ruoyi-admin/target/ruoyi-admin.jar | grep -E 'BOOT-INF/classes/application-(dev|prod)\.yml'; then
+            echo "::error::prod jar 包含 application-dev.yml 或 application-prod.yml"
+            exit 1
+          fi
+          unzip -l ruoyi-admin/target/ruoyi-admin.jar | grep -q 'BOOT-INF/classes/application.yml'
+          echo "prod jar 仅包含 application.yml"
 
   backend-tests:
     name: 后端接口与校验测试

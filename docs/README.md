@@ -15,7 +15,7 @@
 | 文档 | 状态 | 内容 |
 |---|---|---|
 | [README.md](README.md) | ✅ | 本索引 |
-| [DECISION-LOG.md](DECISION-LOG.md) | ✅ | **工程决策唯一索引**：D-001~D-013，含证据、方案对比、回退与授权边界 |
+| [DECISION-LOG.md](DECISION-LOG.md) | ✅ | **工程决策唯一索引**：D-001~D-018，含证据、方案对比、回退与授权边界 |
 | [`../PROJECT-ROADMAP.md`](../PROJECT-ROADMAP.md) | ✅ | **唯一总路线图**（根目录，不计入 docs 22）：G/R/PR-B/C/D/E、变更边界、停止条件、自主执行边界 |
 | [SECURITY-MIGRATION-EXECUTION-PLAN.md](SECURITY-MIGRATION-EXECUTION-PLAN.md) | 🗺️ | 安全迁移专项细化（阶段 0–5），冲突时以总路线图为准 |
 | [EXECUTION-PROTOCOL.md](EXECUTION-PROTOCOL.md) | ⚙️ | 执行协议：两种任务模式、PR 流程、自主/批准边界、中断恢复 |
