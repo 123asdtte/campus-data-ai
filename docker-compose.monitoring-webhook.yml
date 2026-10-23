@@ -1,0 +1,18 @@
+# Alertmanager webhook 投递覆盖文件（可选）
+#
+# 前置：
+#   ALERT_WEBHOOK_URL=https://... python scripts/render-alertmanager-config.py
+#
+# 启动：
+#   docker compose --profile monitoring \
+#     -f docker-compose.yml -f docker-compose.monitoring-webhook.yml \
+#     up -d alertmanager
+#
+# 说明：
+#   - 未设置 ALERT_WEBHOOK_URL 时，渲染结果为空 receiver，行为与默认一致；
+#   - 生成文件位于 runtime-config/（已被 .gitignore 忽略，权限 600）；
+#   - 正式 webhook 地址与 token 不得提交到仓库。
+services:
+  alertmanager:
+    volumes:
+      - ./runtime-config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro

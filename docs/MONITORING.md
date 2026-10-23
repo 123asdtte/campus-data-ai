@@ -54,14 +54,28 @@ docker compose --profile monitoring stop prometheus alertmanager blackbox-export
 
 `for: 1m` 约等于连续 4 次抓取失败（15s 间隔），避免容器重启抖动误报。
 
-## 5. 告警去向（当前限制）
+## 5. 告警去向（webhook 可选）
 
-`monitoring/alertmanager/alertmanager.yml` 的 `default` receiver **没有任何投递渠道**：
-告警只出现在 Prometheus `/alerts` 与 Alertmanager UI（`http://127.0.0.1:9093`）。
+默认 `monitoring/alertmanager/alertmanager.yml` 的 `default` receiver **不投递**：
+告警只出现在 Prometheus `/alerts` 与 Alertmanager UI（`http://127.0.0.1:9093`），
+这是有意的安全默认值，仓库内不放任何真实地址或凭据。
 
-这是有意的最小集：仓库里不放 webhook 地址、邮箱密码或企业微信凭据。
-正式部署必须补上真实 receiver，并由运维确认值班人与响应时限；凭据应通过
-挂载 secrets 文件或环境变量注入，不得提交到仓库。
+需要外部通知时，用渲染脚本把 webhook 地址写入 `runtime-config/`（已忽略、权限 600）：
+
+```bash
+# 1) 生成配置（不设置变量则仍为空 receiver）
+ALERT_WEBHOOK_URL=https://example.invalid/alerts python scripts/render-alertmanager-config.py
+
+# 2) 用覆盖文件重建 Alertmanager
+docker compose --profile monitoring \
+  -f docker-compose.yml -f docker-compose.monitoring-webhook.yml \
+  up -d alertmanager
+```
+
+- 只接受 `http(s)`，不打印 URL，避免 token 进入日志；
+- `send_resolved: true`，恢复时也会通知；
+- 正式地址、token 与值班人由运维确认，不得提交仓库；
+- 回退：不设置 `ALERT_WEBHOOK_URL` 重新渲染，再用基础 compose 重建 Alertmanager。
 
 ## 6. 验证记录（2026-10-22 实测）
 
@@ -74,6 +88,7 @@ docker compose --profile monitoring stop prometheus alertmanager blackbox-export
 | `probe_success` | 三个入口全部为 `1` |
 | **故障演练**：`docker stop campus-import-api` | 约 75s 后 `CampusEndpointDown` 进入 `firing`，Alertmanager 收到 `active` 告警 |
 | **恢复**：`docker start campus-import-api` | 约 75s 后告警解除，`/api/v1/alerts` 为空 |
+| **webhook 投递**（本地 sink） | 触发时收到 `CampusEndpointDown`，恢复时收到 `status: resolved` |
 | `scripts/preflight.py` | “监控组件” PASS（运行中），FAIL 从 3 降到 **2**（仅剩 TLS 与 dev jar 配置） |
 
 ## 7. 排查

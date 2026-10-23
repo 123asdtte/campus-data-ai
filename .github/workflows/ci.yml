@@ -113,6 +113,17 @@ jobs:
       AI_POC_TOKEN: ci-placeholder-token
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 渲染并校验 Alertmanager 配置
+        run: |
+          set -e
+          python -m pip install --quiet pyyaml
+          python scripts/render-alertmanager-config.py
+          python -c "import yaml; yaml.safe_load(open('runtime-config/alertmanager.yml', encoding='utf-8')); print('null receiver yaml ok')"
+          ALERT_WEBHOOK_URL=https://example.invalid/alerts python scripts/render-alertmanager-config.py
+          python -c "import yaml; yaml.safe_load(open('runtime-config/alertmanager.yml', encoding='utf-8')); print('webhook receiver yaml ok')"
       - name: 校验主栈与各覆盖文件
         run: |
           set -e
@@ -121,6 +132,7 @@ jobs:
           docker compose -f docker-compose.web.yml -f docker-compose.tls.yml config -q
           docker compose -f docker-compose.ai-poc.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+          docker compose --profile monitoring -f docker-compose.yml -f docker-compose.monitoring-webhook.yml config -q
 
   ai-assistant-tests:
     name: AI 助手原型测试
