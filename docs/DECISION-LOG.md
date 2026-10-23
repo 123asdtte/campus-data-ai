@@ -26,7 +26,8 @@
 | D-010 | 2026-10-22 | 监控最小集：Prometheus + blackbox + Alertmanager | Verified（已合并 `a1144f7`） | `ops/monitoring-minimal` | 上线预检、运维 |
 | D-011 | 2026-10-22 | TLS 入口模板与开发验证（正式切换仍需授权） | Verified（已合并 `c6d03d3`） | `ops/tls-dev-template` | 前端入口、上线准备 |
 | D-012 | 2026-10-22 | AI 校园助手只读原型（隔离数据、固定意图、审计） | Verified（已合并 `762b433`） | `feat/ai-assistant-poc` | 阶段 7、安全边界 |
-| D-013 | 2026-10-22 | Alertmanager webhook 投递机制（地址运行时渲染） | Verified（本分支 `ops/alert-delivery`） | `ops/alert-delivery` | 告警可达性、上线准备 |
+| D-013 | 2026-10-22 | Alertmanager webhook 投递机制（地址运行时渲染） | Verified（已合并 `65c7fda`） | `ops/alert-delivery` | 告警可达性、上线准备 |
+| D-014 | 2026-10-23 | 日志敏感字段名单扩充与脱敏回归测试 | Verified（本分支 `hardening/log-redaction`） | `hardening/log-redaction` | 日志安全、上线准备 |
 | D-015 | 2026-10-23 | RuoYi 未使用模块裁剪（gen/job/ai/workflow/mcp/admin-client） | Verified（本分支 `chore/trim-unused-gateway-modules`） | `chore/trim-unused-gateway-modules` | 攻击面收敛、上线准备 |
 | D-016 | 2026-10-23 | 关闭网关 OpenAPI 文档与免鉴权白名单 | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 接口枚举、上线准备 |
 | D-017 | 2026-10-23 | CI 校验生产 jar 不含 dev/prod 配置（强制 clean） | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 构建卫生、发布流程 |
@@ -398,7 +399,7 @@
 
 ## D-013 Alertmanager webhook 投递机制
 
-- **状态**：Verified（本分支；webhook 端到端验证通过）
+- **状态**：Verified（已合并 `65c7fda`；webhook 端到端验证通过）
 - **Decision owner**：AI
 - **问题与背景**：D-010 的 Alertmanager 使用空 receiver，告警只在 Prometheus/Alertmanager UI 可见，生产环境无人会收到通知。
 - **证据**：
@@ -425,6 +426,36 @@
   - 恢复默认：重新空渲染并用基础 compose 重建 Alertmanager，测试 sink 已移除。
 - **回退**：不设置 `ALERT_WEBHOOK_URL` 重新渲染，`docker compose --profile monitoring -f docker-compose.yml up -d --force-recreate alertmanager`。
 - **授权**：机制属 A/B 类；真实 webhook 地址、第三方接收方与值班安排需运维确认。
+
+---
+
+## D-014 日志敏感字段名单扩充与脱敏回归测试
+
+- **状态**：Verified（本分支 `hardening/log-redaction`，待合并）
+- **Decision owner**：AI
+- **问题与背景**：网关的请求参数日志拦截器（`PlusWebInvokeTimeInterceptor`）与操作日志切面（`LogAspect`）共用 `SystemConstants.EXCLUDE_PROPERTIES` 做字段剔除，但名单此前只有 `password` 系列。令牌、内部签名凭据或第三方密钥一旦出现在请求体里，就会被 INFO 日志与操作日志完整记录。
+- **证据**：
+  - `SystemConstants.EXCLUDE_PROPERTIES` 原值为 `{password, oldPassword, newPassword, confirmPassword}`；
+  - 拦截器对 JSON 请求体按 INFO 级别输出参数，操作日志通过 `JsonUtils.toJsonStringExcludeFields` 复用同一名单；
+  - 上线准备报告把“token/secret/authorization 纳入排除并加 CI 回归”列为建议项，尚未执行。
+- **可选方案**：
+  1. 维持现状，仅排除口令字段——令牌与密钥仍可能落盘，不可接受；
+  2. 对日志输出做全局正则替换——容易误伤正常业务字段，且难以证明覆盖面；
+  3. 扩充“字段名黑名单”并增加回归测试，保持现有递归清理逻辑（采用）。
+- **决定**：方案 3。
+  - `EXCLUDE_PROPERTIES` 增加 `token`、`accessToken`、`refreshToken`、`authorization`、`secret`、`clientSecret`、`apiKey`、`apiSecret`；
+  - 将递归清理实现抽到不依赖 Spring 的 `JsonFieldRemover`，`JsonUtils` 与拦截器共用，便于单元测试；
+  - CI 增加 `LogRedactionTest`：断言名单包含必需项，并验证嵌套对象与数组中的敏感字段被递归清除、非敏感字段保留。
+- **理由**：字段名黑名单与现有实现一致，改动小、可测试、可回退；抽取无容器依赖的工具类避免了为 4 行递归逻辑启动 Spring 测试上下文。
+- **影响与兼容性**：仅影响日志与操作日志的记录内容，不改变任何接口契约；被排除字段在日志中消失，排障时可读性略降但安全收益更高。名单按 JSON 属性名精确匹配（区分大小写），与原有行为一致。
+- **安全风险与权衡**：黑名单只能覆盖常见命名，无法保证任意自定义字段名；因此它只是“减少泄露面”，不能替代“不把密钥放进请求体”。此外，历史日志中若已写入令牌，需按日志保留策略清理，本决策不回改历史数据。
+- **涉及文件**：`gateway/ruoyi-common/ruoyi-common-core/src/main/java/org/dromara/common/core/constant/SystemConstants.java`、`gateway/ruoyi-common/ruoyi-common-json/src/main/java/org/dromara/common/json/utils/JsonFieldRemover.java`（新增）、`gateway/ruoyi-common/ruoyi-common-json/src/main/java/org/dromara/common/json/utils/JsonUtils.java`、`gateway/ruoyi-common/ruoyi-common-web/src/main/java/org/dromara/common/web/interceptor/PlusWebInvokeTimeInterceptor.java`、`gateway/ruoyi-common/ruoyi-common-web/src/test/java/org/dromara/common/web/LogRedactionTest.java`（新增）、`gateway/ruoyi-common/ruoyi-common-web/pom.xml`、`.github/workflows/ci.yml`。
+- **验证方法（实测）**：
+  - 单元测试：`mvn -pl ruoyi-common/ruoyi-common-web -am -Dmaven.test.skip=false -Dprofiles.active=dev -Dtest=LogRedactionTest test` → **2 passed**；
+  - 完整构建：`mvn -B -DskipTests -pl ruoyi-admin -am package` → **BUILD SUCCESS**（JDK 21）；
+  - 运行态：用新镜像重建 `campus-gateway` 后发送含 `token`、嵌套 `secret` 的登录请求（HTTP 200），日志中参数为 `{"clientId":"…","grantType":"password","username":"admin","nested":{}}`，令牌、口令与密钥均未出现，普通字段保留。
+- **回退**：revert 本分支提交并重建网关镜像即可恢复原名单；该改动不参与启动流程，不影响运行中的其他组件。
+- **授权**：A/B 类（安全策略与测试基线），按本 Goal 的 B 类规则先记录后实施；不涉及正式环境配置或数据。
 
 ---
 

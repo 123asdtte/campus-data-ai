@@ -10,7 +10,6 @@ import org.dromara.common.core.utils.StringUtils;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -155,33 +154,8 @@ public class JsonUtils {
             return null;
         }
         JsonNode node = JSON_MAPPER.valueToTree(object);
-        removeFields(node, fieldNames);
+        JsonFieldRemover.removeFields(node, fieldNames);
         return toJsonString(node);
-    }
-
-    /**
-     * 从 JSON 树中递归移除指定字段。
-     *
-     * @param node       JSON 节点
-     * @param fieldNames 需要移除的字段名
-     * @return 原 JSON 节点
-     */
-    public static JsonNode removeFields(JsonNode node, String... fieldNames) {
-        if (node == null || ArrayUtil.isEmpty(fieldNames)) {
-            return node;
-        }
-        if (node.isObject()) {
-            ObjectNode objectNode = (ObjectNode) node;
-            for (String fieldName : fieldNames) {
-                if (StringUtils.isNotBlank(fieldName)) {
-                    objectNode.remove(fieldName);
-                }
-            }
-        }
-        for (JsonNode child : node) {
-            removeFields(child, fieldNames);
-        }
-        return node;
     }
 
     /**

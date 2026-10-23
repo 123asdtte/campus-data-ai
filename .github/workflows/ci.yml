@@ -49,6 +49,9 @@ jobs:
           cache: maven
       # 真实 application-dev.yml 已被 .gitignore 排除；构建只依赖源码与 application.yml
       - run: mvn -B -DskipTests -pl ruoyi-admin -am package
+      # 日志脱敏回归：校验敏感字段名单，以及嵌套对象/数组的递归清理行为。
+      # 父 POM 默认 maven.test.skip=true，这里只对目标模块显式开启并限定测试类。
+      - run: mvn -B -pl ruoyi-common/ruoyi-common-web -am -Dmaven.test.skip=false -Dprofiles.active=dev -Dtest=LogRedactionTest -Dsurefire.failIfNoSpecifiedTests=false test
       # 生产构建配置卫生：-Pprod 必须配合 clean，否则 target/classes 中残留的
       # application-dev.yml / application-prod.yml 会被打进 jar（D-005）。
       - name: 生产构建配置卫生
