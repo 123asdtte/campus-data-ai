@@ -70,6 +70,15 @@ export async function fetchSession(): Promise<SessionInfo> {
   return payload.data;
 }
 
+/** 网关默认返回英文错误，这里统一转成面向校内用户的提示。 */
+function translateLoginError(message: string): string {
+  const attempts = message.match(/Password input error (\d+) times/i);
+  if (attempts) return `密码不正确（已连续输错 ${attempts[1]} 次）。`;
+  if (/user does not exist/i.test(message)) return '账号不存在，请检查学号或工号。';
+  if (/user is disabled|account.*disabled/i.test(message)) return '账号已停用，请联系学工处。';
+  return message || '登录失败，请稍后重试。';
+}
+
 /**
  * 调用 RuoYi 原生登录接口。
  * 返回结构：{ code, msg, data: { access_token, ... } }
@@ -95,7 +104,7 @@ export async function login(username: string, password: string): Promise<void> {
   }
 
   if (!response.ok || payload.code !== 200 || !payload.data?.access_token) {
-    throw new Error(payload.msg || `登录失败（HTTP ${response.status}）`);
+    throw new Error(payload.msg ? translateLoginError(payload.msg) : `登录失败（HTTP ${response.status}）`);
   }
 
   window.localStorage.setItem(TOKEN_KEY, payload.data.access_token);
