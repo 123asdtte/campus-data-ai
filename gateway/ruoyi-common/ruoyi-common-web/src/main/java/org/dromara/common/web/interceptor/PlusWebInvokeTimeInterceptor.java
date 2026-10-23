@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.time.StopWatch;
 import org.dromara.common.core.constant.SystemConstants;
 import org.dromara.common.core.utils.StringUtils;
+import org.dromara.common.json.utils.JsonFieldRemover;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.web.filter.RepeatedlyRequestWrapper;
 import org.springframework.http.MediaType;
@@ -86,7 +87,7 @@ public class PlusWebInvokeTimeInterceptor implements HandlerInterceptor {
         try {
             JsonMapper jsonMapper = JsonUtils.getJsonMapper();
             JsonNode rootNode = jsonMapper.readTree(jsonParam);
-            JsonUtils.removeFields(rootNode, SystemConstants.EXCLUDE_PROPERTIES);
+            JsonFieldRemover.removeFields(rootNode, SystemConstants.EXCLUDE_PROPERTIES);
             return rootNode.toString();
         } catch (Exception e) {
             log.debug("[PLUS]请求参数 JSON 解析失败，跳过结构化脱敏: {}", e.getMessage());
