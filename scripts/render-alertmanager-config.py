@@ -71,12 +71,15 @@ def main() -> int:
 
     url = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
     if url:
-        if any(ch in url for ch in "\r\n\x00"):
-            print("ERROR: ALERT_WEBHOOK_URL 不得包含换行或控制字符", file=sys.stderr)
+        if any(ch.isspace() for ch in url) or "\x00" in url:
+            print("ERROR: ALERT_WEBHOOK_URL 不得包含空白或控制字符", file=sys.stderr)
             return 1
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             print("ERROR: ALERT_WEBHOOK_URL 必须是 http(s) 地址", file=sys.stderr)
+            return 1
+        if parsed.username or parsed.password:
+            print("ERROR: ALERT_WEBHOOK_URL 不得内嵌用户名/密码", file=sys.stderr)
             return 1
         content = build_webhook(url)
         mode = "webhook"
@@ -84,10 +87,13 @@ def main() -> int:
         content = build_null()
         mode = "null"
 
+    created_dir = not output.parent.exists()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content, encoding="utf-8")
     try:
-        os.chmod(output.parent, 0o700)
+        # 只在本脚本创建目录时收紧目录权限；runtime-config 可能与网关配置共用
+        if created_dir:
+            os.chmod(output.parent, 0o700)
         os.chmod(output, 0o600)
     except OSError as exc:
         if os.name == "nt":
