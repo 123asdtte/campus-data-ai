@@ -78,9 +78,29 @@
 | 服务 | 地址 | 说明 |
 |---|---|---|
 | PostgreSQL | 127.0.0.1:55432 | 主栈 |
-| Java 网关 | 127.0.0.1:9190 | 需要 `ruoyi-admin` jar（issue #1），本机通常构建不出来 |
+| Java 网关 | 127.0.0.1:9190 | 真登录链路（RuoYi admin/admin123）；jar 本机可构建，见下 |
+| 网关认证库 | 127.0.0.1:55434 | `campus_gateway`，与业务库物理隔离 |
+| 网关 Redis | 127.0.0.1:6382 | Sa-Token 会话缓存 |
 | Import API | **无宿主端口** | 只在容器内 `127.0.0.1:8000`，冒烟测试进容器访问 |
 | campus-web | 127.0.0.1:8082 | 前端栈，`docker compose -p campus-web -f docker-compose.web.yml up -d` |
+
+**网关真登录链路（2026-10-23 已实测跑通）**：jar 已在本机构建成功
+（JDK 21 + Maven 3.8.4，约 7 分钟），因此 `up-main.ps1` 之外可以单独起网关栈：
+
+```bash
+cd gateway
+mvn -B -DskipTests -pl ruoyi-admin -am package   # 产出 ruoyi-admin/target/ruoyi-admin.jar
+cd ..
+docker compose up -d gateway-db gateway-redis gateway
+```
+
+启动后 `docker compose up -d gateway` 需带 `--snail-job.port=17888`（compose 已内置），
+否则 `TestBroadcastJob` 占位符解析失败导致启动崩溃。登录账号 `admin / admin123`，
+客户端 ID 固定为 `e5cd7e4891bf95d1d19206ce24a7b32e`（与 `sql/005_gateway_bootstrap.sql`
+的 `sys_client` 种子一致）。浏览器请求头为 `Authorization: Bearer <token>` + `clientid`。
+
+> jar 233MB，被 `gateway/.gitignore` 忽略且超 GitHub 100MB 上限，**不能入库**；
+> 长期方案是 CI 构建或 Dockerfile 多阶段构建（见 issue #1 备注）。
 
 > Appsmith 已按 R2 路线图下线（前端主入口改为 campus-web）。服务定义从
 > `docker-compose.yml` 删除，数据卷 `campus_appsmith_stacks` 保留，需要时可将
@@ -146,7 +166,10 @@ $env:POC_ROOT = 'D:\ai\ruoyi-plus-poc'
 | `password authentication failed for user "campus_app"` | 角色没建 | 跑 `up-main.ps1`（会自动执行 003→004→006）；手工补：`docker compose exec -T campus-db psql -U <user> -d <db> -v app_password=... -v ro_password=... -f sql/003_roles.sql` |
 | `required variable GATEWAY_DB_PASSWORD is missing a value`（**任何 compose 子命令都报**） | `.env` 缺键，或值是空的 | 跑 `up-main.ps1` 或 `check-prereqs.ps1`：按 `.env.example` 补齐。空值也算缺失 |
 | `no such service: appsmith` | Appsmith 已按 R2 下线 | 主栈只点名 `campus-db` + `import-api` |
-| `COPY ruoyi-admin/target/ruoyi-admin.jar: not found` | 网关要 RuoYi jar，源码未入库（issue #1） | `up-main.ps1` 不构建网关；需要网关时先解决 issue #1 |
+| `COPY ruoyi-admin/target/ruoyi-admin.jar: not found` | 网关 jar 未构建（233MB 不入库，见「启动后的地址」） | 先 `cd gateway && mvn -B -DskipTests -pl ruoyi-admin -am package`（JDK 21 + Maven 3.8.4，约 7 分钟），再 `docker compose build gateway` |
+| 网关启动崩溃：`Could not resolve placeholder 'snail-job.port'` | `ruoyi-job` 演示任务 `TestBroadcastJob` 需要该占位符 | compose 已内置 `--snail-job.port=17888`；手工启动时也要带上 |
+| 经网关查询中文筛选条件（学院/姓名）返回 0 条 | 已 percent-encoding 的查询串拼进 URI 被 Spring 二次编码 | 网关已改为 `UriComponentsBuilder` 传原始值（签名仍用规范化串），升级 `campus-gateway` 镜像 |
+| 经网关登录 401「登录状态异常」 | token 要从 `Authorization: Bearer` 传，且必须带匹配的 `clientid` 头 | 前端 `client.ts` 已处理；curl 手工测时两个头都要带 |
 | **预览成功，一进校验/提交就 500** | 006 没执行，`clear_import_issues()` 不存在 | 跑 `up-main.ps1` 补齐 003→004→006 |
 | `permission denied for table import_issues` | 003 的 `GRANT DELETE` 被 GBK 吞行吃掉，从未执行 | 用 `-Encoding UTF8` 重跑 003（006 会收回该 DELETE，改用受控函数） |
 | 校验全行无效、`DUPLICATE_STUDENT_NO` | 样例学号上次已导入 | 冒烟测试现在会自动加随机前缀，可直接重跑 |
@@ -199,9 +222,10 @@ $env:POC_ROOT = 'D:\ai\ruoyi-plus-poc'
    现在改为以 `.env.example` 为准，缺键补、空值与占位符填实。
    顺带修掉 `Set-Content -Encoding UTF8` 会给 `.env` 加 BOM 的问题。
 6. **`compose up` 不带服务名会连带构建网关**：网关镜像要
-   `ruoyi-admin/target/ruoyi-admin.jar`，源码还没入库（issue #1），
+   `ruoyi-admin/target/ruoyi-admin.jar`，jar 不在仓库里（233MB 超上限），
    整个 up 直接失败。现在显式点名 `campus-db` + `import-api`。
    Appsmith 已按 R2 下线，点名它会报 `no such service`。
+   （2026-10-23 更新：jar 本机已构建成功，网关栈可单独起，见「启动后的地址」。）
 7. **脚本自身的两个 Windows 坑**（写脚本时踩到，已修）：
    - `Invoke-RestMethod` 会走系统代理访问 127.0.0.1 被掐断（已改用容器内访问）；
    - native 命令的 UTF-8 输出被按 GBK 解码成乱码，设 `[Console]::OutputEncoding`；

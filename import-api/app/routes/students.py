@@ -175,16 +175,20 @@ def update_student(
     payload: StudentUpdate,
     current: Optional[Who] = Depends(identity),
     x_actor: Optional[str] = Header(default=None),
+    x_internal_user: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     require_perm(current, "student:write")
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="没有可修改的字段")
+    # 开启验签时以网关验过身的 who.user 为准；关闭态优先采用网关注入的
+    # X-Internal-User（真实登录人），其次 X-Actor（演示/手工），最后回落值。
+    actor = resolve_actor(current, x_internal_user or x_actor)
     try:
         return queries.update_student(
             student_no,
             fields,
-            resolve_actor(current, x_actor),
+            actor,
             forced_college=require_college(current),
         )
     except service.ServiceError as exc:

@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -74,10 +75,34 @@ public class InternalProxyController {
 
     @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
     @GetMapping("/students")
-    public ResponseEntity<String> listStudents(@RequestParam(required = false) String keyword) {
+    public ResponseEntity<String> listStudents(@RequestParam(required = false) String keyword,
+                                               @RequestParam(required = false) String college,
+                                               @RequestParam(required = false) String class_name,
+                                               @RequestParam(required = false) String status,
+                                               @RequestParam(required = false) Boolean include_inactive,
+                                               @RequestParam(required = false) Integer page,
+                                               @RequestParam(required = false) Integer page_size) {
         Map<String, String> query = new LinkedHashMap<>();
         if (keyword != null && !keyword.isBlank()) {
             query.put("keyword", keyword);
+        }
+        if (college != null && !college.isBlank()) {
+            query.put("college", college);
+        }
+        if (class_name != null && !class_name.isBlank()) {
+            query.put("class_name", class_name);
+        }
+        if (status != null && !status.isBlank()) {
+            query.put("status", status);
+        }
+        if (include_inactive != null) {
+            query.put("include_inactive", String.valueOf(include_inactive));
+        }
+        if (page != null) {
+            query.put("page", String.valueOf(page));
+        }
+        if (page_size != null) {
+            query.put("page_size", String.valueOf(page_size));
         }
         return call(HttpMethod.GET, "/students", query, new byte[0]);
     }
@@ -96,6 +121,56 @@ public class InternalProxyController {
         return call(HttpMethod.PUT, "/students/" + studentNo, Map.of(), body);
     }
 
+    /**
+     * 按需字段导出 Excel（二进制透传，保留上游 Content-Type 与 Content-Disposition）。
+     * Spring 精确匹配优先于 /students/{studentNo}，不会被参数路由抢占。
+     */
+    @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/students/export")
+    public ResponseEntity<byte[]> exportStudents(@RequestParam(required = false) String fields,
+                                                 @RequestParam(required = false) String keyword,
+                                                 @RequestParam(required = false) String college,
+                                                 @RequestParam(required = false) String class_name,
+                                                 @RequestParam(required = false) String status,
+                                                 @RequestParam(required = false) Boolean include_inactive,
+                                                 @RequestParam(required = false) Boolean split_by_college) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (fields != null && !fields.isBlank()) {
+            query.put("fields", fields);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            query.put("keyword", keyword);
+        }
+        if (college != null && !college.isBlank()) {
+            query.put("college", college);
+        }
+        if (class_name != null && !class_name.isBlank()) {
+            query.put("class_name", class_name);
+        }
+        if (status != null && !status.isBlank()) {
+            query.put("status", status);
+        }
+        if (include_inactive != null) {
+            query.put("include_inactive", String.valueOf(include_inactive));
+        }
+        if (split_by_college != null) {
+            query.put("split_by_college", String.valueOf(split_by_college));
+        }
+        return callBinary(HttpMethod.GET, "/students/export", query, new byte[0]);
+    }
+
+    /** 单个学生的字段级编辑审计（operation_logs）。 */
+    @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/students/{studentNo}/audit")
+    public ResponseEntity<String> getStudentAudit(@PathVariable("studentNo") String studentNo,
+                                                  @RequestParam(required = false) Integer limit) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (limit != null) {
+            query.put("limit", String.valueOf(limit));
+        }
+        return call(HttpMethod.GET, "/students/" + studentNo + "/audit", query, new byte[0]);
+    }
+
     // ------------------------------------------------------------------ 聚合（PR-D）
 
     @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
@@ -108,6 +183,73 @@ public class InternalProxyController {
     @GetMapping("/stats/overview")
     public ResponseEntity<String> getOverview() {
         return call(HttpMethod.GET, "/stats/overview", Map.of(), new byte[0]);
+    }
+
+    /** 数据质量看板：完整率/缺失/重名/各学院明细。 */
+    @SaCheckPermission(value = "student:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/meta/data-quality")
+    public ResponseEntity<String> getDataQuality() {
+        return call(HttpMethod.GET, "/meta/data-quality", Map.of(), new byte[0]);
+    }
+
+    // ------------------------------------------------------------------ 操作审计（管理员视角）
+
+    /** 全局字段级编辑留痕，支持关键词/操作人/动作/时间区间筛选。 */
+    @SaCheckPermission(value = "monitor:operlog:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/audit-logs")
+    public ResponseEntity<String> listAuditLogs(@RequestParam(required = false) String keyword,
+                                                @RequestParam(required = false) String actor,
+                                                @RequestParam(required = false) String action,
+                                                @RequestParam(required = false) String from_date,
+                                                @RequestParam(required = false) String until_date,
+                                                @RequestParam(required = false) Integer page,
+                                                @RequestParam(required = false) Integer page_size) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (keyword != null && !keyword.isBlank()) {
+            query.put("keyword", keyword);
+        }
+        if (actor != null && !actor.isBlank()) {
+            query.put("actor", actor);
+        }
+        if (action != null && !action.isBlank()) {
+            query.put("action", action);
+        }
+        if (from_date != null && !from_date.isBlank()) {
+            query.put("from_date", from_date);
+        }
+        if (until_date != null && !until_date.isBlank()) {
+            query.put("until_date", until_date);
+        }
+        if (page != null) {
+            query.put("page", String.valueOf(page));
+        }
+        if (page_size != null) {
+            query.put("page_size", String.valueOf(page_size));
+        }
+        return call(HttpMethod.GET, "/audit-logs", query, new byte[0]);
+    }
+
+    /** 操作人维度统计：各操作人的增/改/删次数（与列表共用筛选条件）。 */
+    @SaCheckPermission(value = "monitor:operlog:list", orRole = SUPER_ADMIN_ROLE)
+    @GetMapping("/audit-logs/summary")
+    public ResponseEntity<String> getAuditSummary(@RequestParam(required = false) String actor,
+                                                  @RequestParam(required = false) String action,
+                                                  @RequestParam(required = false) String from_date,
+                                                  @RequestParam(required = false) String until_date) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (actor != null && !actor.isBlank()) {
+            query.put("actor", actor);
+        }
+        if (action != null && !action.isBlank()) {
+            query.put("action", action);
+        }
+        if (from_date != null && !from_date.isBlank()) {
+            query.put("from_date", from_date);
+        }
+        if (until_date != null && !until_date.isBlank()) {
+            query.put("until_date", until_date);
+        }
+        return call(HttpMethod.GET, "/audit-logs/summary", query, new byte[0]);
     }
 
     // ------------------------------------------------------------------ 导入域（PR-D）
@@ -215,6 +357,10 @@ public class InternalProxyController {
     /**
      * 构造可信身份、签名并转发到 FastAPI。
      * 身份全部来自 Sa-Token 会话，浏览器无法自行声明。
+     *
+     * <p>注意：签名用规范化查询串 {@code normalize(query)}（排序+percent-encoding），
+     * 而实际 URL 必须用原始值经 UriComponentsBuilder 再编码一次——若把已编码的串
+     * 直接拼进 URI 字符串，Spring 会二次编码（% → %25），中文筛选条件全部失效。
      */
     private ResponseEntity<String> call(HttpMethod method, String signPath,
                                         Map<String, String> query, byte[] jsonBody) {
@@ -226,7 +372,7 @@ public class InternalProxyController {
             return ResponseEntity.status(500).body("{\"detail\":\"INTERNAL_HMAC_SECRET 未配置\"}");
         }
 
-        String url = importApiBase + signPath + (normQuery.isEmpty() ? "" : "?" + normQuery);
+        String url = buildUrl(signPath, query);
         RestClient.RequestBodySpec spec = RestClient.create()
             .method(method)
             .uri(url)
@@ -242,6 +388,45 @@ public class InternalProxyController {
             return upstreamError(ex);
         } catch (Exception ex) {
             return unreachable(method.name(), signPath, ex);
+        }
+    }
+
+    /**
+     * 二进制转发（导出 Excel）：签名逻辑与 {@link #call} 完全一致，
+     * 仅以 byte[] 收发，并透传上游的 Content-Type / Content-Disposition。
+     */
+    private ResponseEntity<byte[]> callBinary(HttpMethod method, String signPath,
+                                             Map<String, String> query, byte[] jsonBody) {
+        String normQuery = normalize(query);
+        HttpHeaders headers;
+        try {
+            headers = internalHeaders(method, signPath, normQuery, sha256(jsonBody), "");
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(500)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"detail\":\"INTERNAL_HMAC_SECRET 未配置\"}".getBytes(StandardCharsets.UTF_8));
+        }
+
+        String url = buildUrl(signPath, query);
+        try {
+            return RestClient.create()
+                .method(method)
+                .uri(url)
+                .headers(h -> h.addAll(headers))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(jsonBody)
+                .retrieve()
+                .toEntity(byte[].class);
+        } catch (RestClientResponseException ex) {
+            return ResponseEntity.status(ex.getStatusCode())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ex.getResponseBodyAsString().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ex) {
+            log.error("内部代理二进制调用失败 {} {}", method, signPath, ex);
+            String detail = "{\"detail\":\"上游不可达：" + ex.getClass().getSimpleName() + "\"}";
+            return ResponseEntity.status(502)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(detail.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -314,8 +499,7 @@ public class InternalProxyController {
     }
 
     /** 与 Python 端 _norm_pairs 完全一致：键排序 + 逐字节 percent-encoding。 */
-    private static String normalize(Map<String, String> params) {
-        if (params == null || params.isEmpty()) {
+    private static String normalize(Map<String, String> params) {        if (params == null || params.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
@@ -326,6 +510,18 @@ public class InternalProxyController {
             sb.append(pct(e.getKey())).append('=').append(pct(e.getValue()));
         }
         return sb.toString();
+    }
+
+    /**
+     * 用原始参数值构造上游 URL：由 Spring 做一次 UTF-8 percent-encoding。
+     * 与 normalize() 的分工——签名要规范化串，URL 要原始值，避免二次编码。
+     */
+    private String buildUrl(String signPath, Map<String, String> query) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(importApiBase + signPath);
+        if (query != null) {
+            query.forEach(builder::queryParam);
+        }
+        return builder.build().toUriString();
     }
 
     private static String pct(String value) {

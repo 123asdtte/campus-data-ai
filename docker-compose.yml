@@ -156,6 +156,8 @@ services:
       - "--internal.hmac-secret=${INTERNAL_HMAC_SECRET}"
       - "--internal.importapi-base=http://import-api:8000"
       - "--captcha.enable=false"
+      # ruoyi-job 演示任务 TestBroadcastJob 需要该占位符；POC 不跑 SnailJob 服务端，仅需启动不报错
+      - "--snail-job.port=17888"
       # 仅开发/测试环境：生产必须开启传输加密并替换为受控方案
       - "--api-decrypt.enabled=false"
     ports:
