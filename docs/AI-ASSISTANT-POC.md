@@ -143,10 +143,14 @@ AI_LLM_BASE_URL=https://maas-api.cn-huabei-1.xf-yun.com/v2
 AI_LLM_MODEL=spark-x2.6
 AI_LLM_API_KEY=<服务商密钥>
 AI_LLM_TIMEOUT=20
-# Docker Desktop 会把宿主 127.0.0.1 代理注入容器，需显式改为宿主网关
-AI_HTTP_PROXY=http://host.docker.internal:8080
-AI_HTTPS_PROXY=http://host.docker.internal:8080
+# 默认直连；只有直连不可用时才需要宿主代理（注意 Docker 会注入 127.0.0.1，必须显式覆盖）
+AI_HTTP_PROXY=
+AI_HTTPS_PROXY=
 ```
+
+> 本机最终采用**直连**：compose 显式把代理变量置空，覆盖 Docker Desktop 注入的
+> `http://127.0.0.1:8080`（容器内该地址没有代理）。若直连被阻断，可在 `.env` 填
+> `AI_HTTP_PROXY=http://host.docker.internal:8080` 走宿主代理。
 
 实测（2026-10-23，虚构数据）：
 
