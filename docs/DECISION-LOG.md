@@ -26,6 +26,7 @@
 | D-010 | 2026-10-22 | 监控最小集：Prometheus + blackbox + Alertmanager | Verified（已合并 `a1144f7`） | `ops/monitoring-minimal` | 上线预检、运维 |
 | D-011 | 2026-10-22 | TLS 入口模板与开发验证（正式切换仍需授权） | Verified（已合并 `c6d03d3`） | `ops/tls-dev-template` | 前端入口、上线准备 |
 | D-012 | 2026-10-22 | AI 校园助手只读原型（隔离数据、固定意图、审计） | Verified（已合并 `762b433`） | `feat/ai-assistant-poc` | 阶段 7、安全边界 |
+| D-013 | 2026-10-22 | Alertmanager webhook 投递机制（地址运行时渲染） | Verified（本分支 `ops/alert-delivery`） | `ops/alert-delivery` | 告警可达性、上线准备 |
 
 ---
 
@@ -389,3 +390,34 @@
   - 自动化：`ai-assistant` **15 passed**（含认证失败留痕、LIKE 转义、LLM 桩不发送数据、非法 intent 回退）。
 - **回退**：`docker compose -f docker-compose.ai-poc.yml down -v`（仅删 POC 卷）；回退分支即可移除。
 - **授权**：隔离原型属 A 类；接入真实学生数据、外部模型或正式入口属 C 类/需业务审批，未执行。
+---
+
+## D-013 Alertmanager webhook 投递机制
+
+- **状态**：Verified（本分支；webhook 端到端验证通过）
+- **Decision owner**：AI
+- **问题与背景**：D-010 的 Alertmanager 使用空 receiver，告警只在 Prometheus/Alertmanager UI 可见，生产环境无人会收到通知。
+- **证据**：
+  - 默认 `alertmanager.yml` 的 `receivers[0]` 只有 name，无任何 integration；
+  - 正式 webhook 地址通常含 token，不能提交仓库；
+  - 仓库已有“模板 + 运行时渲染”的先例（`scripts/render-gateway-config.py`）。
+- **可选方案**：
+  1. 把 webhook 地址直接写进仓库配置——泄露风险，不可接受；
+  2. 让运维手工改容器内配置——不可重复、无留痕；
+  3. 渲染脚本 + compose 覆盖文件：默认空 receiver，配置真实地址后启用（采用）。
+- **决定**：方案 3。
+  - `scripts/render-alertmanager-config.py`：读取 `ALERT_WEBHOOK_URL`，生成 `runtime-config/alertmanager.yml`；
+  - 未设置变量时生成空 receiver，行为与默认一致；
+  - `docker-compose.monitoring-webhook.yml` 仅把渲染文件挂到 Alertmanager；
+  - 只接受 http(s)，不打印 URL，输出文件 600、目录 700。
+- **理由**：机制可测试、可回退，仓库零真实凭据；渠道选择与值班仍留给运维。
+- **影响与兼容性**：默认监控行为不变；只有显式渲染并叠加覆盖文件才启用投递；`runtime-config/` 已忽略。
+- **安全风险与权衡**：URL 可能含 token，因此只落盘到 600 文件且不打印；收到 webhook 的第三方系统需另行审批（数据外发内容为告警元数据，不含学生数据）。
+- **涉及文件**：`scripts/render-alertmanager-config.py`、`docker-compose.monitoring-webhook.yml`、`docs/MONITORING.md`、`.github/workflows/ci.yml`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - 空渲染：`receiver=null`，`amtool check-config` SUCCESS；
+  - webhook 渲染：`receiver=webhook`，重建后 `amtool check-config` SUCCESS；
+  - 本地 sink 容器接收：停 `campus-import-api` → 收到 `CampusEndpointDown`；恢复后 → 收到 `status: resolved`；
+  - 恢复默认：重新空渲染并用基础 compose 重建 Alertmanager，测试 sink 已移除。
+- **回退**：不设置 `ALERT_WEBHOOK_URL` 重新渲染，`docker compose --profile monitoring -f docker-compose.yml up -d --force-recreate alertmanager`。
+- **授权**：机制属 A/B 类；真实 webhook 地址、第三方接收方与值班安排需运维确认。

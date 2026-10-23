@@ -121,6 +121,7 @@ jobs:
           docker compose -f docker-compose.web.yml -f docker-compose.tls.yml config -q
           docker compose -f docker-compose.ai-poc.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+          docker compose --profile monitoring -f docker-compose.yml -f docker-compose.monitoring-webhook.yml config -q
 
   ai-assistant-tests:
     name: AI 助手原型测试
