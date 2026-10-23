@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -50,6 +51,17 @@ class Settings:
         ]
         if missing:
             raise RuntimeError("缺少必需环境变量：" + "、".join(missing))
+
+        # SSRF 最小防护：LLM 地址只允许 https，或本机回环 http（测试桩）。
+        # 禁止 http://169.254.x、内网 IP 等非预期目标。
+        if settings.llm_base_url:
+            loopback = re.fullmatch(
+                r"http://(127\.0\.0\.1|localhost)(:\d+)?", settings.llm_base_url
+            )
+            if not settings.llm_base_url.startswith("https://") and not loopback:
+                raise RuntimeError(
+                    "AI_LLM_BASE_URL 仅允许 https:// 或本机回环 http://（防止 SSRF）"
+                )
         return settings
 
 

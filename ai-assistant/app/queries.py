@@ -22,9 +22,14 @@ def _mask_name(name: str) -> str:
     return name[0] + "*" * (len(name) - 1)
 
 
+_ALLOWED_SCOPE_COLUMNS = {"college_code", "b.college_code"}
+
+
 def _scope_sql(scope: str | None, column: str = "college_code") -> tuple[str, list[Any]]:
     if scope is None:
         return "", []
+    if column not in _ALLOWED_SCOPE_COLUMNS:
+        raise ValueError("非法的范围列名")
     return f" AND {column} = %s", [scope]
 
 

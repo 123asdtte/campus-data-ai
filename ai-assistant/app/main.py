@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import hmac
-from typing import Any
+from typing import Any, NoReturn
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -30,7 +30,7 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
 
-def _deny_unauthenticated(username: str | None, reason: str) -> None:
+def _deny_unauthenticated(username: str | None, reason: str) -> NoReturn:
     """认证失败也要留痕（含尝试的用户名），审计失败则 fail-closed。"""
     try:
         write_audit(
@@ -165,7 +165,10 @@ def query(
                 question=question,
                 intent=plan.intent,
                 status="denied",
-                detail={"reason": str(exc)},
+                detail={
+                    "reason": "policy_denied",
+                    "requested_college": plan.args.get("college"),
+                },
             )
         except AuditError as audit_exc:
             raise HTTPException(status_code=503, detail="审计不可用，已拒绝返回数据") from audit_exc
