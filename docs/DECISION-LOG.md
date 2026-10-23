@@ -29,6 +29,7 @@
 | D-013 | 2026-10-22 | Alertmanager webhook 投递机制（地址运行时渲染） | Verified（本分支 `ops/alert-delivery`） | `ops/alert-delivery` | 告警可达性、上线准备 |
 | D-015 | 2026-10-23 | RuoYi 未使用模块裁剪（gen/job/ai/workflow/mcp/admin-client） | Verified（本分支 `chore/trim-unused-gateway-modules`） | `chore/trim-unused-gateway-modules` | 攻击面收敛、上线准备 |
 | D-016 | 2026-10-23 | 关闭网关 OpenAPI 文档与免鉴权白名单 | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 接口枚举、上线准备 |
+| D-017 | 2026-10-23 | CI 校验生产 jar 不含 dev/prod 配置（强制 clean） | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 构建卫生、发布流程 |
 
 ---
 
@@ -489,3 +490,29 @@
   - 登录 HTTP 200；冒烟（`/gw`）**FAIL=0**。
 - **回退**：将 `springdoc.api-docs.enabled`/`swagger-ui.enabled` 改回 `true` 并恢复白名单（或仅在受控内网恢复），重新构建镜像；无数据变更。
 - **授权**：B 类（安全策略调整，不改变业务接口）。
+
+---
+
+## D-017 CI 校验生产 jar 不含 dev/prod 配置
+
+- **状态**：Verified（本分支 `hardening/gateway-api-docs`，待合并）
+- **Decision owner**：AI
+- **问题与背景**：D-005 要求生产构建排除 `application-dev.yml`/`application-prod.yml`，但只执行 `mvn -Pprod package`（不带 clean）时，Maven 不会删除上一次 dev 构建留在 `target/classes` 的配置文件，最终仍会被打进 jar；此前只有 `preflight.py` 对运行镜像做检查，CI 不拦截。
+- **证据（实测）**：
+  - 在已执行 dev 构建的工作区直接运行 `mvn -Pprod -DskipTests -pl ruoyi-admin -am package`，随后 `jar tf` 仍能看到 `BOOT-INF/classes/application-dev.yml` 与 `application-prod.yml`；
+  - 改为 `mvn -Pprod clean package` 后，jar 中只剩 `application.yml`。
+- **可选方案**：
+  1. 只改文档——仍可能在流水线误用非 clean 构建；
+  2. 在 CI 中执行 `-Pprod clean package` 并断言 jar 内容（采用）；
+  3. 从仓库删除 dev/prod 配置文件——本地开发与生产挂载都需要它们，不可行。
+- **决定**：方案 2。CI 的网关作业增加“生产构建配置卫生”步骤：先 `-Pprod clean package`，再用 `unzip -l` 断言不存在 dev/prod 配置且存在 `application.yml`，否则失败。
+- **理由**：让构建卫生成为可执行的门禁，而不是依赖人工记住 clean；失败信息直接指出被污染的配置文件名。
+- **影响与兼容性**：CI 网关作业时间增加一次 clean 构建；不影响开发构建与运行镜像；生产发布流程应继续使用带 clean 的命令。
+- **安全风险与权衡**：该检查只覆盖 jar 内容，不覆盖运行时挂载是否最小化；生产配置仍由 `render-gateway-config.py` 渲染并只挂载必要文件。
+- **涉及文件**：`.github/workflows/ci.yml`、`docs/DECISION-LOG.md`、`docker-compose.prod.yml`（其注释已使用 clean 命令，无需改动）。
+- **验证方法（实测）**：
+  - 非 clean 的 `-Pprod package` → jar 含 2 个配置文件（复现问题）；
+  - `-Pprod clean package` → `jar tf` 仅剩 `BOOT-INF/classes/application.yml`（BUILD SUCCESS）；
+  - CI 步骤逻辑与上述命令一致（需在推送后由 CI 实际执行确认）。
+- **回退**：删除 CI 步骤即可；不影响构建产物本身。
+- **授权**：A/B 类（测试基线与发布流程）。
