@@ -20,12 +20,12 @@
 | D-004 | 2026-10-22 | 上线预检脚本（只读 16 项） | Verified（已合并 `aa5ebe6`） | `ops/production-preflight` | 发布流程 |
 | D-005 | 2026-10-22 | 生产构建排除本地配置 + 配置渲染/挂载 | Verified（已合并 `63ccc4d`） | `ops/gateway-config-hygiene` | 构建、密钥、部署 |
 | D-006 | 2026-10-22 | 上述分支的合并顺序与执行方式 | Verified（实际顺序见正文） | — | 发布流程 |
-| D-007 | 2026-10-22 | 开发脚本对齐统一入口与全新建库流程 | Verified（本分支 `chore/dev-env-align`） | `chore/dev-env-align` | 新同事启动、冒烟、文档 |
-| D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Verified（#39 已合并 `146548d`；本分支叠加后实测通过） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
+| D-007 | 2026-10-22 | 开发脚本对齐统一入口与全新建库流程 | Verified（已合并 `2263aee`） | `chore/dev-env-align` | 新同事启动、冒烟、文档 |
+| D-008 | 2026-10-22 | 整合同事 PR #39，并修正其“网关不可启动”前提 | Verified（#39 合并 `146548d`；#40 叠加后实测通过 `2263aee`） | `fix/env-sync-with-example` + `chore/dev-env-align` | PR 整合、开发体验 |
 | D-009 | 2026-10-22 | 前端 nginx 动态解析网关，避免网关重建后 502 | Verified（已合并 `cfeec7a`） | `fix/web-nginx-dns` | 前端可用性、部署 |
 | D-010 | 2026-10-22 | 监控最小集：Prometheus + blackbox + Alertmanager | Verified（已合并 `a1144f7`） | `ops/monitoring-minimal` | 上线预检、运维 |
 | D-011 | 2026-10-22 | TLS 入口模板与开发验证（正式切换仍需授权） | Verified（已合并 `c6d03d3`） | `ops/tls-dev-template` | 前端入口、上线准备 |
-| D-012 | 2026-10-22 | AI 校园助手只读原型（隔离数据、固定意图、审计） | Verified（本分支 `feat/ai-assistant-poc`） | `feat/ai-assistant-poc` | 阶段 7、安全边界 |
+| D-012 | 2026-10-22 | AI 校园助手只读原型（隔离数据、固定意图、审计） | Verified（已合并 `762b433`） | `feat/ai-assistant-poc` | 阶段 7、安全边界 |
 
 ---
 
@@ -358,7 +358,7 @@
 
 ## D-012 AI 校园助手只读原型
 
-- **状态**：Verified（隔离环境原型与测试完成；未接真实数据）
+- **状态**：Verified（已合并 `762b433`；隔离环境原型与测试完成，未接真实数据）
 - **Decision owner**：AI
 - **问题与背景**：阶段 7 要求在隔离环境、使用虚构数据、只读优先地验证 AI 助手的权限、安全与业务价值。
 - **证据**：
