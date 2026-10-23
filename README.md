@@ -260,6 +260,7 @@ docker compose -p campus-web -f docker-compose.web.yml logs -f
 | 安全·关闭态 | `test_auth_disabled.py` | OpenAPI 无 PUT、405 无副作用、旧行为回归 | 无 |
 | 安全·开启态 | `test_internal_auth.py`、`test_route_matrix.py` | 缺头/篡改/过期/重放/权限/范围、11×5 矩阵 | PostgreSQL |
 | Java 网关 | `gateway/` | `mvn -B -DskipTests -pl ruoyi-admin -am package` | JDK 21 + Maven |
+| 前端单元 | `web/src/**/*.test.{ts,tsx}` | API client / 登录会话 / UI 组件冒烟 | Node 22+ |
 
 **CI 实查（2026-10-22）**：关闭态 collected 213（**130 passed / 82 skipped / 1 xfailed**）；开启态 collected 88（**88 passed**）。
 
@@ -275,12 +276,21 @@ CAMPUS_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/campus_test \
 真库用例会 **TRUNCATE 业务表**，只能指向独立测试库；CI 用 `postgres:16.15-alpine` service
 并先执行 `python scripts/init-test-db.py` 建结构。**禁止把该变量指向主库 `campus`。**
 
+前端单元测试与 lint（CI 同样执行）：
+
+```bash
+cd web
+npm ci
+npm run lint
+npm run test
+```
+
 本轮尚未覆盖（仍是空白，不是「已验证」）：
 
 - 提交阶段的数据库异常注入与回滚；
 - 并发对同一批次的提交（当前靠 `UPDATE ... WHERE batch_status='validated'` 兜底，未压测）；
 - 超大文件（接近 10 MB / 10,000 行）；
-- 前端交互仍靠人眼，Playwright 脚本在仓库之外的 POC 目录。
+- 前端已有 API client / 登录会话 / UI 组件单元测试；浏览器级 E2E 仍靠人眼，Playwright 脚本在仓库之外的 POC 目录。
 
 验收全部使用 **`samples/` 下的虚构数据**（学号形如 `SMPL2026xxxx`、`DEMO2021xxxx`）。**禁止把真实学生数据带入任何开发或验证环境。**
 
