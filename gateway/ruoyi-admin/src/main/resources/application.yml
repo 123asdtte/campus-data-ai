@@ -108,8 +108,6 @@ security:
     - /favicon.ico
     - /error
     - /healthz
-    - /*/api-docs
-    - /*/api-docs/**
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
@@ -158,8 +156,12 @@ api-decrypt:
 
 springdoc:
   api-docs:
-    # 是否开启接口文档
-    enabled: true
+    # 校园平台不对外提供 OpenAPI 文档（D-016）：
+    # 原配置会把 /v3/api-docs 加入免鉴权白名单，导致未登录即可枚举全部接口。
+    enabled: false
+  swagger-ui:
+    # 同步关闭 Swagger UI，避免残留静态页面误导使用者
+    enabled: false
   info:
     # 标题
     title: '标题：RuoYi-Vue-Plus后台管理系统_接口文档'

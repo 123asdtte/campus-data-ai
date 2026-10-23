@@ -28,6 +28,7 @@
 | D-012 | 2026-10-22 | AI 校园助手只读原型（隔离数据、固定意图、审计） | Verified（已合并 `762b433`） | `feat/ai-assistant-poc` | 阶段 7、安全边界 |
 | D-013 | 2026-10-22 | Alertmanager webhook 投递机制（地址运行时渲染） | Verified（本分支 `ops/alert-delivery`） | `ops/alert-delivery` | 告警可达性、上线准备 |
 | D-015 | 2026-10-23 | RuoYi 未使用模块裁剪（gen/job/ai/workflow/mcp/admin-client） | Verified（本分支 `chore/trim-unused-gateway-modules`） | `chore/trim-unused-gateway-modules` | 攻击面收敛、上线准备 |
+| D-016 | 2026-10-23 | 关闭网关 OpenAPI 文档与免鉴权白名单 | Verified（本分支 `hardening/gateway-api-docs`） | `hardening/gateway-api-docs` | 接口枚举、上线准备 |
 
 ---
 
@@ -457,3 +458,34 @@
   - 冒烟（`http://127.0.0.1:8082/gw`）：**FAIL=0**（登录、无 token 拒绝、学生列表、导入预览/校验/提交）。
 - **回退**：revert 本分支提交并重新构建镜像；不涉及数据迁移，回退后端点与后台线程恢复。
 - **授权**：A/B 类（攻击面收敛，不改变校园业务功能）；如后续要恢复定时任务/工作流，需重新评审并补回配置与菜单。
+
+---
+
+## D-016 关闭网关 OpenAPI 文档与免鉴权白名单
+
+- **状态**：Verified（本分支 `hardening/gateway-api-docs`，待合并）
+- **Decision owner**：AI
+- **问题与背景**：网关的鉴权白名单包含 `/*/api-docs`、`/*/api-docs/**`，而 `springdoc.api-docs.enabled` 为 `true`。结果是未登录即可读取完整 OpenAPI 描述，枚举全部接口路径与参数模型，为后续攻击提供地图。
+- **证据（实测）**：
+  - 未带 token：`GET /v3/api-docs` → **HTTP 200**，返回 `openapi: 3.1.0` 与接口清单；`GET /v3/api-docs/swagger-config` → **HTTP 200**；
+  - `application.yml` 的 `security.excludes` 明确放行 `/*/api-docs`；
+  - `/doc.html` 本身是 404（未部署 Knife4j 页面），但 `/v3/api-docs` 已足够泄露接口面。
+- **可选方案**：
+  1. 保留现状——未登录可枚举接口，不可接受；
+  2. 只删除白名单——文档仍需登录，但任意有效账号（含低权限）仍可读取全部接口；
+  3. 关闭 springdoc 文档与 Swagger UI，并删除白名单（采用）。
+- **决定**：方案 3。
+  - `springdoc.api-docs.enabled: false`、`springdoc.swagger-ui.enabled: false`；
+  - 从 `security.excludes` 删除 `/*/api-docs`、`/*/api-docs/**`，恢复默认拒绝；
+  - 保留 `springdoc.info/group-configs` 配置（关闭状态下不生效），便于需要时快速恢复。
+- **理由**：校园平台前端是固定 React 应用，接口契约由代码与测试维护，不依赖在线 Swagger；关闭后直接消除未授权枚举面，且无需改动任何业务控制器。
+- **影响与兼容性**：`/v3/api-docs`、`/v3/api-docs/swagger-config`、`/swagger-ui/**` 不再注册，统一返回业务码 `404`（HTTP 200）；登录、系统接口与内部代理不受影响。开发环境也不再提供 Swagger UI，如需临时查看，可在本地临时开启但不得提交。
+- **安全风险与权衡**：关闭文档不影响鉴权本身；但“关闭文档”不等于“接口不可探测”，仍需依赖鉴权与最小权限。后续如恢复文档，必须同时恢复鉴权保护或仅在内网/受控环境开放。
+- **涉及文件**：`gateway/ruoyi-admin/src/main/resources/application.yml`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - `mvn -B -DskipTests -pl ruoyi-admin -am package` → **BUILD SUCCESS**；
+  - 重建镜像与容器 → `healthy`；
+  - 未带 token：`/v3/api-docs`、`/v3/api-docs/swagger-config`、`/swagger-ui/index.html` 均返回 `{"code":404,"msg":"请求地址不存在"}`；带 token 访问 `/v3/api-docs` 同样 404；
+  - 登录 HTTP 200；冒烟（`/gw`）**FAIL=0**。
+- **回退**：将 `springdoc.api-docs.enabled`/`swagger-ui.enabled` 改回 `true` 并恢复白名单（或仅在受控内网恢复），重新构建镜像；无数据变更。
+- **授权**：B 类（安全策略调整，不改变业务接口）。
