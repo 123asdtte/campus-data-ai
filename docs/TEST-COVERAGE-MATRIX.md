@@ -1,5 +1,7 @@
 # import-api 测试覆盖矩阵
 
+> **2026-10-23 复跑**：以 `CAMPUS_TEST_ADMIN_DATABASE_URL`/`CAMPUS_TEST_DATABASE_URL` 指向测试库，关闭态实测 **195 passed / 102 skipped / 1 xfailed**；开启态用例由安全开关单独执行。本矩阵正文仍是 `c28ec94` 的历史盘点基线，用于说明缺口来源，不代表当前用例数。
+>
 > **2026-10-22 更新（PR-E）**：现行用例总数为 **关闭态 130 passed / 开启态 116 passed**（另 101 skipped、1 xfailed）；本矩阵正文是 `c28ec94` 的 112 用例基线，缺口描述已部分被 PR-A/B/C/E 关闭，详见 `PR-E-ACCEPTANCE-REPORT.md`。
 >
 > Issue #8 第一步交付物（盘点，不改任何测试代码）。
