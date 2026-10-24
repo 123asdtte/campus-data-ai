@@ -4,7 +4,7 @@ import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import LoginBrandPanel from '../components/LoginBrandPanel';
 import LoginDataArt from '../components/LoginDataArt';
-import { login } from '../api/auth';
+import { login, consumeExpiredNotice, SESSION_EXPIRED_EVENT } from '../api/auth';
 import { useSession } from '../session/SessionContext';
 
 const REMEMBER_KEY = 'campus.login.username';
@@ -61,6 +61,13 @@ export default function LoginPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (consumeExpiredNotice()) setError('登录状态已失效，请重新登录');
+    const onExpired = () => setError('登录状态已失效，请重新登录');
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
+
   const onFinish = async (values: LoginValues) => {
     const username = values.username.trim();
     setError('');
@@ -113,7 +120,7 @@ export default function LoginPage() {
               <p className="login-card-sub">使用学校统一账号登录，系统将按角色进入工作台。</p>
 
               {error ? (
-                <div className="login-error" role="alert">
+                <div className="login-error">
                   <Alert type="error" showIcon message={error} />
                 </div>
               ) : null}

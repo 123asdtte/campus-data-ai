@@ -861,6 +861,30 @@
 
 ---
 
+## D-030 登录态失效统一处理
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：网关对失效 token 返回 HTTP 200 + `{"code":401}`，`demo-api` 对失效 token 返回 HTTP 401。原实现只在 `fetchSession` 中把失败展示为普通错误，token 仍留在 localStorage；`RequireLogin` 只判断 token 是否存在，失效 token 仍能进入业务页，页面表现为数据加载失败而非重新登录。
+- **可选方案**：
+  1. 每个页面自行处理 401——重复且容易漏；
+  2. 统一在 API 层广播失效事件，由会话层清空并回登录页（采用）；
+  3. 依赖服务端 302——会破坏 SPA 和 JSON 接口语义，未采用。
+- **决定**：
+  - `auth.ts` 新增 `SessionExpiredError`、`notifySessionExpired(failedToken?)`、`SESSION_EXPIRED_EVENT` 和一次性提示标记；
+  - `fetchSession`（HTTP 401 或 `code:401`）、`useDemoData`（HTTP 401）、异动写接口（HTTP 401）统一触发失效通知；
+  - `SessionProvider` 监听事件，清空 session、清除数据缓存，并让受保护路由回到 `/login`；
+  - 登录页读取一次性提示，展示“登录状态已失效，请重新登录”；
+  - 通知携带失败请求的 token，与当前 token 不一致时忽略，避免旧请求误清新登录会话；
+  - 移除登录错误外层容器的重复 `role="alert"`，只保留 AntD Alert 的语义。
+- **影响与兼容性**：仅影响前端登录态处理；正常登录、角色路由、数据缓存和台账写入路径不变。失效时页面会整体回到登录页，未保存的前端表单内容会丢失（演示环境可接受）。
+- **涉及文件**：`web/src/api/auth.ts`、`web/src/session/SessionContext.tsx`、`web/src/demo/useDemoData.ts`、`web/src/demo/ledger.ts`、`web/src/pages/LoginPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`npm run build` 通过；Playwright **7 passed / 20.9s**，新增用例将 localStorage token 改为 `invalid-token` 后刷新 `/my-schedule`，断言跳转 `/login`、显示失效提示、token 已清空。
+- **回退**：还原上述文件；无数据与接口变更。
+- **授权**：B 类（本地演示前端健壮性）。
+
+---
+
 ## D-028 启用 Nginx 文本压缩
 
 - **状态**：Verified（本地，2026-10-24；未合并）

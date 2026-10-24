@@ -1,4 +1,4 @@
-import { getToken } from '../api/auth';
+import { getToken, notifySessionExpired } from '../api/auth';
 import type { DemoChange } from './types';
 
 export interface ChangeInput {
@@ -36,6 +36,10 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
     payload = await response.json();
   } catch {
     // 非 JSON 响应交给状态码判断
+  }
+  if (response.status === 401) {
+    notifySessionExpired(token);
+    throw new Error('登录状态已失效，请重新登录');
   }
   if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   return payload as T;

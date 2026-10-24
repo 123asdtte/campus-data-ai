@@ -14,6 +14,17 @@ export const GW_CLIENT_ID = 'e5cd7e4891bf95d1d19206ce24a7b32e';
 
 const TOKEN_KEY = 'campus.gateway.token';
 const USER_KEY = 'campus.gateway.user';
+const EXPIRED_KEY = 'campus.gateway.expired';
+
+/** 登录态被网关判定失效时广播，由会话层清空身份并送回登录页。 */
+export const SESSION_EXPIRED_EVENT = 'campus:session-expired';
+
+export class SessionExpiredError extends Error {
+  constructor(message = '登录状态已失效，请重新登录') {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
+}
 
 export interface LoginResult {
   access_token: string;
@@ -48,6 +59,26 @@ export function logout(): void {
   window.localStorage.removeItem(USER_KEY);
 }
 
+/** 登录页读取并清除“刚刚失效”提示，避免刷新后重复展示。 */
+export function consumeExpiredNotice(): boolean {
+  const expired = window.sessionStorage.getItem(EXPIRED_KEY) === '1';
+  if (expired) window.sessionStorage.removeItem(EXPIRED_KEY);
+  return expired;
+}
+
+/**
+ * 网关返回 401 时统一调用：清 token、留下登录页提示并广播失效事件。
+ * 传入失败请求所用的 token，避免旧请求误清新登录的会话。
+ */
+export function notifySessionExpired(failedToken?: string): void {
+  const current = getToken();
+  if (!current) return;
+  if (failedToken && failedToken !== current) return;
+  logout();
+  window.sessionStorage.setItem(EXPIRED_KEY, '1');
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
 /** 读取网关当前登录用户、角色与权限；角色由服务端账号绑定，不由前端选择。 */
 export async function fetchSession(): Promise<SessionInfo> {
   const token = getToken();
@@ -65,6 +96,10 @@ export async function fetchSession(): Promise<SessionInfo> {
     throw new Error(`读取登录身份失败（HTTP ${response.status}）`);
   }
   if (!response.ok || payload.code !== 200 || !payload.data) {
+    if (response.status === 401 || payload.code === 401) {
+      notifySessionExpired(token);
+      throw new SessionExpiredError();
+    }
     throw new Error(payload.msg || `读取登录身份失败（HTTP ${response.status}）`);
   }
   return payload.data;

@@ -1,6 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { fetchSession, isLoggedIn, type SessionInfo } from '../api/auth';
+import {
+  fetchSession,
+  isLoggedIn,
+  notifySessionExpired,
+  SessionExpiredError,
+  SESSION_EXPIRED_EVENT,
+  type SessionInfo,
+} from '../api/auth';
+import { invalidateDemoData } from '../demo/useDemoData';
 
 interface SessionState {
   session: SessionInfo | null;
@@ -31,6 +39,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return next;
     } catch (reason) {
       setSession(null);
+      if (reason instanceof SessionExpiredError) {
+        setError(reason.message);
+        notifySessionExpired();
+        return null;
+      }
       setError(reason instanceof Error ? reason.message : '读取登录身份失败');
       return null;
     } finally {
@@ -41,6 +54,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const onExpired = () => {
+      invalidateDemoData();
+      setSession(null);
+      setError('登录状态已失效，请重新登录');
+      setLoading(false);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
 
   const clear = useCallback(() => {
     setSession(null);

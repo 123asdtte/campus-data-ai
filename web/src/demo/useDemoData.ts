@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DemoData } from './types';
-import { getToken } from '../api/auth';
+import { getToken, notifySessionExpired, SessionExpiredError } from '../api/auth';
 
 // 页面间共用同一份数据；按 token 区分，避免切换账号后读到上一个身份的范围。
 let inFlight: { token: string; promise: Promise<DemoData> } | null = null;
@@ -12,6 +12,11 @@ function loadDemoData(token: string): Promise<DemoData> {
 
   const promise = fetch('/demo-api/data', { headers: { Authorization: `Bearer ${token}` } })
     .then((response) => {
+      if (response.status === 401) {
+        invalidateDemoData();
+        notifySessionExpired(token);
+        throw new SessionExpiredError();
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json() as Promise<DemoData>;
     })

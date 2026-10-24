@@ -127,4 +127,16 @@ test.describe('本地演示关键路径', () => {
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe('four-sheet.xlsx');
   });
+
+  test('失效 token 清除会话并回到登录页', async ({ page }) => {
+    await login(page, 'SK-2026-000001', 'Demo@2026');
+    await expect(page).toHaveURL(/\/my-schedule/);
+
+    await page.evaluate(() => window.localStorage.setItem('campus.gateway.token', 'invalid-token'));
+    await page.reload();
+
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole('alert')).toContainText('登录状态已失效');
+    expect(await page.evaluate(() => window.localStorage.getItem('campus.gateway.token'))).toBeNull();
+  });
 });
