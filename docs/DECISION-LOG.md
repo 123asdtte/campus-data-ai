@@ -649,3 +649,33 @@
   - 登录 HTTP 200；冒烟（`/gw`）**FAIL=0**（含学生列表与导入）。
 - **回退**：恢复 `mysql-connector-j` 依赖、删除两处 exclusion 并重新构建；无数据变更。
 - **授权**：B 类（非生产关键依赖与许可收敛）。
+
+---
+
+## D-021 本地测试入口与数据库隔离加固
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - `import-api/tests` 缺少 `__init__.py`；本机 site-packages 存在同名 `tests` 包，`from tests import auth_helper` 被遮蔽，7 个测试模块 collection error；
+  - `ai-assistant/tests/conftest.py` 默认指向 55435 的 POC 库，而 `test_assistant.py` 会执行 `DELETE FROM ai.students`；本次因口令不匹配未造成删除，但这是可触发的数据完整性风险；
+  - 本地缺少一键隔离库测试入口，测试库 `127.0.0.1:5433/campus_test` 已存在但依赖手工命令。
+- **可选方案**：
+  1. 只把导入改成相对路径——其他测试模块仍可能被同名包遮蔽；
+  2. 显式声明 `import-api/tests` 为包，并新增只接受测试库的一键脚本（采用）；
+  3. 让 AI 测试默认不连接 POC 库，必须显式指定隔离库或确认数据可丢弃（采用）。
+- **决定**：
+  - 新增 `import-api/tests/__init__.py`；
+  - 新增 `scripts/dev/test-import-api.py`：先校验目标库名含 `test`，再初始化/校验 001/003/004/006，跑关闭态全量与安全开启态子集；
+  - AI 测试在未显式设置 `AI_DB_PORT` 且未设置 `AI_TEST_ALLOW_LIVE=1` 时模块级跳过。
+- **影响与兼容性**：不改变运行时代码、接口、数据库或部署；CI 的 `AI_DB_PORT=5432` 与既有 import-api 测试步骤不受影响。
+- **安全风险与权衡**：测试库仍会被 TRUNCATE；通过库名闸门与独立脚本降低误指向主库的风险。AI 测试若确需连接 POC 库，必须显式授权，不能依赖默认值。
+- **涉及文件**：`import-api/tests/__init__.py`、`scripts/dev/test-import-api.py`、`ai-assistant/tests/conftest.py`、`README.md`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - 隔离库权限校验 11 项 PASS；
+  - 关闭态：**195 passed / 102 skipped / 1 xfailed**；
+  - 认证开启态：**120 passed**；
+  - `cd ai-assistant && python -m pytest -q`：默认模块级 skip，未连接 55435，未执行 DELETE；
+  - 未修改主库 `campus` 与 POC 库数据。
+- **回退**：删除新增脚本/包声明与 AI 闸门，恢复原手工命令；无数据变更。
+- **授权**：A/B 类（测试环境自动化与安全默认值）；真实库测试仍需人工授权。
