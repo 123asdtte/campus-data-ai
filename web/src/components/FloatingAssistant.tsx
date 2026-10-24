@@ -47,6 +47,12 @@ const PROFILE_SUGGESTIONS = [
   '打开异动台账',
 ];
 
+const CHANGE_SUGGESTIONS = [
+  '这条异动核对了吗？',
+  '最近的学籍异动情况',
+  '打开学籍异动',
+];
+
 // 服务端只会下发受控的内部路由；前端仍再校验一次，避免把任意 URL 交给 navigate。
 function safeInternalPath(to?: string): string | null {
   return to && to.startsWith('/') && !to.startsWith('//') ? to : null;
@@ -76,6 +82,7 @@ export default function FloatingAssistant() {
   const searchParams = new URLSearchParams(search);
   const contextStudent = searchParams.get('student') ?? undefined;
   const contextChange = searchParams.get('change') ?? undefined;
+  const isChangeContext = Boolean(contextChange);
   const isProfileContext = Boolean(contextStudent);
   // AI 问数页本身就是一个完整对话界面，再挂悬浮入口只会重复。
   const embedded = pathname === '/assistant';
@@ -84,20 +91,34 @@ export default function FloatingAssistant() {
   const [pending, setPending] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesBox = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
 
-  // 面板最高 620px，多轮问答后最新回答会落在可视区外；用户正在回看历史时不要抢滚动。
+  // 用户停在底部时，新回答（尤其带卡片的异动/学生结果）要跟随滚到底；
+  // 用户主动向上回看时不要抢滚动。发送新问题视为明确要跟进最新回答。
   useEffect(() => {
     const el = messagesBox.current;
     if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
+    if (stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
 
-  const contextLabel = isProfileContext ? '学生档案' : PAGE_TITLES[pathname] ?? '数据管理';
+  const onMessagesScroll = () => {
+    const el = messagesBox.current;
+    if (!el) return;
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+
+  const contextLabel = isChangeContext
+    ? '异动记录'
+    : isProfileContext
+      ? '学生档案'
+      : PAGE_TITLES[pathname] ?? '数据管理';
   const staticSuggestions = isStudent
     ? STUDENT_SUGGESTIONS
-    : isProfileContext
-      ? PROFILE_SUGGESTIONS
-      : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
+    : isChangeContext
+      ? CHANGE_SUGGESTIONS
+      : isProfileContext
+        ? PROFILE_SUGGESTIONS
+        : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
   // 服务端会针对这次回答给出下一步问法（与完整问数页同一份数据）。悬浮面板原先一直丢掉它，
   // 于是「下周有哪些课」这种追问要用户自己再打一遍；现在优先用服务端的，静态列表只做兜底。
   const lastSuggestions = [...messages].reverse().find((message) => message.reply)?.reply?.suggestions;
@@ -129,6 +150,7 @@ export default function FloatingAssistant() {
   const ask = async (value: string) => {
     const question = value.trim();
     if (!question || pending) return;
+    stickToBottom.current = true;
     setMessages((current) => [
       ...current,
       { id: `u-${Date.now()}`, role: 'user', text: question },
@@ -201,7 +223,7 @@ export default function FloatingAssistant() {
             </button>
           </header>
 
-          <div className="fa-messages" ref={messagesBox} aria-live="polite">
+          <div className="fa-messages" ref={messagesBox} onScroll={onMessagesScroll} aria-live="polite">
             {messages.map((message) => {
               const meta = replyMeta(message.reply);
               return (
@@ -248,6 +270,31 @@ export default function FloatingAssistant() {
                             <span className="fa-student-id">{student.uid}</span>
                             <b>{student.name}</b>
                             <small>{student.class_short || student.class_name} · {student.status} · {student.college}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {message.reply?.changes?.length ? (
+                    <div className="fa-changes">
+                      {message.reply.changes.map((change) => {
+                        const target = safeInternalPath(change.change_to);
+                        return (
+                          <button
+                            type="button"
+                            className="fa-change"
+                            key={change.change_no}
+                            aria-label={`查看异动 ${change.change_no}`}
+                            disabled={!target}
+                            onClick={() => {
+                              if (!target) return;
+                              setOpen(false);
+                              navigate(target);
+                            }}
+                          >
+                            <span className="fa-change-no">{change.change_no}</span>
+                            <b>{change.type} · {change.name}</b>
+                            <small>{change.class_short} · {change.date} · {change.status} · {change.platform_status}</small>
                           </button>
                         );
                       })}

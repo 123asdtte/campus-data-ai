@@ -2892,6 +2892,48 @@ body {
   font-size: 10px;
 }
 
+.ai-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ai-change {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  text-decoration: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ai-change:hover {
+  border-color: var(--warning);
+  background: var(--warning-soft, var(--surface));
+}
+
+.ai-change-no {
+  color: var(--warning);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ai-change b {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ai-change small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .ai-action {
   display: inline-block;
   margin-top: 8px;
@@ -3505,6 +3547,55 @@ body {
 }
 
 .fa-student small {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.fa-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.fa-change {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.fa-change:hover:not(:disabled) {
+  border-color: var(--warning);
+  background: var(--warning-soft, var(--surface));
+}
+
+.fa-change:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.fa-change-no {
+  color: var(--warning);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+}
+
+.fa-change b {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.fa-change small {
   color: var(--muted);
   font-size: 9.5px;
 }

@@ -510,6 +510,68 @@ class StudentLookupTest(unittest.TestCase):
         self.assertEqual(pending["intent"], "pending")
 
 
+class ChangeLookupTest(unittest.TestCase):
+    """异动记录级检索：卡片只含定位字段，上下文和范围都要复核。"""
+
+    def setUp(self):
+        self.staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        self.counselor_payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        self.change_no = self.staff_payload["changes"][0]["change_no"]
+        counselor_nos = {change["change_no"] for change in self.counselor_payload["changes"]}
+        self.out_of_scope_no = next(
+            change["change_no"] for change in self.staff_payload["changes"]
+            if change["change_no"] not in counselor_nos
+        )
+
+    def answer(self, question: str, payload: dict, roles: set[str], context: dict | None = None) -> dict:
+        return demo.staff_answer(question, payload, roles, context)
+
+    def test_pending_changes_return_scoped_cards(self):
+        reply = self.answer("还有哪些异动没核对？", self.staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "pending")
+        self.assertGreater(reply["change_total"], 0)
+        self.assertEqual(len(reply["changes"]), min(5, reply["change_total"]))
+        for card in reply["changes"]:
+            self.assertEqual(card["change_to"], f"/changes?change={card['change_no']}")
+            self.assertNotIn("phone", card)
+            self.assertNotIn("id_card", card)
+            self.assertIn("*", card["name"])
+
+    def test_change_no_lookup_returns_record_action(self):
+        reply = self.answer(f"打开 {self.change_no}", self.staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "change_found")
+        self.assertEqual(reply["action"]["to"], f"/changes?change={self.change_no}")
+        self.assertEqual(reply["changes"][0]["change_no"], self.change_no)
+        self.assertIn("平台", reply["answer"])
+
+    def test_change_context_answers_check_status(self):
+        reply = self.answer(
+            "核对了吗？",
+            self.staff_payload,
+            STAFF,
+            {"change_no": self.change_no},
+        )
+        self.assertEqual(reply["intent"], "change_found")
+        self.assertEqual(reply["action"]["to"], f"/changes?change={self.change_no}")
+
+    def test_counselor_cannot_open_out_of_scope_change(self):
+        reply = self.answer(f"打开 {self.out_of_scope_no}", self.counselor_payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "change_not_found")
+        self.assertIsNone(reply["action"])
+        self.assertEqual(reply["changes"], [])
+
+    def test_missing_change_identifier_asks(self):
+        reply = self.answer("核对了吗？", self.staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "change_query_needs_identifier")
+        self.assertEqual(reply["changes"], [])
+
+    def test_recent_changes_return_cards(self):
+        reply = self.answer("最近的学籍异动情况", self.staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "changes")
+        self.assertEqual(len(reply["changes"]), 5)
+        self.assertEqual(reply["change_total"], len(self.staff_payload["changes"]))
+
+
 class QuietServer(demo.Server):
     def handle_error(self, request, client_address) -> None:
         # 测试里主动断开半开连接，忽略由此产生的写回失败

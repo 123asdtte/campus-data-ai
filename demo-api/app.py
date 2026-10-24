@@ -206,6 +206,45 @@ def student_brief(student: dict, profile_base: str) -> dict:
     }
 
 
+CHANGE_NO_IN_TEXT = re.compile(
+    r"\bYD(?:-LOCAL-\d{14}-[0-9a-f]{4}|\d{4}-\d{3})\b",
+    re.IGNORECASE,
+)
+SINGULAR_CHANGE = re.compile(r"(?:这条|该条|这个记录|这条记录|该记录|这条异动|该异动)")
+
+
+def change_brief(change: dict, students_by_uid: dict[str, dict], checked: set[str]) -> dict:
+    """异动卡片只带定位与核对所需字段，不带原因、电话或身份证。"""
+    change_no = str(change.get("change_no") or "")
+    uid = str(change.get("uid") or "")
+    student = students_by_uid.get(uid) or {}
+    return {
+        "change_no": change_no,
+        "uid": uid,
+        "name": str(student.get("name") or "—"),
+        "class_short": str(student.get("class_short") or student.get("class_name") or "—"),
+        "type": str(change.get("type") or ""),
+        "date": str(change.get("date") or ""),
+        "status": str(change.get("status") or ""),
+        "platform_status": "已核对" if change_no in checked else "待核对",
+        "change_to": f"/changes?change={change_no}",
+    }
+
+
+def change_cards(
+    changes: list[dict],
+    students_by_uid: dict[str, dict],
+    checked: set[str],
+    limit: int = 5,
+) -> list[dict]:
+    ordered = sorted(
+        changes,
+        key=lambda change: (change.get("date") or "", change.get("change_no") or ""),
+        reverse=True,
+    )
+    return [change_brief(change, students_by_uid, checked) for change in ordered[:limit]]
+
+
 def normalize_weekday(value: object) -> str:
     text = str(value or "").strip()
     if text in WEEKDAYS:
@@ -667,6 +706,8 @@ def staff_answer(question: str, payload: dict, roles: set[str], context: dict | 
     students = payload.get("students") or []
     metrics = payload.get("metrics") or {}
     changes = payload.get("changes") or []
+    platform_checked = {str(item) for item in (payload.get("platform_checked") or [])}
+    students_by_uid = {str(student.get("uid") or ""): student for student in students}
     is_counselor = "counselor" in roles and not (roles & STAFF_ROLES)
     scope_label = "本班范围" if is_counselor else "全校范围"
     report_target = "/counselor" if is_counselor else "/reports"
@@ -677,6 +718,8 @@ def staff_answer(question: str, payload: dict, roles: set[str], context: dict | 
         "action": None,
         "students": [],
         "student_total": 0,
+        "changes": [],
+        "change_total": 0,
     }
     q = question
 
@@ -704,7 +747,71 @@ def staff_answer(question: str, payload: dict, roles: set[str], context: dict | 
         candidate_uid = str(context.get("student_uid") or "").strip()
         if candidate_uid and any(str(student.get("uid") or "") == candidate_uid for student in students):
             context_uid = candidate_uid
+
+    context_change_no = ""
+    if isinstance(context, dict):
+        candidate_change = str(context.get("change_no") or "").strip().upper()
+        if candidate_change and any(
+            str(change.get("change_no") or "").upper() == candidate_change for change in changes
+        ):
+            context_change_no = candidate_change
+
     identifier_kind, identifier_value = extract_student_identifier(q, context_uid)
+    change_match = CHANGE_NO_IN_TEXT.search(q)
+    singular_change = bool(SINGULAR_CHANGE.search(q))
+    target_change_no = change_match.group(0).upper() if change_match else ""
+    context_change_intent = (
+        bool(context_change_no)
+        and any(word in q for word in ("核对", "状态", "详情", "审批", "这条", "该记录", "这个记录"))
+        and not any(word in q for word in ("哪些", "多少", "几条", "统计", "列表", "还有"))
+    )
+    if not target_change_no and context_change_intent:
+        target_change_no = context_change_no
+    if target_change_no:
+        rows = [
+            change for change in changes
+            if str(change.get("change_no") or "").upper() == target_change_no
+        ]
+        if not rows:
+            return {
+                **base,
+                "intent": "change_not_found",
+                "answer": (
+                    f"在{scope_label}没有找到异动「{target_change_no}」。请确认异动编号；"
+                    "范围外记录不会打开。"
+                ),
+                "scope": {"label": scope_label},
+                "suggestions": ["最近的学籍异动情况", "还有哪些异动没核对？"],
+            }
+        card = change_brief(rows[0], students_by_uid, platform_checked)
+        answer = (
+            f"异动 {card['change_no']}：{card['type']}，学生 {card['name']}（{card['uid']}），"
+            f"{card['class_short']}，异动日期 {card['date'] or '未填'}，"
+            f"正式审批 {card['status'] or '未填'}，平台 {card['platform_status']}。"
+        )
+        return {
+            **base,
+            "intent": "change_found",
+            "answer": answer,
+            "scope": {"label": scope_label},
+            "changes": [card],
+            "change_total": 1,
+            "action": {"label": "在异动台账中定位", "to": card["change_to"]},
+            "suggestions": ["最近的学籍异动情况", "还有哪些异动没核对？"],
+        }
+
+    if (singular_change or "核对了吗" in q) and not identifier_kind:
+        return {
+            **base,
+            "intent": "change_query_needs_identifier",
+            "answer": (
+                "请先打开一条异动，或直接给出异动编号（如 YD2026-001）；"
+                "我会按当前身份范围核对它的审批与平台核对状态。"
+            ),
+            "scope": {"label": scope_label},
+            "suggestions": ["还有哪些异动没核对？", "最近的学籍异动情况"],
+        }
+
     if looks_like_student_lookup(q, identifier_kind):
         if not identifier_kind:
             return {
@@ -862,11 +969,17 @@ def staff_answer(question: str, payload: dict, roles: set[str], context: dict | 
         else:
             rows = pending_check_rows(changes, payload.get("platform_checked") or [])
             label = "条异动已批但平台未核对"
-            hint = "在台账里按异动编号搜索即可定位并点“核对”。"
+            hint = "点下方记录可直接在台账定位并核对。"
+        rows = sorted(
+            rows,
+            key=lambda change: (change.get("date") or "", change.get("change_no") or ""),
+            reverse=True,
+        )
         preview = "、".join(
             f"{change.get('change_no')}（{change.get('type')} {change.get('date') or '未填日期'}）"
             for change in rows[:5]
         )
+        cards = change_cards(rows, students_by_uid, platform_checked)
         return {
             **base,
             "intent": "pending",
@@ -877,6 +990,8 @@ def staff_answer(question: str, payload: dict, roles: set[str], context: dict | 
             ),
             "scope": {"label": scope_label},
             "action": {"label": "打开学籍异动", "to": change_target},
+            "changes": cards,
+            "change_total": len(rows),
         }
 
     # “异动/条/记录”才是台账口径；只说“休学”“退学”时问的是学生当前学籍状态人数，两者不能混。
@@ -904,29 +1019,35 @@ def staff_answer(question: str, payload: dict, roles: set[str], context: dict | 
         ]
         # “留级和复学各多少人”问的是人数，但这两类只存在于异动台账里，必须说清给的是条数。
         note = "" if statuses or wants_change_rows else "这两类不是当前学籍状态，只能按异动台账条数回答。"
+        rows = [change for change in changes if change.get("type") in change_types]
         return {
             **base,
             "intent": "change_count",
             "answer": f"{scope_label}学籍异动记录共 {len(changes)} 条；{'，'.join(parts)}。统计范围为演示台账。{note}",
             "scope": {"label": scope_label},
             "action": {"label": "打开学籍异动", "to": change_target},
+            "changes": change_cards(rows, students_by_uid, platform_checked),
+            "change_total": len(rows),
         }
 
     if wants_change_rows:
         type_counts = metrics.get("change_type_counts") or []
         top = "、".join(f"{item.get('name')} {item.get('count')}" for item in type_counts[:3])
         orphan = metrics.get("orphan_changes") or 0
+        rows = [change for change in changes if not change_types or change.get("type") in change_types]
         return {
             **base,
             "intent": "changes",
             "answer": (
-                f"{scope_label}共有 {len(changes)} 条学籍异动记录"
+                f"{scope_label}共有 {len(rows)} 条学籍异动记录"
                 + (f"；主要类型：{top}。" if top else "。")
                 + (f"另有 {orphan} 条学号未匹配的异动不在可核对清单里。" if orphan else "")
                 + "异动需教务确认后才联动学生状态。"
             ),
             "scope": {"label": scope_label},
             "action": {"label": "打开学籍异动", "to": change_target},
+            "changes": change_cards(rows, students_by_uid, platform_checked),
+            "change_total": len(rows),
         }
 
     # “哪些/多少”本身不指向学生：问收件箱、导入批次时不能回一句人数，宁落回 unknown 的引导。

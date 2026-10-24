@@ -362,6 +362,54 @@ test.describe('本地演示关键路径', () => {
     await expect(page.locator('.ant-drawer-title')).toHaveCount(0);
   });
 
+  test('悬浮助手异动卡片：待核对记录可直接定位并核对状态', async ({ page }) => {
+    await login(page, 'xgb01', 'Demo@2026');
+    await page.goto('/changes');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('还有哪些异动没核对？');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('平台未核对', { timeout: 15000 });
+    await expect(bubble.locator('.fa-change').first()).toBeVisible();
+
+    const first = bubble.locator('.fa-change').first();
+    const changeNo = (await first.locator('.fa-change-no').textContent())?.trim() ?? '';
+    expect(changeNo).toMatch(/^YD/);
+    await first.click();
+    await expect(page).toHaveURL(new RegExp(`/changes\\?change=${changeNo}$`));
+    await expect(page.getByText(new RegExp(`已定位到异动 ${changeNo}`))).toBeVisible();
+    await expect(page.locator('.ant-table-row.is-focused').first()).toBeVisible();
+
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const contextPanel = page.getByRole('dialog', { name: 'AI 助手' });
+    await expect(contextPanel.locator('.fa-head')).toContainText('当前页面 · 异动记录');
+    await contextPanel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('核对了吗？');
+    await contextPanel.getByRole('button', { name: '发送问题' }).click();
+    const contextBubble = contextPanel.locator('.fa-message.is-assistant').last();
+    await expect(contextBubble).toContainText(changeNo, { timeout: 15000 });
+    await expect(contextBubble).toContainText('平台');
+    await expect(contextBubble.locator('.fa-action')).toContainText('在异动台账中定位');
+    await page.keyboard.press('Escape');
+  });
+
+  test('管理员独立 AI 页渲染异动卡片并定位', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/assistant');
+    await page.getByRole('textbox', { name: '输入问题' }).fill('还有哪些异动没核对？');
+    await page.getByRole('button', { name: '发送' }).click();
+    const bubble = page.locator('.ai-message.is-assistant').last();
+    await expect(bubble).toContainText('平台未核对', { timeout: 15000 });
+    await expect(bubble.locator('.ai-change')).toHaveCount(5);
+
+    const first = bubble.locator('.ai-change').first();
+    const changeNo = (await first.locator('.ai-change-no').textContent())?.trim() ?? '';
+    expect(changeNo).toMatch(/^YD/);
+    await first.click();
+    await expect(page).toHaveURL(new RegExp(`/changes\\?change=${changeNo}$`));
+    await expect(page.getByText(new RegExp(`已定位到异动 ${changeNo}`))).toBeVisible();
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);

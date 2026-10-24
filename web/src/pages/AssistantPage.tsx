@@ -26,7 +26,7 @@ const SUGGESTIONS = [
   '全校休学和退学各有多少人？',
   '数据质量怎么样？',
   '帮我找 SK-2026-000004',
-  '打开 SK-2026-000004 的异动记录',
+  '还有哪些异动没核对？',
 ];
 
 const INTENT_LABELS: Record<string, string> = {
@@ -36,6 +36,9 @@ const INTENT_LABELS: Record<string, string> = {
   changes: '学籍异动 · 聚合口径',
   pending: '异动待办',
   change_count: '异动统计',
+  change_found: '异动检索 · 已定位',
+  change_not_found: '异动检索 · 无结果/越界',
+  change_query_needs_identifier: '异动检索 · 需要异动编号',
   count: '人数统计',
   profile: '本人学籍信息',
   student_found: '学生检索 · 已定位',
@@ -158,6 +161,17 @@ export default function AssistantPage() {
                       ))}
                     </div>
                   ) : null}
+                  {message.reply?.changes?.length ? (
+                    <div className="ai-changes">
+                      {message.reply.changes.map((change) => (
+                        <Link className="ai-change" key={change.change_no} to={change.change_to}>
+                          <span className="ai-change-no">{change.change_no}</span>
+                          <b>{change.type} · {change.name}</b>
+                          <small>{change.class_short} · {change.date} · {change.status} · {change.platform_status}</small>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
                   {message.reply?.action ? (
                     <Link className="ai-action" to={message.reply.action.to}>{message.reply.action.label} →</Link>
                   ) : null}
@@ -198,6 +212,7 @@ export default function AssistantPage() {
               <li>身份、权限与数据范围都在服务端判定，前端不传 UID 或角色。</li>
               <li>只返回聚合与脱敏结果，不返回身份证、电话、原始学号。</li>
               <li>学生检索按 UID/脱敏姓名，唯一命中才给档案；同名只给候选，范围外不打开。</li>
+              <li>异动卡片只带编号/类型/日期/核对状态，点开台账定位；AI 不执行核对或写入。</li>
               <li>管理员/学工处为全校范围，辅导员只得到本班范围；与页面数据口径一致。</li>
               <li>不调用外部模型；接入 Dify 后只替换意图解析，工具仍走同一批服务端接口。</li>
               <li>提问内容留在本机，服务端只记录意图，正式版写服务端审计。</li>
