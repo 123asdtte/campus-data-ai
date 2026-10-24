@@ -7,6 +7,16 @@ import * as XLSX from 'xlsx';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ledger = path.resolve(here, '../../demo-api/state/ledger.json');
 
+// CI 把台账放在容器命名卷里，宿主机上没有该文件且无权删除；
+// 清理失败不应算测试失败（卷会随 compose down -v 回收）。
+function resetLedger() {
+  try {
+    fs.rmSync(ledger, { force: true });
+  } catch (error) {
+    console.warn(`跳过台账清理：${(error as Error).message}`);
+  }
+}
+
 async function login(page: Page, username: string, password: string) {
   await page.goto('/login');
   await page.getByRole('textbox', { name: '账号' }).fill(username);
@@ -19,11 +29,11 @@ test.describe('本地演示关键路径', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(() => {
-    fs.rmSync(ledger, { force: true });
+    resetLedger();
   });
 
   test.afterAll(() => {
-    fs.rmSync(ledger, { force: true });
+    resetLedger();
   });
 
   test('未登录访问业务页会跳转登录', async ({ page }) => {

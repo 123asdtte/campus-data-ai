@@ -1091,3 +1091,22 @@
 - **未验证**：未接 Dify/LLM；教职工问答仍是受控规则；服务端审计目前只写 stderr，正式版需落库；真实课表接口尚未接入。
 - **回退**：删除 `/assistant/query` 与 `FloatingAssistant`，恢复课表页内嵌问答；无数据库变更。
 - **授权**：B 类（演示环境功能与测试）；不涉及正式数据或外部服务。
+
+## D-043 演示栈 E2E 接入 CI：补齐导入链路并隔离台账
+
+- **状态**：Implemented（2026-10-24，远端结果待本次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：PR #58 首次实跑 `demo-e2e`（commit 5af7220）为 10 passed / 1 failed / 5 did not run。① `管理员导入预检` 停在“识别结果”之前：job 只启动了 `gateway-db gateway-redis gateway`，`campus-db` 与 `import-api` 未启动，网关 `/internal/proxy/imports/*` 无下游；② `afterAll` 抛 `EACCES: permission denied, unlink demo-api/state/ledger.json`：容器以 root 写入宿主机绑定目录，runner 用户无权删除。
+- **决定**：
+  1. job 先启动 `campus-db gateway-db gateway-redis`，等健康后用 `psql -v app_password/ro_password` 依次执行 `003_roles.sql`、`004_internal_auth.sql`、`006_import_scope.sql`，再启动 `import-api gateway` 并按容器健康状态等待。
+  2. CI 环境变量开启 `INTERNAL_AUTH_ENABLED=true`，让 E2E 走网关签名→导入服务验签的真实链路，而不是绕开内部认证的宽松模式。
+  3. 新增 `docker-compose.demo.e2e.yml`，把 `demo-api` 的 `/app/state` 换成命名卷，`down -v` 即回收；本地开发继续用绑定目录，重建容器不丢台账。
+  4. E2E 的台账清理改为 best-effort（失败仅告警），不再把“宿主机文件属主”当成功能失败；断言与用例数不变。
+- **备选方案**：`sudo rm -f` 宿主机台账（把权限问题写进测试，且本地 Linux 仍会复现）；给 demo-api 加非 root 用户（绑定目录属主仍需约定，收益不匹配风险）；跳过导入用例（等于删测试，不采用）。
+- **影响与兼容性**：只改 CI 编排与测试清理，业务代码路径不变；`compose-config` job 增加 `demo.e2e.yml` 组合校验，避免覆盖文件语法回归。
+- **涉及文件**：`.github/workflows/ci.yml`、`docker-compose.demo.e2e.yml`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：一次性空库按 CI 顺序执行 `001→002→003→004→006` 全部 OK，`campus.students` 200 行；`docker compose -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml config` 渲染出命名卷；demo-api 33 passed；`npx tsc --noEmit` 通过。远端 `demo-e2e` 结果：待本次运行确认，未确认前不记为通过。
+- **未验证**：GitHub Actions 上的 `demo-e2e` 绿色结果；导入预检在开启内部验签后的端到端表现。
+- **回退**：删除 `docker-compose.demo.e2e.yml` 并还原 `ci.yml` 的 `demo-e2e` job。
+- **授权**：B 类（CI 与演示环境，隔离且可回收）。
+
