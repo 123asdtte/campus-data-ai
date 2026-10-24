@@ -1721,3 +1721,17 @@
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/components/StudentProfileDrawer.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/src/api/assistant.ts`、`web/src/pages/WorkbenchPage.tsx`、`web/src/pages/CounselorPage.tsx`、`web/src/pages/ChangesPage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
 - **回退**：`git revert` 本分支提交；服务端检索/上下文为新增路径，回退后助手回到原聚合问答，不涉及数据迁移。
 - **授权**：B 类（虚构演示数据；无正式环境、真实数据、外部模型或写入副作用）。
+
+## D-084 AI 异动记录检索与定位：从“报条数”到“打开正确记录”
+
+- **日期**：2026-10-25　分支：`feat/ai-change-locator`（堆叠在 `feat/ai-student-locator` / PR #59 上，合并顺序 #59 → 本分支）
+- **问题**：待核对/最近异动的回答仍只有“条数 + 打开模块首页”，教师还要自己到台账里搜编号；`/changes?change=` 已能过滤高亮，但 AI 没有利用这个能力，页面 URL 里的 `change_no` 上下文也一直没被服务端使用。学生检索闭环之后，异动记录级定位是下一条真实业务链路的缺口。
+- **备选方案**：a) 新建独立异动详情页——会与已有台账页重复；b) 让模型/前端按文本生成记录 ID——存在误开记录风险；c) 复用已有 `/changes?change=` 过滤高亮 + 服务端范围复核，返回记录卡片——选择 c。
+- **实现**：
+  - `demo-api/app.py`：新增 `CHANGE_NO_IN_TEXT`、`change_brief`、`change_cards`；待核对、按类型统计、最近异动三类回答附带最多 5 张记录卡片（编号、类型、脱敏学生、班级、日期、正式审批、平台核对状态），卡片只带 `/changes?change=` 目标；显式异动编号与页面 `change_no` 上下文都先按当前身份范围复核，范围外统一 `change_not_found`，无编号的“这条/核对了吗”返回 `change_query_needs_identifier`；不返回原因、电话、身份证，不调用任何核对/写入接口。
+  - 前端：悬浮助手与管理员独立 `AssistantPage` 都渲染异动卡片，点击跳 `/changes?change=` 并复用已有过滤/横幅/高亮；异动页上下文标题和推荐问题切换为“异动记录”；同时修复带卡片回答高度增加后“最新回答不滚进可视区”的回归——滚动守卫从固定 160px 阈值改为跟踪用户是否停留在底部，发送新问题后必定跟随最新回答，用户主动上翻则不抢滚动。
+- **测试（实测）**：`demo-api` 111 tests OK（skipped=2，新增 6 条：待核对卡片、编号检索、上下文核对、范围外不返回、缺编号追问、最近异动卡片）；`npm run build` 通过；Playwright 35 passed (1.9m)，新增 2 条（悬浮助手待核对卡片→单条定位+上下文核对、管理员独立 AI 页异动卡片），完整 35 条本地 Docker 栈通过；只读冒烟 33 项全 PASS；E2E 前后台账已备份/恢复。完整回归首次跑出 1 条真实回归（带卡片后滚动守卫误判），修复后全量复跑 35 passed。
+- **未验证/边界**：仅虚构演示台账；每类回答最多 5 张卡片，更多请到台账筛选；日期目前按演示字符串排序，真实系统需用标准化时间；AI 只读，平台核对/审批仍需人工在页面执行；真实数据、Dify、生产权限未接。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/api/assistant.ts`、`web/src/components/FloatingAssistant.tsx`、`web/src/pages/AssistantPage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **回退**：`git revert` 本分支提交；异动卡片与上下文为新增路径，回退后助手回到“条数 + 模块首页”，不影响台账本身。
+- **授权**：B 类（虚构演示数据；无正式环境、真实数据、外部模型或写入副作用）。

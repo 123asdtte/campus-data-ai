@@ -23,6 +23,18 @@ export interface AssistantStudent {
   profile_to: string;
 }
 
+export interface AssistantChange {
+  change_no: string;
+  uid: string;
+  name: string;
+  class_short: string;
+  type: string;
+  date: string;
+  status: string;
+  platform_status: string;
+  change_to: string;
+}
+
 export interface AssistantReply {
   intent: string;
   answer: string;
@@ -36,6 +48,8 @@ export interface AssistantReply {
   courses: AssistantCourse[];
   students?: AssistantStudent[];
   student_total?: number;
+  changes?: AssistantChange[];
+  change_total?: number;
   note?: string;
   as_of?: string;
   context?: string;
