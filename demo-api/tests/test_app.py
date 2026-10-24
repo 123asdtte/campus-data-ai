@@ -336,12 +336,10 @@ class ConcurrencyLimitTest(unittest.TestCase):
         port = server.server_address[1]
         holder = None
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
-                self.assertEqual(response.status, 200)
-
-            # 并发槽由测试线程直接占住：不再依赖“慢客户端刚好还没释放”的时序，
-            # CI 上曾出现槽已释放导致 503 断言偶发失败（run 40077675452）。
-            self.assertTrue(server._slots.acquire(blocking=False))
+            # 槽位只有 1 个，预热请求的 serve 线程可能还没 release 就被测试线程抢，
+            # 于是 acquire 偶发失败（从仓库根目录跑 verify 脚本时实测必现）。
+            # 去掉预热请求：空闲槽位必然可占用，“能正常回答 200”由释放后的恢复断言覆盖。
+            self.assertTrue(server._slots.acquire(timeout=3), "空闲槽位应能被测试线程占用")
             raw = socket.create_connection(("127.0.0.1", port), timeout=3)
             holder = raw
             raw.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")

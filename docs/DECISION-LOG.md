@@ -1165,7 +1165,7 @@
 - **授权**：B 类（演示环境与测试），不涉及正式数据、迁移或外部服务。
 ## D-047 辅导员问全院人数时不再把「带班人数」冒充「学院人数」
 
-- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待下次运行确认）
+- **状态**：Verified in CI（远端 run 40080010707、commit fd28e9d：8 个 job 全部 success，含「演示栈 E2E」）
 - **Decision owner**：AI
 - **问题与证据**：`scoped_payload` 给辅导员用 `scope_metrics` 生成指标，其中 `college_counts` 是按**本人所带学生**聚合的。但 `staff_answer` 的学院分支对所有员工角色共用同一段代码：先按 `college_counts` 命中学院名，再用命中的学院过滤本人学生。实测（戴雅琴，人工智能学院）：本人载荷 `college_counts=[{人工智能学院:270}]`，问“人工智能学院有多少学生？”回答“人工智能学院共有 270 名学生，其中在籍 265 人”；而管理员载荷同一问题的真实全院口径是 **1218 人**。也就是说 AI 用班级数据播报了一个学院级结论，误差 948 人，而且话术上完全看不出口径被缩窄了。这属于“回答看起来合理但数据不真”，正是权限口径必须服务端判定要避免的。
 - **决定**：
@@ -1197,3 +1197,16 @@
 - **未验证**：远端 CI；审计日志的读取/导出界面（目前需进容器或读绑定目录）；并发写大量问数下的 500 行截断性能（仅单线程语义正确性验证）；正式环境留存与合规策略。
 - **回退**：删除 `record_assistant_audit` 及两处调用即恢复旧行为；已生成的 jsonl 可手工删除。
 - **授权**：B 类（演示环境可观测性与测试），只写本机演示状态目录，未向任何外部服务发送数据。
+## D-049 并发用例仍有残留时序耦合：一键校验从仓库根目录跑必现失败
+
+- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待下次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：D-045 自认为去掉了时序依赖，但 `verify-local-demo.ps1` 的完整门禁一跑就暴露：`python -m unittest discover -s demo-api/tests`（仓库根目录）稳定失败于 `assertTrue(server._slots.acquire(blocking=False))` → `AssertionError: False is not true`；把同样的命令放进 `demo-api/` 里跑又稳定通过。原因是用例在占用槽位之前先发了一次 `/healthz` 预热请求，而 `MAX_CONCURRENT_REQUESTS` 已被改成 1——那个请求的 serve 线程还没走到 `self._slots.release()`，测试线程就来抢同一个槽，抢不到就判定失败。工作目录只改变了加载耗时与线程调度，所以表现为“换个目录就换个结果”，本质仍是竞态。这也说明只用手跑一条命令不足以证明测试稳定，CI 通过也不能反证本地门禁没有这类问题。
+- **决定**：删掉预热请求，改为 `server._slots.acquire(timeout=3)` 直接占用必然空闲的首个槽位；“服务确实能正常回答 200”由释放槽之后的恢复断言覆盖（那段本来就在），覆盖范围不减。
+- **备选方案**：给预热请求后加 `sleep`（把竞态换成猜测的等待时间，不采用）；把 `MAX_CONCURRENT_REQUESTS` 设成 2 再占两个槽（引入第二个隐含约定，且仍要等预热线程释放，不采用）；把用例改成 mock 掉 serve 线程（就不再覆盖真实的网关限流代码路径，不采用）。
+- **影响与兼容性**：只改测试写法，`demo-api` 运行时行为不变；`verify-local-demo.ps1` 不再依赖运行目录。
+- **涉及文件**：`demo-api/tests/test_app.py`、`docs/DECISION-LOG.md`。
+- **验证（实测）**：修复后从仓库根目录与 `demo-api/` 目录各连跑 3 次，共 6 次全部 `OK`（39 tests）；`scripts/demo/verify-local-demo.ps1` 完整 4 步全绿——healthz、只读冒烟、`Ran 39 tests OK`、`19 passed (1.0m)`，输出 `All local demo checks passed.`。
+- **未验证**：本次改动的远端 CI；极端慢机器上 `timeout=3` 是否仍然充裕（当前证据是同机 6 连跑）。
+- **回退**：恢复预热请求与 `acquire(blocking=False)` 即回到旧写法（会重新引入目录相关的失败）。
+- **授权**：B 类（测试），无运行时行为与环境影响。
