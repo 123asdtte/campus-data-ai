@@ -857,3 +857,47 @@ class ClassScopeCountTest(unittest.TestCase):
         self.assertEqual(len(rows), len(payload["class_summary"]))
         self.assertEqual(1, payload["metrics"]["total_classes"])
         self.assertEqual(len(rows), payload["metrics"]["roster_class_names"])
+
+
+class DateValidationTest(unittest.TestCase):
+    """异动日期必须同时过「格式」与「真实日历日」两道校验（D-069 复测结论）。
+
+    正则里的数字字符类也吃全角与阿拉伯-印度数字，但紧随其后的 strptime 会拒掉，
+    最终仍是 400 而不是写进台账；这条把两道校验的分工钉住，防止以后有人把
+    strptime 当成冗余删掉。
+    """
+
+    def setUp(self):
+        self.uid = next(s["uid"] for s in demo.DATA["students"] if s.get("uid"))
+        self.user = {"userName": "seed-xgb"}
+
+    def status(self, date):
+        body = {"uid": self.uid, "type": "休学", "date": date, "reason": "演示测试"}
+        _, status, message = demo.validate_change(body, self.user, {"xgb"})
+        return status, message
+
+    def test_valid_date_passes(self):
+        status, message = self.status("2026-10-24")
+        self.assertEqual(0, status)
+        self.assertEqual("", message)
+
+    def test_fullwidth_digits_are_rejected_as_invalid_date(self):
+        status, message = self.status("２０２６-１０-２４")
+        self.assertEqual(400, status)
+        self.assertEqual("异动日期不是有效日期", message)
+
+    def test_other_unicode_digits_are_rejected_as_invalid_date(self):
+        status, message = self.status("٢٠٢٦-١٠-٢٤")
+        self.assertEqual(400, status)
+        self.assertEqual("异动日期不是有效日期", message)
+
+    def test_impossible_calendar_days_are_rejected(self):
+        for date in ("2026-10-32", "2026-02-30"):
+            status, message = self.status(date)
+            self.assertEqual(400, status, date)
+            self.assertEqual("异动日期不是有效日期", message, date)
+
+    def test_unpadded_date_is_a_format_error(self):
+        status, message = self.status("2026-1-4")
+        self.assertEqual(400, status)
+        self.assertEqual("异动日期格式应为 YYYY-MM-DD", message)
