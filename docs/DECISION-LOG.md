@@ -679,3 +679,22 @@
   - 未修改主库 `campus` 与 POC 库数据。
 - **回退**：删除新增脚本/包声明与 AI 闸门，恢复原手工命令；无数据变更。
 - **授权**：A/B 类（测试环境自动化与安全默认值）；真实库测试仍需人工授权。
+
+---
+
+## D-022 基础安全响应头与服务器指纹收敛
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 8083 实测响应仅有 `Server: nginx/1.29.8`，缺少 `X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`；
+  - `/healthz` 同时出现 `Content-Type: application/octet-stream` 与 `text/plain`；`/assets/` 同时出现两条 `Cache-Control`。
+- **决定**：
+  - 新增公共安全头片段，HTTP/TLS server 级 include，并在自带 `add_header` 的 `/healthz`、`/assets/` 内重复 include；
+  - `server_tokens off` 隐藏 Nginx 版本；HSTS 仅加入 TLS 模板；
+  - `/healthz` 改用 `default_type text/plain`；静态资源合并为单条 `Cache-Control: public, max-age=604800, immutable`；
+  - 不启用 CSP，避免阻断 Ant Design 的内联样式；CSP 作为后续独立项评估。
+- **影响与兼容性**：只改 Nginx 响应头，不改应用逻辑、路由、接口或数据；未启用 TLS 的 8083 不发 HSTS。
+- **验证（实测）**：`/login`、`/healthz`、`/assets/index-*.js` 均返回四项安全头；`Server: nginx`；`/healthz` 仅一条 `Content-Type: text/plain`；静态资源仅一条 `Cache-Control`；冒烟脚本通过。
+- **回退**：移除 include 与 `server_tokens` 行并重建 web 镜像；无数据变更。
+- **授权**：A/B 类（非生产配置加固）。
