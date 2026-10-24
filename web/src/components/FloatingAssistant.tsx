@@ -39,6 +39,22 @@ const STAFF_SUGGESTIONS = [
   '最近的学籍异动情况',
 ];
 
+// 回答的来源口径：数据范围 + 这批演示数据的截止时间。悬浮面板原先只显示范围，
+// 学生问「明天有什么课」时看不出课表数据是哪一刻取的；两段拼进同一行，不新增样式。
+function formatAsOf(value: string): string {
+  // 面板宽 392px（窄屏下 width:auto），`2026-10-24T21:36:20+08:00` 会把这枚小药丸挤成两行。
+  // 精确到分足够回答「这数据新不新」，秒和时区在这种场景没人读。
+  const match = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value);
+  return match ? `${match[1]} ${match[2]}` : value;
+}
+
+function replyMeta(reply?: AssistantReply): string {
+  return [
+    reply?.scope?.label ? `数据范围 · ${reply.scope.label}` : '',
+    reply?.as_of ? `截至 ${formatAsOf(reply.as_of)}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
 export default function FloatingAssistant() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -60,7 +76,11 @@ export default function FloatingAssistant() {
   }, [messages, pending]);
 
   const contextLabel = PAGE_TITLES[pathname] ?? '数据管理';
-  const suggestions = isStudent ? STUDENT_SUGGESTIONS : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
+  const staticSuggestions = isStudent ? STUDENT_SUGGESTIONS : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
+  // 服务端会针对这次回答给出下一步问法（与完整问数页同一份数据）。悬浮面板原先一直丢掉它，
+  // 于是「下周有哪些课」这种追问要用户自己再打一遍；现在优先用服务端的，静态列表只做兜底。
+  const lastSuggestions = [...messages].reverse().find((message) => message.reply)?.reply?.suggestions;
+  const suggestions = lastSuggestions?.length ? lastSuggestions : staticSuggestions;
   const welcome = isStudent
     ? '我是你的课表助手，只读取你自己的班级课表和本人学籍档案。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、我的学籍状态是什么。'
     : '我是数据助手，按当前账号的数据范围统计人数、学籍状态、异动分布和数据质量；不返回身份证、电话或原始学号。';
@@ -158,13 +178,13 @@ export default function FloatingAssistant() {
           </header>
 
           <div className="fa-messages" ref={messagesBox} aria-live="polite">
-            {messages.map((message) => (
+            {messages.map((message) => {
+              const meta = replyMeta(message.reply);
+              return (
               <div className={`fa-message is-${message.role}`} key={message.id}>
                 <div className={`fa-bubble${message.error ? ' is-error' : ''}`}>
                   <p>{message.text}</p>
-                  {message.reply?.scope?.label ? (
-                    <span className="fa-scope">数据范围 · {message.reply.scope.label}</span>
-                  ) : null}
+                  {meta ? <span className="fa-scope">{meta}</span> : null}
                   {message.reply?.courses.length ? (
                     <div className="fa-courses">
                       {message.reply.courses.map((course, index) => (
@@ -204,7 +224,8 @@ export default function FloatingAssistant() {
                   ) : null}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {pending ? (
               <div className="fa-message is-assistant">
                 <div className="fa-bubble fa-thinking">正在按你的身份查询…</div>

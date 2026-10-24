@@ -164,6 +164,27 @@ test.describe('本地演示关键路径', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('悬浮面板把服务端的截止时间与追问一起交给用户，不再只显示数据范围', async ({ page }) => {
+    await login(page, 'SK-2026-000001', 'Demo@2026');
+    await page.goto('/my-schedule');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('明天有什么课');
+    const responseReady = page.waitForResponse((res) => res.url().includes('/demo-api/assistant/query'));
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    // 断言的期望值直接从这次响应里取，不写死演示数据：账号有没有排课都能跑，
+    // 而「面板丢掉了 as_of / suggestions」这个缺陷一旦被重新引入就必然变红。
+    const reply = await (await responseReady).json();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText(String(reply.answer).slice(0, 8), { timeout: 15000 });
+    const asOf = String(reply.as_of).slice(0, 16).replace('T', ' ');
+    await expect(bubble.locator('.fa-scope')).toContainText(`截至 ${asOf}`);
+    const chips = panel.locator('.fa-suggestions button');
+    const firstChip = reply.suggestions?.length ? reply.suggestions[0] : '明天下午有什么课？';
+    await expect(chips.first()).toHaveText(String(firstChip), { timeout: 15000 });
+    await page.keyboard.press('Escape');
+  });
+
   test('辅导员问全院人数时，助手说明数据范围而不是给出口径错误的数字', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await page.getByRole('button', { name: '打开 AI 助手' }).click();

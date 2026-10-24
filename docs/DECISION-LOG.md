@@ -1480,7 +1480,7 @@
 - Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样取不到服务端信息，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本地无法重建 `demo-api` 容器，也无法跑 Playwright。受影响且**仍未验证**的事项：D-063 悬浮助手 Esc 焦点守卫（无自动化覆盖）、D-071 跨周定位的新提示（逻辑已改为「当前周确有该课才高亮，否则明说未定位」，但页面表现没看过）、D-065 学生页 KPI 的截图核对、D-072 锁改动在高并发下的尾延迟。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`，或整体 `powershell -File scripts/demo/verify-local-demo.ps1`。
 - 远端 CI 历史记录（2026-10-24 13:17 UTC，已被下一条取代）：分支头 `c786abe`（纯文档）的一轮 checks 多数仍 pending，已见「脚本语法与孤儿清理自检」「后端语法与导入检查」「Compose 组合校验」pass。上一个代码头 `b0e603f`（D-072）可见「本地演示 API 测试」「前端类型检查与构建」「后端接口与校验测试」「AI 助手原型测试」「AI 评审」pass，「演示栈 E2E」当时仍 pending；远端日志没取到用例条数，所以不引用远端具体数字。任何一次 CI 绿都不等于生产验收。
 - 远端 CI 最新实测（2026-10-24 13:36 UTC）：分支头 `1d567c2` 的 10 项 checks 全部 SUCCESS（含「演示栈 E2E」「前端类型检查与构建」）。这只说明该提交上既有用例在 Linux 远端跑通，不等于 D-071 的新提示、D-065 的 KPI 版式已被覆盖——那些仍需本地浏览器核对或新增用例。
-- 本地测试基线：`demo-api` **95 tests OK (skipped=2)**（D-073 +3、D-074 +1），整轮连跑 10 次一致；`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；27 条 Playwright E2E 因演示栈不可用未跑。
+- 本地测试基线：`demo-api` **95 tests OK (skipped=2)**（D-073 +3、D-074 +1），整轮连跑 10 次一致；`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；Playwright 用例增至 **28 条**（D-075 新增 1 条），本地只做到「显式 `tsc` 单文件通过 + `playwright test --list` 能收集」，真跑仍缺——演示栈起不来，需靠远端「演示栈 E2E」验证。
 - PR #58 当前状态（2026-10-24 13:41 UTC 实测，分支头 `1d567c2`）：`OPEN`、`MERGEABLE`、`mergeStateStatus=CLEAN`、`reviewDecision` 为空（无人提交审查）。合并仍需业务负责人批准，本轮不自行合并。- 历史 CI 记录：`94b6770`（D-065）当时 10 项 check-run 全部 completed success（含「演示栈 E2E」），D-065 据此升级为 Verified in CI；那条 E2E 绿只证明当时的镜像与用例，不代表本轮 D-071 的前端改动已被 E2E 覆盖。
 
 
@@ -1608,3 +1608,20 @@
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_http_api.py`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
 - **回退**：`git revert 4965452`，413 恢复为不排空直接回复（那条时序红会重新出现，实测约 4/10）。
 - **授权**：B 类（本地代码、临时端口真实服务、虚构请求体）。
+
+## D-075 悬浮面板不再丢弃服务端的 `as_of` 与追问：同一份回答，两个界面口径一致
+
+- **日期**：2026-10-24
+- **状态**：Implemented locally + 远端「演示栈 E2E」验证待回填（本地 Docker 引擎仍 500）
+- **问题**：`/demo-api/assistant/query` 的响应里 `as_of`（这批数据的取值时刻）和 `suggestions`（针对这次回答的下一步问法）都有值，完整问数页 `AssistantPage.tsx` 早就在用（第 69-70、140-142 行），悬浮面板却两个都丢掉：范围行只有「数据范围 · X」，追问条永远是按页面写死的 5 条。于是同一句「明天有什么课」，在问数页能看到数据截止时刻、能顺着回答追问，在悬浮面板里看不到也点不到——「AI 能力与业务页面割裂」剩的就是这一公里。
+- **决定**：面板只做问数页已经验证过的两件事，不新增视觉语言。
+  - `replyMeta()` 把范围与截止时间拼进已有的 `.fa-scope` 药丸：`数据范围 · 仅本人课表 · 截至 2026-10-24 21:36`。`as_of` 原值是带时区的完整 ISO，在 392px 宽的面板里会折行，所以格式化到分；问数页仍显示原值，本次不动它。
+  - 追问条优先用 `reply.suggestions`（服务端针对这次回答给的），没有才退回按页面的静态列表。`.fa-suggestions` 是 `flex-wrap: wrap`（styles.css:3420），条数 4～5 不会溢出。
+  - **`intent` 仍不进面板**：`INTENT_LABELS` 是内部口径名（`change_count`/`out_of_scope`），面向学生和老师的悬浮入口不需要读它，问数页保留即可。这是范围决定，不是遗漏。
+- **验证（实测）**：`npm run build`（`tsc --noEmit && vite build`）通过；`replyMeta`/`formatAsOf` 用真实响应值在 node 里跑过四种输入：带范围+ISO → `数据范围 · 仅本人档案 · 截至 2026-10-24 21:36`；空 scope → 空串（不渲染药丸）；`as_of` 不是 ISO → 原样回落；`reply` 缺失（欢迎语）→ 空串。
+- **新增 E2E**：`web/e2e/demo.spec.ts:167`「悬浮面板把服务端的截止时间与追问一起交给用户，不再只显示数据范围」——期望值不写死演示数据，而是从 `page.waitForResponse` 拿到的本次响应里取 `answer`/`as_of`/`suggestions[0]` 再断言 DOM，所以「面板重新丢掉这两项」必然变红，而账号当周有没有排课都不影响它跑。静态检查做到：显式 `npx tsc --noEmit ... e2e/demo.spec.ts` 通过（`e2e/` 不在 `web/tsconfig.json` 的 `include` 里，`npm run build` 原本根本不看用例）、`npx playwright test --list` 收集到 **28 tests**。
+- **未验证**：真实浏览器里药丸换行与追问条的观感；这条 E2E 的真跑（本地演示栈不可用，待远端「演示栈 E2E」）；D-071 跨周定位提示仍无自动化覆盖——它的判据依赖具体周次与格子内容，本轮没有可复现的跨周样例，盲写容易做成永真断言，所以没补。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert` 本次提交（连同那条 E2E），面板恢复为只显示数据范围 + 静态追问。
+- **授权**：B 类（仅前端展示逻辑与本地测试，虚构数据，无副作用、不出网）。
+
