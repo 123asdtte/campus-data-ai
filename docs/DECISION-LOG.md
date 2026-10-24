@@ -758,3 +758,20 @@
   - `npm run build` 通过。
 - **回退**：恢复 `public/demo` 静态文件与页面链接，删除 `demo-api` 与 Nginx 代理；无数据变更。
 - **授权**：B 类（演示环境安全加固）；生产数据隔离需人工授权后实施。
+
+---
+
+## D-025 启用内容安全策略（CSP）
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：D-022 因 Ant Design 需要内联样式而暂缓 CSP；复核前端无外部字体、CDN 或第三方脚本（`index.html`、样式文件均无外部 URL），具备启用条件。
+- **决定**：
+  - 在公共安全头片段增加
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`；
+  - 保留 `style-src 'unsafe-inline'` 以兼容 Ant Design 运行时样式，脚本仍只允许同源；
+  - 冒烟脚本新增基础安全头与 CSP 断言。
+- **影响与兼容性**：只改响应头；同源 API、gateway 代理、登录、懒加载页面与本地文件导出均不受影响；未引入 nonce/hash，因此内联脚本仍被禁止。
+- **验证（实测）**：`/login` 返回完整 CSP；学生刷新 `/my-schedule` 正常渲染，无控制台 error/warn；冒烟新增断言通过。
+- **回退**：删除 CSP `add_header` 行并重建 web 镜像；无数据变更。
+- **授权**：B 类（演示环境安全加固）。

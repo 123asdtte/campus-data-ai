@@ -72,6 +72,15 @@ def get_json(method: str, path: str, payload: dict | None = None, token: str | N
         return status, {}
 
 
+def response_headers(path: str) -> dict[str, str]:
+    req = urllib.request.Request(BASE + path, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return {key.lower(): value for key, value in resp.headers.items()}
+    except OSError as exc:
+        raise RuntimeError(f"GET {path} 不可达：{exc}") from exc
+
+
 def main() -> None:
     try:
         status, _ = request("GET", "/healthz")
@@ -80,6 +89,18 @@ def main() -> None:
         status, raw = request("GET", "/login")
         html = raw.decode("utf-8", errors="ignore")
         check("登录页可访问", status == 200 and 'id="root"' in html, f"HTTP {status}")
+
+        headers = response_headers("/login")
+        check(
+            "基础安全响应头",
+            headers.get("x-content-type-options") == "nosniff" and headers.get("x-frame-options") == "DENY",
+        )
+        csp = headers.get("content-security-policy", "")
+        check(
+            "CSP 已启用",
+            "script-src 'self'" in csp and "object-src 'none'" in csp,
+            csp[:80] + ("…" if len(csp) > 80 else ""),
+        )
 
         for username, password, expected_role, label in ACCOUNTS:
             status, payload = get_json(
