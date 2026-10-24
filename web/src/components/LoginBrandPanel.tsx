@@ -6,7 +6,7 @@ export default function LoginBrandPanel() {
     <aside className="login-brand" aria-label="平台介绍">
       <LoginGateArt />
       <div className="login-brand-logo">
-        <span className="login-brand-mark"><BrandMark size={28} /></span>
+        <span className="login-brand-mark"><BrandMark size={32} /></span>
         <span className="login-brand-name">
           <b>郴州思科职业学院</b>
           <small>数据管理平台 · DATA PLATFORM</small>
