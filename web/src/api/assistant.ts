@@ -9,6 +9,20 @@ export interface AssistantCourse {
   date?: string | null;
 }
 
+export interface AssistantStudent {
+  uid: string;
+  name: string;
+  college: string;
+  major: string;
+  class_name: string;
+  class_short: string;
+  status: string;
+  status_tone: string;
+  counselor: string;
+  change_count: number;
+  profile_to: string;
+}
+
 export interface AssistantReply {
   intent: string;
   answer: string;
@@ -20,6 +34,8 @@ export interface AssistantReply {
     period?: string | null;
   };
   courses: AssistantCourse[];
+  students?: AssistantStudent[];
+  student_total?: number;
   note?: string;
   as_of?: string;
   context?: string;
@@ -27,7 +43,11 @@ export interface AssistantReply {
   action?: { label: string; to: string } | null;
 }
 
-export async function askAssistant(question: string, page: string): Promise<AssistantReply> {
+export async function askAssistant(
+  question: string,
+  page: string,
+  context?: { student_uid?: string; change_no?: string },
+): Promise<AssistantReply> {
   const token = getToken();
   if (!token) throw new SessionExpiredError();
 
@@ -40,7 +60,7 @@ export async function askAssistant(question: string, page: string): Promise<Assi
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ question, page }),
+      body: JSON.stringify({ question, page, context }),
       signal: controller.signal,
     });
 

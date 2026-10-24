@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   Empty,
@@ -11,7 +11,9 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DownloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/ui';
+import StudentProfileDrawer from '../components/StudentProfileDrawer';
 import { fmt, todayStamp } from '../demo/format';
 import type { DemoData, DemoStudent } from '../demo/types';
 import { useDemoData } from '../demo/useDemoData';
@@ -77,6 +79,45 @@ export default function CounselorPage() {
       return true;
     });
   }, [students, classFilter, keyword]);
+
+  const [selected, setSelected] = useState<DemoStudent | null>(null);
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const focusUid = params.get('student') ?? '';
+  const warnedFocus = useRef('');
+
+  const selectedChanges = useMemo(
+    () => (selected && data ? data.changes.filter((item) => item.uid === selected.uid) : []),
+    [data, selected],
+  );
+
+  useEffect(() => {
+    if (!data || !focusUid) return;
+    const student = data.students.find((item) => item.uid === focusUid);
+    if (student) {
+      setSelected(student);
+      return;
+    }
+    setSelected(null);
+    if (warnedFocus.current !== focusUid) {
+      warnedFocus.current = focusUid;
+      message.warning('该学生不在当前账号的数据范围，未打开档案');
+    }
+  }, [data, focusUid]);
+
+  const closeStudent = () => {
+    setSelected(null);
+    if (focusUid) {
+      const next = new URLSearchParams(params);
+      next.delete('student');
+      setParams(next, { replace: true });
+    }
+  };
+
+  const openStudent = (student: DemoStudent) => {
+    setSelected(student);
+    setParams({ student: student.uid }, { replace: true });
+  };
 
   if (error) {
     return <div className="wb"><Tag color="red">演示数据加载失败：{error}</Tag></div>;
@@ -277,9 +318,26 @@ export default function CounselorPage() {
           dataSource={filtered}
           scroll={{ x: 980 }}
           pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${fmt(total)} 人` }}
+          onRow={(record) => ({ onClick: () => openStudent(record) })}
+          rowClassName={() => 'wb-row'}
           locale={{ emptyText: <Empty description="没有匹配的学生" /> }}
         />
       </section>
+
+      <StudentProfileDrawer
+        student={selected}
+        changes={selectedChanges}
+        open={Boolean(selected)}
+        onClose={closeStudent}
+        onOpenChanges={(uid) => {
+          setSelected(null);
+          navigate(`/changes?student=${uid}`);
+        }}
+        onLocateChange={(changeNo) => {
+          setSelected(null);
+          navigate(`/changes?change=${changeNo}`);
+        }}
+      />
 
       <p className="wb-footnote">{data.metrics.disclaimer} · 辅导员范围演示 · 导出仅含本班脱敏字段</p>
     </div>

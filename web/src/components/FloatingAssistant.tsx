@@ -41,6 +41,17 @@ const STAFF_SUGGESTIONS = [
   '最近的学籍异动情况',
 ];
 
+const PROFILE_SUGGESTIONS = [
+  '他的异动记录有哪些？',
+  '他的学籍状态是什么？',
+  '打开异动台账',
+];
+
+// 服务端只会下发受控的内部路由；前端仍再校验一次，避免把任意 URL 交给 navigate。
+function safeInternalPath(to?: string): string | null {
+  return to && to.startsWith('/') && !to.startsWith('//') ? to : null;
+}
+
 // 回答的来源口径：数据范围 + 这批演示数据的截止时间。悬浮面板原先只显示范围，
 // 学生问「明天有什么课」时看不出课表数据是哪一刻取的；两段拼进同一行，不新增样式。
 function formatAsOf(value: string): string {
@@ -58,10 +69,14 @@ function replyMeta(reply?: AssistantReply): string {
 }
 
 export default function FloatingAssistant() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const { session } = useSession();
   const isStudent = session?.roles.includes('student_portal') ?? false;
+  const searchParams = new URLSearchParams(search);
+  const contextStudent = searchParams.get('student') ?? undefined;
+  const contextChange = searchParams.get('change') ?? undefined;
+  const isProfileContext = Boolean(contextStudent);
   // AI 问数页本身就是一个完整对话界面，再挂悬浮入口只会重复。
   const embedded = pathname === '/assistant';
   const [open, setOpen] = useState(false);
@@ -77,8 +92,12 @@ export default function FloatingAssistant() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
 
-  const contextLabel = PAGE_TITLES[pathname] ?? '数据管理';
-  const staticSuggestions = isStudent ? STUDENT_SUGGESTIONS : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
+  const contextLabel = isProfileContext ? '学生档案' : PAGE_TITLES[pathname] ?? '数据管理';
+  const staticSuggestions = isStudent
+    ? STUDENT_SUGGESTIONS
+    : isProfileContext
+      ? PROFILE_SUGGESTIONS
+      : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
   // 服务端会针对这次回答给出下一步问法（与完整问数页同一份数据）。悬浮面板原先一直丢掉它，
   // 于是「下周有哪些课」这种追问要用户自己再打一遍；现在优先用服务端的，静态列表只做兜底。
   const lastSuggestions = [...messages].reverse().find((message) => message.reply)?.reply?.suggestions;
@@ -117,7 +136,10 @@ export default function FloatingAssistant() {
     setInput('');
     setPending(true);
     try {
-      const reply = await askAssistant(question, pathname);
+      const reply = await askAssistant(question, pathname, {
+        student_uid: contextStudent,
+        change_no: contextChange,
+      });
       setMessages((current) => [
         ...current,
         { id: `a-${Date.now()}`, role: 'assistant', text: reply.answer, reply },
@@ -206,12 +228,39 @@ export default function FloatingAssistant() {
                       ))}
                     </div>
                   ) : null}
+                  {message.reply?.students?.length ? (
+                    <div className="fa-students">
+                      {message.reply.students.map((student) => {
+                        const target = safeInternalPath(student.profile_to);
+                        return (
+                          <button
+                            type="button"
+                            className="fa-student"
+                            key={student.uid}
+                            aria-label={`查看学生 ${student.uid}`}
+                            disabled={!target}
+                            onClick={() => {
+                              if (!target) return;
+                              setOpen(false);
+                              navigate(target);
+                            }}
+                          >
+                            <span className="fa-student-id">{student.uid}</span>
+                            <b>{student.name}</b>
+                            <small>{student.class_short || student.class_name} · {student.status} · {student.college}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {message.reply?.action ? (
                     <button
                       type="button"
                       className="fa-action"
                       onClick={() => {
-                        navigate(message.reply!.action!.to);
+                        const target = safeInternalPath(message.reply!.action!.to);
+                        if (!target) return;
+                        navigate(target);
                         setOpen(false);
                       }}
                     >

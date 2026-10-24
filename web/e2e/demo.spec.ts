@@ -290,6 +290,78 @@ test.describe('本地演示关键路径', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('学生检索：唯一 UID 打开档案，并可按上下文定位异动', async ({ page }) => {
+    await login(page, 'counselor01', 'Demo@2026');
+    await page.goto('/counselor');
+    await expect(page.getByRole('heading', { name: '辅导员工作台' })).toBeVisible();
+
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('帮我找 SK-2026-000004');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('找到 余*', { timeout: 15000 });
+    await expect(bubble.locator('.fa-student')).toContainText('SK-2026-000004');
+    await bubble.getByRole('button', { name: /打开学生档案/ }).click();
+
+    await expect(page).toHaveURL(/\/counselor\?student=SK-2026-000004/);
+    await expect(page.locator('.ant-drawer-title')).toContainText('SK-2026-000004');
+    await expect(page.locator('.ant-drawer-body')).toContainText('跟读生转正式');
+
+    await page.getByRole('button', { name: '在异动台账中定位' }).click();
+    await expect(page).toHaveURL(/\/changes\?student=SK-2026-000004/);
+    await expect(page.getByText(/已按学生 SK-2026-000004 筛选/)).toBeVisible();
+    await expect(page.locator('.ant-table-row.is-focused').first()).toBeVisible();
+
+    // 页面上下文里的“他”应来自 URL 中的学生 UID，而不是模型猜测
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const contextPanel = page.getByRole('dialog', { name: 'AI 助手' });
+    await expect(contextPanel.locator('.fa-head')).toContainText('当前页面 · 学生档案');
+    await contextPanel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('他的异动记录有哪些？');
+    await contextPanel.getByRole('button', { name: '发送问题' }).click();
+    const contextBubble = contextPanel.locator('.fa-message.is-assistant').last();
+    await expect(contextBubble).toContainText('找到 余*', { timeout: 15000 });
+    await expect(contextBubble.locator('.fa-action')).toContainText('在异动台账中定位');
+    await page.keyboard.press('Escape');
+  });
+
+  test('学生检索：同名歧义只给候选，不自动打开档案', async ({ page }) => {
+    await login(page, 'xgb01', 'Demo@2026');
+    await page.goto('/workbench');
+
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('找一下李**');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('无法确定是哪一位', { timeout: 15000 });
+    await expect(bubble.locator('.fa-student')).toHaveCount(5);
+    await expect(bubble.locator('.fa-action')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/workbench$/);
+
+    const first = bubble.locator('.fa-student').first();
+    const uid = (await first.locator('.fa-student-id').textContent())?.trim() ?? '';
+    expect(uid).toMatch(/^SK-\d{4}-\d{6}$/);
+    await first.click();
+    await expect(page).toHaveURL(new RegExp(`/workbench\\?student=${uid}$`));
+    await expect(page.locator('.ant-drawer-title')).toContainText(uid);
+  });
+
+  test('学生检索：辅导员范围外 UID 不打开档案', async ({ page }) => {
+    await login(page, 'counselor01', 'Demo@2026');
+    await page.goto('/counselor');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('帮我找 SK-2026-000046');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('本班范围没有找到', { timeout: 15000 });
+    await expect(bubble.locator('.fa-student')).toHaveCount(0);
+    await expect(bubble.locator('.fa-action')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/counselor$/);
+    await expect(page.locator('.ant-drawer-title')).toHaveCount(0);
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);

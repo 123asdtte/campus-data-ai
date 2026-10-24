@@ -109,6 +109,103 @@ def mentions_roster_student(question: str, student: dict) -> bool:
     return False
 
 
+# 学生检索只认 UID 或花名册姓名，不做“模糊匹配后取第一条”。
+# 演示数据姓名已脱敏（如“李**”），同名很多，必须把歧义交给用户选。
+UID_IN_TEXT = re.compile(r"\bSK-\d{4}-\d{6}\b", re.IGNORECASE)
+MASKED_NAME = re.compile(r"[\u4e00-\u9fa5]{1,3}\*{1,3}")
+ROSTER_NAMES_BY_LENGTH = tuple(sorted(set(STUDENT_NAMES), key=len, reverse=True))
+SINGULAR_STUDENT = re.compile(
+    r"(?<!其)(?:这个学生|该生|这名学生|这位同学|此人|(?:他|她)(?:的|有|是|在|最近|现在|学籍|异动|档案|课表|信息|记录))"
+)
+LOOKUP_VERB = re.compile(r"(?:找|查|搜索|定位|打开|查看)")
+LOOKUP_PATTERN = re.compile(r"(?:找|查|搜索|定位|打开|查看)\s*(?:一下|下)?\s*([^\s，。？！,?.!的]{2,12})")
+STUDENT_LOOKUP_STOP = {
+    "学生", "同学", "档案", "信息", "记录", "异动", "台账", "学籍", "名单", "报表",
+    "休学", "退学", "复学", "转专业", "保留学籍", "跟读生", "预科生", "留级",
+    "学院", "班级", "全校", "数据", "质量", "人数", "多少", "哪些", "这个", "该生",
+}
+
+
+def extract_student_identifier(question: str, context_uid: str = "") -> tuple[str, str]:
+    """返回 ("uid"|"name", value)；无法确定身份时返回 ("", "")。"""
+    uid_match = UID_IN_TEXT.search(question)
+    if uid_match:
+        return "uid", uid_match.group(0).upper()
+
+    for name in ROSTER_NAMES_BY_LENGTH:
+        if name in question:
+            return "name", name
+
+    masked = MASKED_NAME.search(question)
+    if masked and masked.group(0) not in STUDENT_LOOKUP_STOP:
+        return "name", masked.group(0)
+
+    if context_uid and SINGULAR_STUDENT.search(question):
+        return "uid", context_uid
+
+    locate = LOOKUP_PATTERN.search(question)
+    if locate:
+        candidate = locate.group(1)
+        for suffix in ("的档案", "的异动", "的记录", "的信息", "的学生", "同学", "档案", "信息", "记录", "异动", "台账"):
+            candidate = candidate.replace(suffix, "")
+        candidate = candidate.strip("这个该名位")
+        if candidate and candidate not in STUDENT_LOOKUP_STOP and ("*" in candidate or 2 <= len(candidate) <= 4):
+            return "name", candidate
+    return "", ""
+
+
+def looks_like_student_lookup(question: str, identifier_kind: str) -> bool:
+    if identifier_kind:
+        return True
+    if SINGULAR_STUDENT.search(question):
+        return True
+    if LOOKUP_VERB.search(question) and any(word in question for word in ("学生档案", "学生信息", "学生记录")):
+        return True
+    # “找一下休学学生”这类列表请求不猜人，但也别落进人数统计；让用户补 UID/姓名。
+    if LOOKUP_VERB.search(question) and "学生" in question and not any(
+        word in question for word in ("多少", "人数", "哪些", "名单", "报表", "导出")
+    ):
+        return True
+    return False
+
+
+def search_scoped_students(students: list[dict], kind: str, value: str) -> list[dict]:
+    if kind == "uid":
+        wanted = value.upper()
+        return sorted(
+            (student for student in students if str(student.get("uid") or "").upper() == wanted),
+            key=lambda student: str(student.get("uid") or ""),
+        )
+    wanted = value.lower()
+    exact = [
+        student for student in students
+        if str(student.get("name") or "").lower() == wanted
+    ]
+    matches = exact or [
+        student for student in students
+        if wanted and wanted in str(student.get("name") or "").lower()
+    ]
+    return sorted(matches, key=lambda student: str(student.get("uid") or ""))
+
+
+def student_brief(student: dict, profile_base: str) -> dict:
+    """助手只返回定位所需字段；电话、身份证等不入回答。"""
+    uid = str(student.get("uid") or "")
+    return {
+        "uid": uid,
+        "name": str(student.get("name") or ""),
+        "college": str(student.get("college") or ""),
+        "major": str(student.get("major") or ""),
+        "class_name": str(student.get("class_name") or ""),
+        "class_short": str(student.get("class_short") or student.get("class_name") or ""),
+        "status": str(student.get("status") or ""),
+        "status_tone": str(student.get("status_tone") or "muted"),
+        "counselor": str(student.get("counselor") or ""),
+        "change_count": int(student.get("change_count") or 0),
+        "profile_to": f"{profile_base}?student={uid}",
+    }
+
+
 def normalize_weekday(value: object) -> str:
     text = str(value or "").strip()
     if text in WEEKDAYS:
@@ -566,7 +663,7 @@ def schedule_answer(
     }
 
 
-def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
+def staff_answer(question: str, payload: dict, roles: set[str], context: dict | None = None) -> dict:
     students = payload.get("students") or []
     metrics = payload.get("metrics") or {}
     changes = payload.get("changes") or []
@@ -574,7 +671,13 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
     scope_label = "本班范围" if is_counselor else "全校范围"
     report_target = "/counselor" if is_counselor else "/reports"
     change_target = "/changes"
-    base = {"courses": [], "note": f"{scope_label}演示数据；不返回身份证、电话或原始学号。", "action": None}
+    base = {
+        "courses": [],
+        "note": f"{scope_label}演示数据；不返回身份证、电话或原始学号。",
+        "action": None,
+        "students": [],
+        "student_total": 0,
+    }
     q = question
 
     raw_sensitive = re.search(r"身份证|电话|手机号|原始学号|成绩", q)
@@ -594,6 +697,101 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "scope": {"label": scope_label},
             "suggestions": ["人工智能学院有多少学生？", "全校休学和退学各有多少人？", "数据质量怎么样？", "最近的学籍异动情况"],
             "action": {"label": "打开数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
+        }
+
+    context_uid = ""
+    if isinstance(context, dict):
+        candidate_uid = str(context.get("student_uid") or "").strip()
+        if candidate_uid and any(str(student.get("uid") or "") == candidate_uid for student in students):
+            context_uid = candidate_uid
+    identifier_kind, identifier_value = extract_student_identifier(q, context_uid)
+    if looks_like_student_lookup(q, identifier_kind):
+        if not identifier_kind:
+            return {
+                **base,
+                "intent": "student_query_needs_identifier",
+                "answer": (
+                    "可以帮你定位学生档案或异动记录，但需要先给出 UID 或完整姓名"
+                    "（演示数据姓名已脱敏）。例如：帮我找 SK-2026-000004。"
+                ),
+                "scope": {"label": scope_label},
+                "suggestions": ["帮我找 SK-2026-000001", "找一下李**"],
+            }
+
+        matches = search_scoped_students(students, identifier_kind, identifier_value)
+        profile_base = "/counselor" if is_counselor else "/workbench"
+        if not matches:
+            return {
+                **base,
+                "intent": "student_not_found",
+                "answer": (
+                    f"在{scope_label}没有找到「{identifier_value}」。请确认 UID 或姓名；"
+                    "为避免误开档案，不会按模糊结果自动定位。"
+                ),
+                "scope": {"label": scope_label},
+                "suggestions": ["帮我找 SK-2026-000001", "找一下李**"],
+            }
+
+        briefs = [student_brief(student, profile_base) for student in matches[:5]]
+        if len(matches) > 1:
+            return {
+                **base,
+                "intent": "student_ambiguous",
+                "answer": (
+                    f"在当前数据范围内找到 {len(matches)} 名学生匹配「{identifier_value}」，"
+                    "无法确定是哪一位。请点选下方 UID 查看档案，或补充 UID/班级后再查。"
+                ),
+                "scope": {"label": scope_label},
+                "students": briefs,
+                "student_total": len(matches),
+                "suggestions": [f"找一下 {brief['uid']}" for brief in briefs[:2]],
+            }
+
+        student = matches[0]
+        brief = briefs[0]
+        student_changes = [change for change in changes if change.get("uid") == student.get("uid")]
+        brief["change_count"] = len(student_changes)
+        lookup_wants_changes = any(
+            word in q for word in ("异动", "台账", "审批", "核对", "记录", "变化")
+        ) and "档案" not in q
+        answer = (
+            f"找到 {brief['name']}（{brief['uid']}）：{brief['class_short']}，"
+            f"{brief['college']}，学籍{brief['status']}，辅导员{brief['counselor']}。"
+        )
+        if student_changes:
+            answer += f" 共有 {len(student_changes)} 条学籍异动记录。"
+            if lookup_wants_changes:
+                latest = sorted(
+                    student_changes,
+                    key=lambda change: (change.get("date") or "", change.get("change_no") or ""),
+                    reverse=True,
+                )[0]
+                answer += (
+                    f" 最近一条：{latest.get('type')}（{latest.get('date') or '未填日期'}，"
+                    f"{latest.get('status') or '未填状态'}）。"
+                )
+        else:
+            answer += " 暂无学籍异动记录。"
+
+        if lookup_wants_changes and student_changes:
+            action = {"label": "在异动台账中定位", "to": f"/changes?student={brief['uid']}"}
+            suggestions = [f"打开 {brief['uid']} 的学生档案", "还有哪些异动没核对？"]
+        else:
+            action = {"label": "打开学生档案", "to": brief["profile_to"]}
+            suggestions = [
+                f"{brief['uid']} 的异动记录有哪些？",
+                f"{brief['uid']} 的学籍状态是什么？",
+                "帮我找另一个学生",
+            ]
+        return {
+            **base,
+            "intent": "student_found",
+            "answer": answer,
+            "scope": {"label": scope_label},
+            "action": action,
+            "students": [brief],
+            "student_total": 1,
+            "suggestions": suggestions,
         }
 
     college = next((item.get("name") for item in metrics.get("college_counts") or [] if item.get("name") and item["name"] in q), None)
@@ -1146,6 +1344,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"问题需为 1-{MAX_QUESTION_CHARS} 字"})
             return
         page = str(body.get("page") or "").strip()[:60]
+        raw_context = body.get("context")
+        context: dict = {}
+        if isinstance(raw_context, dict):
+            # 页面上下文只用于消解“这个学生/他的异动”这类指称；uid 仍要在
+            # staff_answer 里按当前身份范围复核，不能直接信前端传值。
+            student_uid = str(raw_context.get("student_uid") or "").strip()[:40]
+            change_no = str(raw_context.get("change_no") or "").strip()[:40]
+            if student_uid:
+                context["student_uid"] = student_uid
+            if change_no:
+                context["change_no"] = change_no
         payload = scoped_payload(user, roles)
         if payload is None:
             record_assistant_audit(user, roles, {"intent": "denied"}, question, page)
@@ -1166,7 +1375,7 @@ class Handler(BaseHTTPRequestHandler):
                 now,
             )
         elif roles & STAFF_ROLES or "counselor" in roles:
-            result = staff_answer(question, payload, roles)
+            result = staff_answer(question, payload, roles, context)
         else:
             self._json(403, {"error": "当前角色不能使用 AI 助手"})
             return

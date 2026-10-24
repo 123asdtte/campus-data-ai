@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
-  Descriptions,
-  Drawer,
   Empty,
   Input,
   Select,
   Spin,
   Table,
   Tag,
+  message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { SearchOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/ui';
+import StudentProfileDrawer from '../components/StudentProfileDrawer';
 
 import { fmt } from '../demo/format';
 import type { DemoStudent, NameCount, QualityItem, Tone } from '../demo/types';
@@ -131,6 +132,39 @@ export default function WorkbenchPage() {
     () => (selected && data ? data.changes.filter((item) => item.uid === selected.uid) : []),
     [data, selected],
   );
+
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const focusUid = params.get('student') ?? '';
+  const warnedFocus = useRef('');
+
+  useEffect(() => {
+    if (!data || !focusUid) return;
+    const student = data.students.find((item) => item.uid === focusUid);
+    if (student) {
+      setSelected(student);
+      return;
+    }
+    setSelected(null);
+    if (warnedFocus.current !== focusUid) {
+      warnedFocus.current = focusUid;
+      message.warning('该学生不在当前账号的数据范围，未打开档案');
+    }
+  }, [data, focusUid]);
+
+  const closeStudent = () => {
+    setSelected(null);
+    if (focusUid) {
+      const next = new URLSearchParams(params);
+      next.delete('student');
+      setParams(next, { replace: true });
+    }
+  };
+
+  const openStudent = (student: DemoStudent) => {
+    setSelected(student);
+    setParams({ student: student.uid }, { replace: true });
+  };
 
   if (error) {
     return (
@@ -414,7 +448,7 @@ export default function WorkbenchPage() {
               setPageSize(nextPageSize);
             },
           }}
-          onRow={(record) => ({ onClick: () => setSelected(record) })}
+          onRow={(record) => ({ onClick: () => openStudent(record) })}
           rowClassName={() => 'wb-row'}
           locale={{ emptyText: <Empty description="没有匹配的学生" /> }}
         />
@@ -498,58 +532,20 @@ export default function WorkbenchPage() {
         {metrics.disclaimer} · 本地演示版 · 数据生成于 {new Date(metrics.generated_at).toLocaleString('zh-CN', { hour12: false })}
       </p>
 
-      <Drawer
-        title={selected ? `${selected.uid} · ${selected.name}` : '学生档案'}
+      <StudentProfileDrawer
+        student={selected}
+        changes={selectedChanges}
         open={Boolean(selected)}
-        onClose={() => setSelected(null)}
-        width={620}
-        destroyOnClose
-      >
-        {selected ? (
-          <div className="wb-drawer">
-            <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="UID">{selected.uid}</Descriptions.Item>
-              <Descriptions.Item label="姓名（脱敏）">{selected.name}</Descriptions.Item>
-              <Descriptions.Item label="性别">{selected.gender || '—'}</Descriptions.Item>
-              <Descriptions.Item label="学院 / 专业">{selected.college} / {selected.major}</Descriptions.Item>
-              <Descriptions.Item label="班级">{selected.class_name}</Descriptions.Item>
-              <Descriptions.Item label="年级 / 入学年份">{selected.grade} / {selected.enrollment_year ?? '—'}</Descriptions.Item>
-              <Descriptions.Item label="学籍状态">
-                <Tag color={TONE_COLOR[selected.status_tone]}>{selected.status}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="辅导员">{selected.counselor}</Descriptions.Item>
-              <Descriptions.Item label="本人电话">{selected.phone}</Descriptions.Item>
-              <Descriptions.Item label="身份证">{selected.id_card}</Descriptions.Item>
-              <Descriptions.Item label="生源地">{selected.source_region || '—'}</Descriptions.Item>
-              <Descriptions.Item label="数据标记">
-                {selected.flags.length ? selected.flags.join('、') : '无'}
-              </Descriptions.Item>
-            </Descriptions>
-
-            <h3 className="wb-drawer-title">学籍异动记录</h3>
-            {selectedChanges.length ? (
-              <div className="wb-change-list">
-                {selectedChanges.map((item) => (
-                  <div className="wb-change" key={item.change_no}>
-                    <div className="wb-change-top">
-                      <b>{item.type}</b>
-                      <span>{item.date}</span>
-                      <Tag color={item.status.includes('已批') ? 'green' : 'orange'}>{item.status}</Tag>
-                    </div>
-                    <p>{item.reason || '未填原因'}</p>
-                    {item.target ? <small>去向：{item.target}</small> : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <Empty description="暂无学籍异动" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            )}
-            <p className="wb-note">
-              原始学号、完整身份证与电话不在演示页面展示；UID 映射保存在本地数据管理员侧。
-            </p>
-          </div>
-        ) : null}
-      </Drawer>
+        onClose={closeStudent}
+        onOpenChanges={(uid) => {
+          setSelected(null);
+          navigate(`/changes?student=${uid}`);
+        }}
+        onLocateChange={(changeNo) => {
+          setSelected(null);
+          navigate(`/changes?change=${changeNo}`);
+        }}
+      />
     </div>
   );
 }

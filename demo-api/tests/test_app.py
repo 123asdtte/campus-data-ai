@@ -426,6 +426,90 @@ class AssistantQueryTest(unittest.TestCase):
         self.assertIn(str(len(counselor_payload["students"])), counselor_reply["answer"])
 
 
+class StudentLookupTest(unittest.TestCase):
+    """学生检索必须唯一命中才给档案目标；歧义、越界、缺参数都不能猜。"""
+
+    def setUp(self):
+        self.staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        self.counselor_payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        self.own_uid = STUDENT_UID
+        self.change_uid = next(
+            student["uid"] for student in self.counselor_payload["students"]
+            if student.get("change_count")
+        )
+
+    def answer(self, question: str, payload: dict, roles: set[str], context: dict | None = None) -> dict:
+        return demo.staff_answer(question, payload, roles, context)
+
+    def test_unique_uid_returns_scoped_profile_target(self):
+        counselor_reply = self.answer(f"帮我找 {self.own_uid}", self.counselor_payload, COUNSELOR_ROLE)
+        self.assertEqual(counselor_reply["intent"], "student_found")
+        self.assertEqual(counselor_reply["student_total"], 1)
+        self.assertEqual(counselor_reply["action"]["to"], f"/counselor?student={self.own_uid}")
+        self.assertEqual(counselor_reply["students"][0]["profile_to"], f"/counselor?student={self.own_uid}")
+
+        staff_reply = self.answer(f"帮我找 {self.own_uid}", self.staff_payload, STAFF)
+        self.assertEqual(staff_reply["intent"], "student_found")
+        self.assertEqual(staff_reply["action"]["to"], f"/workbench?student={self.own_uid}")
+
+    def test_changes_request_points_to_ledger_filter(self):
+        reply = self.answer(f"打开 {self.change_uid} 的异动记录", self.counselor_payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "student_found")
+        self.assertEqual(reply["action"]["to"], f"/changes?student={self.change_uid}")
+        self.assertIn("最近一条", reply["answer"])
+
+    def test_ambiguous_masked_name_returns_candidates_without_action(self):
+        reply = self.answer("找一下李**", self.staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "student_ambiguous")
+        self.assertIsNone(reply["action"])
+        self.assertGreater(reply["student_total"], 1)
+        self.assertEqual(len(reply["students"]), 5)
+        for candidate in reply["students"]:
+            self.assertIn("*", candidate["name"])
+            self.assertNotIn("phone", candidate)
+            self.assertNotIn("id_card", candidate)
+            self.assertTrue(candidate["profile_to"].startswith("/workbench?student="))
+
+    def test_counselor_cannot_locate_out_of_scope_uid(self):
+        reply = self.answer(f"帮我找 {out_of_scope_uid()}", self.counselor_payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "student_not_found")
+        self.assertIsNone(reply["action"])
+        self.assertEqual(reply["students"], [])
+        self.assertIn("本班范围", reply["answer"])
+
+    def test_missing_identifier_asks_instead_of_guessing(self):
+        reply = self.answer("帮我找一下这个学生", self.counselor_payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "student_query_needs_identifier")
+        self.assertIsNone(reply["action"])
+        self.assertEqual(reply["students"], [])
+
+    def test_page_context_student_is_used_only_after_scope_check(self):
+        reply = self.answer(
+            "他的异动记录有哪些？",
+            self.counselor_payload,
+            COUNSELOR_ROLE,
+            {"student_uid": self.change_uid},
+        )
+        self.assertEqual(reply["intent"], "student_found")
+        self.assertEqual(reply["action"]["to"], f"/changes?student={self.change_uid}")
+
+        out_of_scope = self.answer(
+            "他的异动记录有哪些？",
+            self.counselor_payload,
+            COUNSELOR_ROLE,
+            {"student_uid": out_of_scope_uid()},
+        )
+        self.assertEqual(out_of_scope["intent"], "student_query_needs_identifier")
+        self.assertIsNone(out_of_scope["action"])
+
+    def test_aggregate_questions_still_win_over_lookup(self):
+        for question in ("人工智能学院有多少学生？", "查一下人工智能学院有多少学生"):
+            reply = self.answer(question, self.staff_payload, STAFF)
+            self.assertEqual(reply["intent"], "count", question)
+        pending = self.answer("还有哪些异动没核对？", self.staff_payload, STAFF)
+        self.assertEqual(pending["intent"], "pending")
+
+
 class QuietServer(demo.Server):
     def handle_error(self, request, client_address) -> None:
         # 测试里主动断开半开连接，忽略由此产生的写回失败
