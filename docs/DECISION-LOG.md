@@ -1644,3 +1644,16 @@
 - **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
 - **回退**：`git revert 969c69b`（会把 E2E 重新变红，不可单独回退）。
 - **授权**：B 类（仅前端展示文案与虚构数据，无副作用、不出网）。
+
+## D-077 跨周课程定位补上 E2E：不可见的格子明说「未定位」，可见的格子必须真高亮
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（测试提交 `22f8968`；远端 run 40103998682 全部 8 个 job pass，其中「演示栈 E2E」job 120901777237 日志实读 `Running 29 tests using 1 worker` → `29 passed (1.6m)`，新用例在第 9 位：`✓ 9 e2e/demo.spec.ts:188:3 › 跨周课程定位：当前周不可见时明说未定位，可见时真正高亮 (3.2s)`）
+- **问题**：D-071 实现了跨周定位提示（点课程卡片后若目标 (weekday, period, course) 不在当前周课表可见，弹「不在当前第 N 周的周X P节，页面未做定位」），但一直没有自动化覆盖。D-075 时评估过盲写风险：判据依赖具体周次与格子内容，写不好就是永真断言，于是搁置。本轮补齐。
+- **先证伪自己的猜测**：最初假设「点任意下周课程卡片都会出提示」——读 `applyFocus`（StudentSchedulePage.tsx:62-85）发现可见性按 (weekday, period, course) 键判断，第 8 周同格同课存在时会正常高亮而非提示。用 Python 探针（`sys.path.insert(0,'.')` + `import app as demo`，身份 dict 按 test_app.py:38-43 构造）逐一核对 14 门下周课：**唯一**不可见的是「周三 5-6节 高等数学(一)」，同课程名在「周二 1-2节」可见——天然构成对照对，测试据此设计：absent → 提示；visible → `is-focus` 且无提示。探测输出需 `python -X utf8` 规避 GBK 乱码。
+- **修法**：不改产品代码（D-071 的实现经核对是对的），只补 E2E：`web/e2e/demo.spec.ts:188`「跨周课程定位：当前周不可见时明说未定位，可见时真正高亮」。锚点基于静态演示数据（`demo-data.json:460` 的 `current_week: 8` 不随日期漂移），课程名与周次允许写死；但 `courses.length > 0` 的前置断言给了明确失败信息（锚点漂移时先查 demo-data.json），不是盲等。
+- **测试（实测）**：本地 `npx playwright test --list` 收集 29 tests；远端 run 40103998682「演示栈 E2E」`29 passed (1.6m)`，其余 7 个 job（网关构建、前端类型检查与构建、后端接口与校验测试、本地演示 API 测试等）全部 pass。可证伪性：提示断言写死「周三 5-6节」「第 8 周」，回归实现（去掉 setFocusNotice 或改可见性判断）必红；高亮断言 `toHaveClass(/is-focus/)` 锁定 td 的真实 DOM 状态，不是文本近似。
+- **未验证**：真实浏览器里提示 Alert 的观感与 5 秒自动清除的时序体验——E2E 断的是文本与 class 存在性，不是动画与版式；本地 Docker 引擎仍 500，无本地人眼证据。
+- **涉及文件**：`web/e2e/demo.spec.ts`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 22f8968`（纯测试提交，回退后 D-071 功能仍在，只是失去回归保护）。
+- **授权**：B 类（仅测试代码与虚构演示数据，无副作用、不出网）。
