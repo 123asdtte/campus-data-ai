@@ -543,9 +543,25 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "action": {"label": "打开学籍异动", "to": change_target},
         }
 
-    count_words = any(word in q for word in ("多少", "人数", "几个", "几名", "统计"))
+    # “异动/条/记录”才是台账口径；只说“休学”“退学”时问的是学生当前学籍状态人数，两者不能混。
+    wants_change_rows = any(word in q for word in ("异动", "台账", "审批", "核对", "变化", "记录", "条"))
+    count_words = any(word in q for word in ("多少", "人数", "几个", "几名", "统计", "哪些"))
     change_types = [name for name in CHANGE_TYPES if name in q]
-    if change_types and count_words:
+
+    if statuses and not wants_change_rows:
+        parts = [
+            f"{status} {sum(1 for student in base_students if student.get('status') == status)} 人"
+            for status in statuses[:4]
+        ]
+        return {
+            **base,
+            "intent": "count",
+            "answer": f"{scope}：{'，'.join(parts)}。按学生当前学籍状态统计（演示数据），不是异动条数。",
+            "scope": {"label": scope_label},
+            "action": {"label": "查看数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
+        }
+
+    if wants_change_rows and change_types and count_words:
         parts = [
             f"{name} {sum(1 for change in changes if change.get('type') == name)} 条"
             for name in change_types
@@ -558,30 +574,24 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "action": {"label": "打开学籍异动", "to": change_target},
         }
 
-    if any(word in q for word in ("异动", "休学", "退学", "转专业", "变化")):
+    if wants_change_rows:
         type_counts = metrics.get("change_type_counts") or []
         top = "、".join(f"{item.get('name')} {item.get('count')}" for item in type_counts[:3])
+        orphan = metrics.get("orphan_changes") or 0
         return {
             **base,
             "intent": "changes",
-            "answer": f"{scope_label}共有 {len(changes)} 条学籍异动记录" + (f"；主要类型：{top}。" if top else "。") + "异动需教务确认后才联动学生状态。",
+            "answer": (
+                f"{scope_label}共有 {len(changes)} 条学籍异动记录"
+                + (f"；主要类型：{top}。" if top else "。")
+                + (f"另有 {orphan} 条学号未匹配的异动不在可核对清单里。" if orphan else "")
+                + "异动需教务确认后才联动学生状态。"
+            ),
             "scope": {"label": scope_label},
             "action": {"label": "打开学籍异动", "to": change_target},
         }
 
-    if any(word in q for word in ("多少", "人数", "几个", "几名", "统计")):
-        if statuses:
-            parts = []
-            for status in statuses[:4]:
-                count = sum(1 for student in base_students if student.get("status") == status)
-                parts.append(f"{status} {count} 人")
-            return {
-                **base,
-                "intent": "count",
-                "answer": f"{scope}：{'，'.join(parts)}。统计范围为{scope_label}演示数据。",
-                "scope": {"label": scope_label},
-                "action": {"label": "查看数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
-            }
+    if count_words:
         return {
             **base,
             "intent": "count",

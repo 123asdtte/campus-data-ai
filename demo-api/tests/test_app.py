@@ -242,14 +242,50 @@ class AssistantQueryTest(unittest.TestCase):
         self.assertEqual(reply["courses"], [])
         self.assertIn("只能查询本人课表", reply["answer"])
 
+    def test_status_question_answers_headcount_not_ledger_rows(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        status_counts = {item["name"]: item["count"] for item in staff_payload["metrics"]["status_counts"]}
+        ledger_rows = {
+            name: sum(1 for change in staff_payload["changes"] if change.get("type") == name)
+            for name in ("休学", "退学")
+        }
+        # 两条口径在演示数据里本来就不同，否则这条断言没有保护任何东西
+        self.assertNotEqual(status_counts["休学"], ledger_rows["休学"])
+        reply = demo.staff_answer("全校休学和退学各有多少人？", staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "count")
+        for name in ("休学", "退学"):
+            self.assertIn(f"{name} {status_counts[name]} 人", reply["answer"])
+            self.assertNotIn(f"{name} {ledger_rows[name]} 条", reply["answer"])
+
+    def test_college_status_count_stays_college_scoped(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        expected = sum(
+            1 for student in staff_payload["students"]
+            if student.get("college") == "人工智能学院" and student.get("status") == "休学"
+        )
+        reply = demo.staff_answer("人工智能学院休学的有多少人？", staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "count")
+        self.assertIn("人工智能学院", reply["answer"])
+        self.assertIn(f"休学 {expected} 人", reply["answer"])
+
     def test_change_type_counts(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)
-        reply = demo.staff_answer("全校休学和退学各有多少人？", staff_payload, STAFF)
+        reply = demo.staff_answer("异动台账里休学和退学各有多少条？", staff_payload, STAFF)
         self.assertEqual(reply["intent"], "change_count")
         self.assertIn(str(len(staff_payload["changes"])), reply["answer"])
         for name in ("休学", "退学"):
             expected = sum(1 for change in staff_payload["changes"] if change.get("type") == name)
             self.assertIn(f"{name} {expected} 条", reply["answer"])
+
+    def test_changes_answer_discloses_unmatched_rows(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        reply = demo.staff_answer("最近的学籍异动情况", staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "changes")
+        # 工作台 KPI 用的是整表条数，可核对清单只有学号匹配上的行：回答里要说清差额
+        orphan = staff_payload["metrics"].get("orphan_changes") or 0
+        self.assertIn(str(len(staff_payload["changes"])), reply["answer"])
+        if orphan:
+            self.assertIn(f"另有 {orphan} 条学号未匹配的异动", reply["answer"])
 
     def test_quality_answer_covers_every_flag(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)

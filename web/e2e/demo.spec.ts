@@ -169,6 +169,21 @@ test.describe('本地演示关键路径', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('悬浮助手把“休学退学有多少人”答成人数，不是异动条数', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/students');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    // 走推荐问题按钮：这就是管理员真实会点的那条路径
+    await panel.locator('.fa-suggestions').getByRole('button', { name: '全校休学和退学各有多少人？' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText(/休学 \d+ 人/, { timeout: 15000 });
+    await expect(bubble).toContainText(/退学 \d+ 人/);
+    await expect(bubble).toContainText('不是异动条数');
+    await expect(bubble).not.toContainText('学籍异动记录');
+    await page.keyboard.press('Escape');
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);
