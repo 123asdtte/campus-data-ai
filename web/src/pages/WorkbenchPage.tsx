@@ -18,6 +18,7 @@ import { PageHeader } from '../components/ui';
 import { fmt } from '../demo/format';
 import type { DemoStudent, NameCount, QualityItem, Tone } from '../demo/types';
 import { useDemoData } from '../demo/useDemoData';
+import { downloadFourSheet } from '../demo/download';
 
 const TONE_COLOR: Record<Tone, string> = {
   success: 'green',
@@ -138,7 +139,7 @@ export default function WorkbenchPage() {
           type="error"
           showIcon
           message="演示数据加载失败"
-          description={`${error}。请确认 web/public/demo/demo-data.json 存在，并重新加载页面。`}
+          description={`${error}。请确认 demo-api 服务与网关可用，并重新加载页面。`}
         />
       </div>
     );
@@ -435,9 +436,9 @@ export default function WorkbenchPage() {
               </div>
             ))}
           </div>
-          <a className="wb-download" href="/demo/four-sheet.xlsx" download>
+          <button type="button" className="wb-download" onClick={() => void downloadFourSheet()}>
             下载四件套 Excel <span>↓</span>
-          </a>
+          </button>
           <p className="wb-note">
             产物仅供演示与人工复核，不用于评奖、处分、注册或上报。原始文件不覆盖，所有输出为新文件。
           </p>

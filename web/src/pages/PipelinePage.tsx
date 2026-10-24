@@ -13,6 +13,7 @@ import { CheckCircleOutlined, InboxOutlined, PlayCircleOutlined } from '@ant-des
 import { PageHeader } from '../components/ui';
 import { fmt } from '../demo/format';
 import { useDemoData } from '../demo/useDemoData';
+import { downloadFourSheet, downloadScopedJson } from '../demo/download';
 
 const STEPS = [
   { key: 'identify', title: '识别文件类型', detail: '按表头判断：花名册 / 学籍异动 / 招生录取 / 学工业务。' },
@@ -174,8 +175,12 @@ export default function PipelinePage() {
             <div><span>同班同名</span><b>{fmt(quality.same_name_groups?.count ?? 0)}</b></div>
           </div>
           <div className="pl-sheet-links">
-            <a href="/demo/four-sheet.xlsx" download><InboxOutlined /> 四件套 Excel</a>
-            <a href="/demo/demo-data.json" download>演示数据 JSON</a>
+            <button type="button" className="wb-download" onClick={() => void downloadFourSheet()}>
+              <InboxOutlined /> 四件套 Excel
+            </button>
+            <button type="button" className="wb-download" onClick={() => void downloadScopedJson()}>
+              当前角色数据 JSON
+            </button>
           </div>
           <p className="wb-note">四件套：标准化数据 / 异常清单 / 字段映射 / 核对汇总。仅用于演示与人工复核。</p>
         </section>

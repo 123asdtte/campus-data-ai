@@ -720,3 +720,41 @@
 - **验证（实测）**：管理员登录 → 总览 / 学生信息（21 行）正常；学生登录 → 我的课表正常；无控制台错误；冒烟脚本通过。
 - **回退**：恢复静态 import 并移除 AppLayout 的 Suspense；无数据变更。
 - **授权**：B 类（前端性能与交付质量）。
+
+---
+
+## D-024 演示数据改为服务端按身份返回
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 全量 `web/public/demo/demo-data.json`（约 3.9 MB、5581 名学生）可被任何人匿名 GET；前端仅在浏览器内做角色过滤，拿到文件即可看到全校数据；
+  - `web/public/demo/four-sheet.xlsx` 同样公开可下载，学生/辅导员本不应获得全校四件套。
+- **可选方案**：
+  1. 继续静态文件 + 前端过滤——无法阻止直接下载（否决）；
+  2. 数据文件移出 `public`，改由 Nginx 静态目录托管并加 IP/口令——仍无身份粒度（否决）；
+  3. 新增只读 `demo-api`：数据只存服务端镜像，校验网关 token 后按角色/UID 返回（采用）。
+- **决定**：
+  - 数据迁至 `demo-api/data/`，新增 `demo-api/app.py` 与 `Dockerfile`；
+  - `demo-api` 用 `Authorization: Bearer` 调网关 `/system/user/getInfo` 校验身份：学生仅本人档案、本班课表、本人异动；辅导员仅所带学生/班级/异动；`xgb`/`superadmin` 全校；四件套仅员工角色可下载；
+  - Nginx 增加 `/demo-api/` 代理，旧 `/demo/demo-data.json`、`/demo/four-sheet.xlsx` 显式 404；
+  - 前端改为带 token 请求 `/demo-api/data`，下载按钮改用鉴权 fetch；
+  - 启停脚本增加 `campus-demo-api` 容器并等待健康检查。
+- **实现细节（值得记录）**：
+  - Docker Desktop 会向容器注入 `HTTP_PROXY=http://127.0.0.1:8080`，导致容器内调用 `gateway:9180` 被代理劫持（实测 503）；网关调用使用 `ProxyHandler({})` 强制直连；
+  - 容器名 `campus-demo-api` 与上游名 `demo-api` 不一致，首次出现 Nginx 502；启动脚本增加 `--network-alias demo-api`。
+- **影响与兼容性**：
+  - 演示数据不再能通过 URL 匿名获取；前端页面结构与路由不变；
+  - `demo-api` 为只读服务，不写任何数据；未来改为数据库查询时保持同一响应形状即可；
+  - 这是演示级隔离，不等于生产级行级数据权限。
+- **风险与限制**：
+  - 身份校验依赖网关可用；网关不可用时返回 503，不降级为公开数据；
+  - 数据仍为虚构数据；接入真实学生数据前必须改为数据库查询 + 行级授权 + 审计；
+  - 未做速率限制与响应缓存。
+- **涉及文件**：`demo-api/app.py`、`demo-api/Dockerfile`、`demo-api/data/*`、`web/nginx-common.conf`、`web/nginx.conf`、`web/nginx.tls.conf`、`web/src/demo/useDemoData.ts`、`web/src/demo/download.ts`、`web/src/pages/{Workbench,Reports,Pipeline}Page.tsx`、`web/vite.config.ts`、`scripts/demo/{start-local-demo.ps1,stop-local-demo.ps1,smoke-demo.py,build_demo_dataset.py}`、`docs/LOCAL-DEMO.md`、`web/public/demo/README.md`。
+- **验证（实测）**：
+  - `python scripts/demo/smoke-demo.py` 全部 PASS：学生 1 学生/15 排课、辅导员 270 学生/10 班级、学工处与管理员 5581 学生；四件套学生/辅导员 403、学工处/管理员 200；匿名 `/demo-api/data` 401；旧公开数据入口 404；
+  - 学生、辅导员、管理员页面均正常加载，无控制台错误；
+  - `npm run build` 通过。
+- **回退**：恢复 `public/demo` 静态文件与页面链接，删除 `demo-api` 与 Nginx 代理；无数据变更。
+- **授权**：B 类（演示环境安全加固）；生产数据隔离需人工授权后实施。

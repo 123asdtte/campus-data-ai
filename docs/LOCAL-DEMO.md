@@ -72,11 +72,12 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 - 登录：`/gw/auth/login`；登录后前端调用 `/gw/system/user/getInfo` 获取当前用户、角色和权限。
 - 菜单：`AppLayout` 根据网关角色生成；学生只有“我的课表”，辅导员只有“辅导员台/学籍异动”，学工处为工作台/流水线/报表/异动/辅导员预览。
 - 路由：`RequireRoles` 做二级守卫，直接输入未授权 URL 会回到该角色首页。
-- 数据范围：
-  - 学生课表按登录 UID 匹配本人班级；
-  - 辅导员台和辅导员异动按登录昵称匹配所带班级；
-  - 学工处/管理员看全校。
-- **当前限制**：演示数据是静态 JSON，数据范围在页面层过滤；正式版必须把同样的范围规则下沉到 API（学生端不能下载全班/全校数据）。
+- 数据范围由 `demo-api` 在服务端按网关 token 身份判定：
+  - 学生只返回本人档案、本人班级课表和本人异动；
+  - 辅导员只返回所带班级/学生/异动；
+  - 学工处/管理员返回全校。
+- 完整演示数据和四件套已移出 `web/public`，旧公开地址返回 404；`/demo-api/data` 必须携带登录 token，四件套下载仅学工处/管理员可用。
+- 正式版仍需把内存过滤替换为数据库行级权限、审计与分页查询。
 - 正式版学生登录用“学号 + 初始密码”，服务端把学号映射到 UID；短信已停，重置由辅导员/学工处办理。
 
 ---
@@ -119,7 +120,7 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 .\scripts\demo\stop-local-demo.ps1
 ```
 
-脚本会检查网关、构建 `campus-data-web:local-demo`、在 `campus-net` 启动 `campus-web-demo`，并检查 `/healthz`。
+脚本会检查网关、构建 `campus-data-web:local-demo` 与 `campus-demo-api:local-demo`、在 `campus-net` 启动两个容器，并检查健康状态。
 
 启动后跑只读冒烟（登录页、四角色身份、缺 token/伪 token/不存在账号拒绝）：
 
@@ -145,6 +146,7 @@ python scripts/demo/smoke-demo.py
 - 冒烟脚本 `scripts/demo/smoke-demo.py`：healthz、登录页、四角色登录/角色/身份、缺 token/伪 token/不存在账号拒绝，全部 PASS（2026-10-24）
 - 响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy` 已启用，`Server` 隐藏版本号（8083 实测）
 - 路由拆包：入口 JS 1.39 MB → 0.69 MB；登录首屏不加载员工页/表格/xlsx chunk，懒加载页面实测正常
+- 数据接口：匿名 `/demo-api/data` 401；学生 1 人/15 排课；辅导员 270 人/73 排课/6 异动；学工处/管理员 5581 人；四件套学生/辅导员 403、学工处/管理员 200；旧公开 JSON 404
 
 ---
 
@@ -152,7 +154,7 @@ python scripts/demo/smoke-demo.py
 
 - **所有数据为虚构**；没有接真实学生信息。
 - 登录页“记住账号”只把用户名保存在本机 localStorage，不保存密码；公共设备请取消勾选。
-- 学生/辅导员/学工处的**身份与菜单**由网关角色绑定；但演示数据是静态 JSON，**数据范围只在页面过滤**；正式版必须由 API 服务端强制过滤，学生端不能下载全班/全校数据。
+- 学生/辅导员/学工处的身份与菜单由网关角色绑定；本次演示数据已由 `demo-api` 在服务端按 token 过滤，但该服务是**内存只读演示实现**，不做写入、审计或分页；正式版必须改为数据库 API + 行级权限 + 审计。
 - 异动、学生自助、导出记录目前是**前端本地状态 / 浏览器 localStorage**，刷新或换容器会重置；正式版必须落到后端与审计表。
 - 资料库流水线是**用已生成数据模拟**；正式版需要接后端上传/解析/任务队列。
 - 业务页面按桌面 1920 设计；登录页已适配移动端，其余页面尚未专门适配。
@@ -179,6 +181,7 @@ python scripts/demo/smoke-demo.py
 - 会话/角色：`web/src/session/SessionContext.tsx`、`web/src/App.tsx`、`web/src/components/AppLayout.tsx`
 - 数据生成：`scripts/demo/build_demo_dataset.py`
 - 演示账号：`scripts/demo/seed-demo-accounts.sql`
-- 演示数据：`web/public/demo/`
+- 演示数据：`demo-api/data/`（服务端，不在 web/public）
+- 数据 API：`demo-api/app.py`、`demo-api/Dockerfile`
 - 启动/停止：`scripts/demo/start-local-demo.ps1`、`stop-local-demo.ps1`
 - 私有映射：`Z:\ai\本地部署\demo-private\`（不在仓库内）

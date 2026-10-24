@@ -1710,6 +1710,10 @@ body {
 }
 
 .wb-download {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 8px;

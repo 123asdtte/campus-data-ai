@@ -113,6 +113,37 @@ def main() -> None:
             if expected_role == "student_portal":
                 check("学生无员工角色", not ({"counselor", "xgb", "superadmin"} & set(roles)), str(roles))
 
+            data_status, data = get_json("GET", "/demo-api/data", token=token)
+            students = data.get("students") or []
+            if expected_role == "student_portal":
+                check(
+                    "学生数据范围",
+                    data_status == 200 and len(students) == 1
+                    and students[0].get("uid") == username
+                    and len(data.get("schedule") or []) > 0,
+                    f"{len(students)} 学生 / {len(data.get('schedule') or [])} 排课",
+                )
+            elif expected_role == "counselor":
+                nickname = (info_data.get("user") or {}).get("nickName")
+                scoped = bool(students) and len(students) < 5000 and all(
+                    item.get("counselor") == nickname for item in students
+                )
+                check(
+                    "辅导员数据范围",
+                    data_status == 200 and scoped,
+                    f"{len(students)} 学生 / {len(data.get('class_summary') or [])} 班级",
+                )
+            else:
+                check(
+                    "全校角色数据范围",
+                    data_status == 200 and len(students) > 5000,
+                    f"{len(students)} 学生",
+                )
+
+            sheet_status, _ = request("GET", "/demo-api/four-sheet", token=token)
+            expected_sheet = 200 if expected_role in {"xgb", "superadmin"} else 403
+            check(f"{label} 四件套权限", sheet_status == expected_sheet, f"HTTP {sheet_status}")
+
         status, payload = get_json("GET", "/gw/system/user/getInfo")
         check("缺 token 拒绝读身份", not (status == 200 and payload.get("code") == 200), f"HTTP {status}")
 
@@ -131,6 +162,12 @@ def main() -> None:
             },
         )
         check("不存在账号登录失败", not (status == 200 and payload.get("code") == 200), f"HTTP {status}")
+
+        status, _ = request("GET", "/demo-api/data")
+        check("数据接口拒绝匿名请求", status == 401, f"HTTP {status}")
+
+        status, _ = request("GET", "/demo/demo-data.json")
+        check("旧公开数据入口已关闭", status == 404, f"HTTP {status}")
     except RuntimeError as exc:
         print(f"[FAIL] {exc}")
         failures.append(str(exc))

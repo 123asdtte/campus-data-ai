@@ -829,7 +829,7 @@ def main() -> int:
         default=r"C:/Users/luofeng/Desktop/思科职院AI试点交付材料",
         help="WorkBuddy pilot delivery folder",
     )
-    parser.add_argument("--out", default="web/public/demo", help="public demo data output directory")
+    parser.add_argument("--out", default="demo-api/data", help="server-only demo data output directory")
     parser.add_argument(
         "--private",
         default=r"Z:/ai/本地部署/demo-private",

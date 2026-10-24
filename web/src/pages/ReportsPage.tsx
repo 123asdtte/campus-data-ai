@@ -17,6 +17,7 @@ import { PageHeader } from '../components/ui';
 import { fmt, todayStamp } from '../demo/format';
 import type { DemoStudent } from '../demo/types';
 import { useDemoData } from '../demo/useDemoData';
+import { downloadFourSheet } from '../demo/download';
 
 type FieldKey =
   | 'uid'
@@ -199,7 +200,7 @@ export default function ReportsPage() {
         type="error"
         showIcon
         message="演示数据加载失败"
-        description={`${error}。请确认 web/public/demo/demo-data.json 存在。`}
+        description={`${error}。请确认 demo-api 服务与网关可用。`}
       />
     );
   }
@@ -391,9 +392,9 @@ export default function ReportsPage() {
             <Button type="primary" icon={<DownloadOutlined />} onClick={onExport}>
               导出 CSV（Excel 可打开）
             </Button>
-            <a className="wb-download" href="/demo/four-sheet.xlsx" download>
+            <button type="button" className="wb-download" onClick={() => void downloadFourSheet()}>
               下载四件套 Excel
-            </a>
+            </button>
           </div>
           <p className="wb-note">
             演示版在浏览器本地生成文件，不上传服务器；正式版将由后端生成并记录操作人、时间、字段与行数。身份证与电话已掩码，导出仍建议按最小必要字段。
