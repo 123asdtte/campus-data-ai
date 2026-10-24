@@ -260,6 +260,8 @@ def scoped_payload(user: dict, roles: set[str]) -> dict | None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "campus-demo-api"
     sys_version = ""
+    # 慢请求/半开连接最多占用一个线程 10 秒，避免公网试用时线程被拖满
+    timeout = 10
 
     def log_message(self, fmt: str, *args) -> None:
         print("[demo-api] " + (fmt % args), file=sys.stderr)
@@ -512,9 +514,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"change_no": change_no, "checked": True})
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 def main() -> None:
     port = int(os.environ.get("PORT", "8000"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    server = Server(("0.0.0.0", port), Handler)
     print(f"demo-api listening on :{port}", file=sys.stderr)
     server.serve_forever()
 

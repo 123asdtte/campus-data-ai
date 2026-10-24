@@ -900,6 +900,20 @@
 
 ---
 
+## D-032 demo-api 慢连接与线程回收
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：`ThreadingHTTPServer` 默认每个连接一个非 daemon 线程且无 socket 超时。公网试用时，慢速或半开连接可长期占用线程，并发积累会导致服务不可用，容器停止也可能被挂起连接拖住。
+- **决定**：`Handler.timeout = 10` 限制单连接读写等待；`Server` 继承 `ThreadingHTTPServer` 并设置 `daemon_threads = True`。
+- **影响与兼容性**：正常请求体小于 64KB、响应在秒级完成，不受影响；代理层读超时为 20s，仍大于服务端 10s。
+- **涉及文件**：`demo-api/app.py`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：容器内发送不完整请求行后保持连接，服务端在 `10.0s` 返回 EOF；重建后 healthz 正常，冒烟全部 PASS。
+- **回退**：删除 `timeout` 与 `Server` 子类；无数据变更。
+- **授权**：B 类（公网试用稳定性加固）。
+
+---
+
 ## D-028 启用 Nginx 文本压缩
 
 - **状态**：Verified（本地，2026-10-24；未合并）
