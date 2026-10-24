@@ -1337,7 +1337,7 @@
 - **影响与兼容性**：`/changes`、`/changes/import`、`/changes/check` 新增 503/500 两种可预期响应（此前是静默成功或连接被掐断），请求体、成功响应与权限判定不变；台账损坏时 `state/` 目录会多出隔离副本（演示目录，`backup-ledger.ps1` 与 `restore-ledger.ps1` 均不受影响）；前端异动页与悬浮助手会原样显示中文错误文案。写成功路径仍依赖 `os.replace` 的原子性，本次未引入新的一致性假设。
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`scripts/demo/reset-ledger.ps1`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
 - **验证（实测）**：`python -m unittest discover -s tests` → **56 passed**，新增 `LedgerIntegrityTest` 5 条（缺文件读成空表、合法台账原样回读、截断文件抛错且**原字节不变**并留下隔离副本、结构不合法不被静默清空、损坏时展示链路退回基础数据）；`docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api` 重建后跑 Playwright E2E **25 passed / 1.3m**，其中辅导员发起/核对/CSV 导入三条覆盖了台账正常写入链路未被这次改动破坏。**真实 HTTP 端到端验证**（一次性脚本走 8083 演示栈，登录后按序断言，跑完清理容器内 `state/`）：健康台账下 `POST /demo-api/changes` 返回 201；随后把 `ledger.json` 写成截断 JSON（内含可识别的 `YD-MARKER-LOSS` 编号）→ 再次创建返回 **503** 且文案含 `restore-ledger`；创建后文件字节与损坏时完全一致、标记仍在（即旧版会丢的那条记录没被覆盖掉），隔离副本 1 份；`GET /demo-api/data` 仍 **200** 并给出 96 条基础异动；`POST /demo-api/assistant/query` 问“全校有多少学生？”仍 200 且答“5581 名学生，其中在籍 5507 人”（与演示数据基线一致）；删掉损坏文件与隔离副本后再创建恢复为 201。8 项断言全部通过并打印 `ALL LEDGER GUARD CHECKS PASSED`。**运维脚本实测**（同样跑真容器，不只看语法）：先 `Parser`/`[scriptblock]::Create` 确认 `reset-ledger.ps1` 可解析，再写入一条含 `YD-BEFORE-RESET` 的台账、执行 `reset-ledger.ps1 -Force`，结果备份落到 `state/backups/ledger-before-reset-*.json`（内容仍是那行记录）、`ledger.json` 已删除、`demo-api` 自动回到 `running healthy`。这一轮实测暴露了脚本自身的两个问题并已修掉：提示串里写了转义的反引号导致打印出字面量 `$safety` 而不是备份路径；重启容器后没有像 `restore-ledger.ps1` 那样等健康检查，调用方可能紧接着访问到 `starting` 状态。测试产生的两个 `YD-BEFORE-RESET*` 备份已删除，`demo-api/state/` 本身在 `.gitignore` 内，不会入库。
-- **未验证**：磁盘真实写满/只读导致的 `OSError → 500` 分支未做实物注入（仅在代码路径上收口，`save_ledger` 仍保留原子写）；`read_ledger_for_display` 在损坏期间只展示基础数据、不向终端用户显式提示台账降级（当前仅 stderr），是否需要前端可见提示留待产品判断；并发下多个隔离副本同名覆盖（已用微秒时间戳规避，未做高压实测）。
+- **未验证**：磁盘真实写满/只读导致的 `OSError → 500` 分支未做实物注入（仅在代码路径上收口，`save_ledger` 仍保留原子写）；（台账降级是否要做用户可见提示这一遗留项已由 D-060 实现并验证）；并发下多个隔离副本同名覆盖（已用微秒时间戳规避，未做高压实测）。
 - **回退**：`load_ledger` 恢复 `except (OSError, json.JSONDecodeError): return 空表`、`scoped_payload` 换回 `load_ledger`、去掉 `do_POST` 的 try/except、`reset-ledger.ps1` 去掉停容器与备份即可回到旧行为；隔离副本是新增文件，删除不影响台账本身。
 - **授权**：B 类（演示环境数据完整性与运维脚本），仅在隔离演示栈内制造与清理虚构台账，不读写正式数据、不外发、不涉密钥。
 
@@ -1371,3 +1371,19 @@
 - **未验证**：远端 CI（本条记录时尚未运行）；非 git 工作区（如解压的源码包）下该测试会 `SkipTest`，这种环境里没有忽略规则可校验，属预期跳过而非通过；`.gitignore` 改动对已有 `.git` 之外的工具（如某些打包脚本按 ignore 规则收集文件）的连带影响未逐一排查。
 - **回退**：删除 `.gitignore` 中新增的两行放行与注释，并删除 `DatasetTrackingTest`；`REPO_ROOT` 可保留，不影响行为。
 - **授权**：B 类（仓库配置与测试），不改数据、不改部署、不读写正式环境。
+
+---
+
+## D-060 台账降级不能只在 stderr：缺数必须让用户看见，否则会被当成「没发生异动」
+
+- **状态**：Implemented（2026-10-24 本地实测：63 单测通过 + 真实 HTTP 链路复现降级警告 + 重建 `demo-api`/`web` 后 Playwright E2E **26 passed / 1.4m**）
+- **Decision owner**：AI
+- **问题与证据**：D-057 把「损坏台账不阻断展示」做成退回基础演示数据，但降级事实只落在 stderr。演示栈的日志不会常驻在用户眼前，于是 `GET /demo-api/data` 与 AI 问数给出的都是「看起来完全正常」的 96 条异动，而台账里新增的记录已经不计入了——这正是目标里点名的失败模式：「不把 AI 返回内容看起来合理等同于数据真实」。D-057 自己也把这条列为留给产品判断的未验证项，本轮按产品负责人身份直接判定：可见提示必须做。
+- **决定**：`read_ledger_for_display()` 从「返回 dict」改成「返回 `(state, warning)`」，降级原因随响应一起下发；`scoped_payload()` 的三个分支统一把 `meta.ledger_warning` 写进 payload（只在真的降级时出现，正常时字段不存在，不制造常驻警告）。链路两处收口：① `/assistant/query` 把警告拼进回答的 `note`，所以悬浮助手与独立问数页都会把「台账未计入」说出来；② 前端在 `AppLayout` 的 `<Content>` 顶部渲染 antd `<Alert type="warning" showIcon>`，标题「数据可能不完整」、正文用服务端原文，一处改动覆盖全部业务页而不必逐页加提示。
+- **备选方案**：在每个业务页各自加提示——否掉，六七个页面重复同一条状态且必然漏页，属目标里反对的重复建设；用 toast/`message.warning` 弹一次——否掉，几秒后消失，用户回头核对数字时已经没有上下文；把容器判成不健康——否掉，D-057 已论证不能让单机坏文件把整站判死，改成不健康会让负载均衡直接摘掉本来可用的服务；让 AI 改口说「不知道」——否掉，基础演示数据本身是真的，拒绝回答反而降低可用性，正确做法是给真数据配上缺数声明。
+- **影响与兼容性**：`meta` 增加一个可选字段，既有字段与响应结构不变，前端 `types.ts` 用 `ledger_warning?: string` 承接；健康台账下页面与之前完全一致（新增 E2E 的后半段就是断言此时没有任何 alert）。提示文案直接暴露内部错误原因（含「不是合法 JSON」这类实现描述），演示环境可接受，正式环境若担心措辞应由服务端换成面向业务的表述，字段协议不变。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/components/AppLayout.tsx`、`web/src/demo/types.ts`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：单测 **63 passed**（较上轮 +1）：`test_display_path_degrades_instead_of_failing` 改为断言警告文案并检查 `payload["meta"]` 带 `ledger_warning`，新增 `test_healthy_ledger_carries_no_warning` 反向锁住「正常时不该出现警告」。**真实 HTTP 链路**（在跑着的演示栈里用 admin 令牌实测，非拦截）：健康台账 `ledger_warning=None`；`docker exec` 把 `state/ledger.json` 写成 `{{{` 后，`/demo-api/data` 的 `meta.ledger_warning` = 「学籍异动台账文件不是合法 JSON，本次仅展示基础演示数据，台账里的异动记录未计入」，助手回答的 `note` 同一段文字跟在原有口径说明之后；删掉坏文件后警告消失、容器仍 `healthy`。**浏览器**：新增 E2E「台账降级时全站提示数据可能不完整」，用 `page.route` 改写 `/demo-api/data` 响应，断言 `getByRole('alert')` 同时含「数据可能不完整」与服务端原文，再解除拦截重新导航断言 alert 数量为 0。
+- **未验证**：远端 CI（记录时尚未运行）；E2E 里用响应拦截而非真实损坏文件，因为 CI 的台账在容器命名卷内、宿主机无权写（`resetLedger()` 的既有注释已说明），所以浏览器侧只覆盖了「服务端下发即显示」这条契约，后端契约由上面的真实 HTTP 步骤单独证明；`changes` 为空的辅导员/学生视图在降级时的提示措辞未逐一截图核对；提示文案含实现细节是否符合对外交付口径，需业务负责人确认。
+- **回退**：`read_ledger_for_display()` 改回只返回 dict、`scoped_payload` 去掉 `meta` 拼装、`_assistant_query` 删除拼 `note` 的三行、`AppLayout` 去掉 Alert 与 `useDemoData` 引用并恢复 `<Content>` 原样，同时删除新增单测与 E2E 用例；无数据与配置变更。
+- **授权**：B 类（演示环境前端与服务端提示链路、虚构数据测试）。损坏文件只在本地演示容器内产生并已即时清理；未触碰正式环境、真实数据或认证配置。

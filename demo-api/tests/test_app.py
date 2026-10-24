@@ -670,10 +670,18 @@ class LedgerIntegrityTest(unittest.TestCase):
 
     def test_display_path_degrades_instead_of_failing(self):
         demo.STATE_PATH.write_text("{{{", encoding="utf-8")
-        self.assertEqual(demo.read_ledger_for_display(), {"changes": [], "checked": {}})
+        state, warning = demo.read_ledger_for_display()
+        self.assertEqual(state, {"changes": [], "checked": {}})
+        # 退回了基础演示数据就必须把「台账没计入」说出来，否则用户会把缺数当成没发生异动。
+        self.assertIn("台账", warning)
         payload = demo.scoped_payload(staff_user(), STAFF)
         self.assertIsNotNone(payload)
         self.assertEqual(len(payload["changes"]), len(demo.DATA["changes"]))
+        self.assertIn("ledger_warning", payload["meta"])
+
+    def test_healthy_ledger_carries_no_warning(self):
+        self.assertIsNone(demo.read_ledger_for_display()[1])
+        self.assertNotIn("ledger_warning", demo.scoped_payload(staff_user(), STAFF)["meta"])
 
 
 SEED_ACCOUNTS = REPO_ROOT / "scripts" / "demo" / "seed-demo-accounts.sql"

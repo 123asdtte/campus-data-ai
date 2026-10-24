@@ -510,4 +510,29 @@ test.describe('本地演示关键路径', () => {
     expect(state.chipBelowFold).toBeLessThanOrEqual(1);
     expect(state.gapToBottom).toBeLessThanOrEqual(1);
   });
+  test('台账降级时全站提示数据可能不完整', async ({ page }) => {
+    // CI 的台账在容器命名卷里，宿主机改不动，所以这里拦截 /demo-api/data 的响应，
+    // 只验证「服务端一旦下发 ledger_warning，页面就一定说清楚」这条前后端契约。
+    const warning = '学籍异动台账文件不是合法 JSON，本次仅展示基础演示数据，台账里的异动记录未计入';
+    await login(page, 'admin', 'admin123');
+    await page.route('**/demo-api/data', async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({
+        response,
+        body: JSON.stringify({ ...body, meta: { ...body.meta, ledger_warning: warning } }),
+      });
+    });
+
+    await page.goto('/workbench');
+    const alert = page.getByRole('alert');
+    await expect(alert).toContainText('数据可能不完整');
+    await expect(alert).toContainText('台账里的异动记录未计入');
+
+    // 台账正常时不该出现这条提示，否则等于用一个永久警告掩盖真实状态。
+    await page.unroute('**/demo-api/data');
+    await page.goto('/workbench');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
 });

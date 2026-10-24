@@ -137,13 +137,17 @@ def load_ledger() -> dict:
     return {"changes": changes, "checked": checked}
 
 
-def read_ledger_for_display() -> dict:
-    """展示链路（/data、AI 问数）遇到损坏台账时退回基础演示数据，不能让整站 500。"""
+def read_ledger_for_display() -> tuple[dict, str | None]:
+    """展示链路（/data、AI 问数）遇到损坏台账时退回基础演示数据，不能让整站 500。
+
+    退回的同时必须带回一句警告：只读链路把损坏当成「没有异动」，用户就会把缺数
+    误读成真的没发生异动，这是比 500 更坏的失败。
+    """
     try:
-        return load_ledger()
+        return load_ledger(), None
     except LedgerUnavailable as error:
         print(f"[demo-api] {error}，本次展示仅使用基础演示数据", file=sys.stderr)
-        return empty_ledger()
+        return empty_ledger(), f"{error}，本次仅展示基础演示数据，台账里的异动记录未计入"
 
 
 def save_ledger(state: dict) -> None:
@@ -777,7 +781,11 @@ def record_assistant_audit(user: dict, roles: set[str], result: dict, question: 
 def scoped_payload(user: dict, roles: set[str]) -> dict | None:
     """返回该身份可见的数据；无权限返回 None。"""
     with STATE_LOCK:
-        state = read_ledger_for_display()
+        state, ledger_warning = read_ledger_for_display()
+
+    meta = dict(DATA.get("meta") or {})
+    if ledger_warning:
+        meta["ledger_warning"] = ledger_warning
 
     if roles & STAFF_ROLES:
         changes, checked = merge_ledger(user, roles, state)
@@ -787,7 +795,7 @@ def scoped_payload(user: dict, roles: set[str]) -> dict | None:
             "change_type_counts": counts([c.get("type", "") for c in changes]),
             "change_status_counts": counts([c.get("status", "") for c in changes]),
         })
-        return {**DATA, "metrics": metrics, "changes": changes, "platform_checked": checked}
+        return {**DATA, "meta": meta, "metrics": metrics, "changes": changes, "platform_checked": checked}
 
     students_all = DATA.get("students") or []
     if "student_portal" in roles:
@@ -806,7 +814,7 @@ def scoped_payload(user: dict, roles: set[str]) -> dict | None:
             if c.get("class_name") in class_keys or c.get("class_short") in class_keys
         ]
         return {
-            "meta": DATA.get("meta") or {},
+            "meta": meta,
             "metrics": scope_metrics([student], changes, classes),
             "students": [student],
             "schedule": schedule,
@@ -830,7 +838,7 @@ def scoped_payload(user: dict, roles: set[str]) -> dict | None:
             if c.get("counselor") in labels
         ]
         return {
-            "meta": DATA.get("meta") or {},
+            "meta": meta,
             "metrics": scope_metrics(students, changes, classes),
             "students": students,
             "schedule": schedule,
@@ -1025,6 +1033,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         result["context"] = page
+        warning = (payload.get("meta") or {}).get("ledger_warning")
+        if warning:
+            # 台账缺数时答案条数会偏少，得让助手自己说清楚，不能让用户把缺数当成没发生异动。
+            result["note"] = f"{result.get('note') or ''} {warning}".strip()
         username = (user.get("userName") or "").strip()
         print(
             f"[demo-api] assistant {result.get('intent')} by {username} page={page or '-'}",

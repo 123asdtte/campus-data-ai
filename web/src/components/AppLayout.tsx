@@ -1,9 +1,10 @@
 import { Suspense } from 'react';
-import { Layout, Spin } from 'antd';
+import { Alert, Layout, Spin } from 'antd';
 import { AppstoreOutlined, CalendarOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, InboxOutlined, LogoutOutlined, RobotOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
 import { PAGE_TITLES } from '../pageTitles';
+import { useDemoData } from '../demo/useDemoData';
 import { useSession } from '../session/SessionContext';
 import SchoolCrest from './SchoolCrest';
 import FloatingAssistant from './FloatingAssistant';
@@ -38,6 +39,7 @@ export default function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { session, loading, clear } = useSession();
+  const { data } = useDemoData();
   const roles = session?.roles ?? [];
   const isStudent = roles.includes('student_portal');
   const isCounselor = roles.includes('counselor');
@@ -118,6 +120,15 @@ export default function AppLayout() {
         </header>
 
         <Content className="app-content">
+          {data?.meta.ledger_warning && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="数据可能不完整"
+              description={data.meta.ledger_warning}
+            />
+          )}
           <Suspense fallback={<div style={{ minHeight: 320, display: 'grid', placeItems: 'center' }}><Spin /></div>}>
             <Outlet />
           </Suspense>

@@ -89,6 +89,8 @@ export interface DemoData {
     data_nature: string;
     uid_rule: string;
     generated_at: string;
+    /** 台账读不出来时由服务端下发：缺数必须说清楚，不能让用户把缺数当成没发生异动。 */
+    ledger_warning?: string;
   };
   metrics: {
     disclaimer: string;
