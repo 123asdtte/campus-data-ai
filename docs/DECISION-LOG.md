@@ -1343,7 +1343,7 @@
 
 ## D-058 辅导员带生范围跟着可自改的昵称走：改个昵称就能看到别人的学生
 
-- **状态**：Implemented（2026-10-24 本地实测：60 单测通过 + 旧口径越界实测复现 + 重建 `demo-api` 后 Playwright E2E **25 passed / 1.3m**；远端 CI 待本次运行确认）
+- **状态**：Verified in CI（commit `f746ed7`：60 单测通过 + 旧口径越界实测复现 + 重建 `demo-api` 后 Playwright E2E **25 passed / 1.3m**；远端 CI run 40087997164、运维脚本 40087997190、AI 评审 40087997173 均 success）
 - **Decision owner**：AI
 - **问题与证据**：`counselor_keys()` 与 `scoped_payload()` 的辅导员分支都用 `user["nickName"] or user["userName"]` 去匹配学生表里的 `counselor` 字段，而演示数据把带生辅导员写成中文姓名（26 个不同姓名，戴雅琴 270 人、郑丹丹 330 人），也就是说**权限判定实际依赖昵称**。昵称是可以本人自改的：网关 `ruoyi-modules/ruoyi-system/.../SysProfileController.java:61-77` 的 `PUT /system/user/profile` 强制取当前 userId、但照抄提交的 `nickName`（只有 `@Size(max=30)` 约束），且该路径经 `web/nginx-common.conf:19-27` 的 `/gw/` 对浏览器开放。因此 counselor01 把昵称改成“郑丹丹”就能拿到别人的带生范围。用真实数据跑一次性探针复现（不落库、不起服务）：旧口径下 `{"userName": "counselor01", "nickName": "郑丹丹"}` 解析出 **330 人且正好等于郑丹丹的集合，越界 60 人**；新口径解析出 **270 人、与戴雅琴集合完全相等、越界 0 人**。这条结论来自一次只读代码审计（`【示例】代码审查员`），我先用探针确认它不是理论风险才动手。
 - **决定**：带生范围只认不可自改的 `userName`。新增 `COUNSELOR_LABELS = {"counselor01": "戴雅琴"}` 这层服务端映射，由 `counselor_labels(user)` 统一解析，`counselor_keys()` 与 `scoped_payload()` 都改用它（顺带去掉两处各自算一遍昵称的重复实现）；映射里没有的辅导员账号得到**空范围**而不是退回昵称匹配，即默认拒绝。
@@ -1351,7 +1351,23 @@
 - **影响与兼容性**：`counselor01` 的可见范围仍是文档承诺的 10 个班 / 270 人，接口与响应结构不变；昵称退回纯显示用途，改昵称不再影响任何权限；演示环境目前只有 `counselor01` 一个辅导员账号，新增辅导员账号必须同时补 `COUNSELOR_LABELS`（漏补的后果是看到空列表，属于安全侧失败）。正式环境必须由数据库里的师生绑定关系决定，这层映射只是演示等价物，已在注释与文档写明。
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
 - **验证（实测）**：`python -m unittest discover -s tests` → **60 passed**（较上轮 +4），新增 `CounselorScopeIdentityTest`：改昵称不扩范围、未映射账号既无 uid 也无班级、映射与 `scripts/demo/seed-demo-accounts.sql` 的种子昵称逐条对齐（防漂移）、辅导员 payload 里只出现本人学生与本人班级。**负向证据**：上面那段“旧口径 330 人 / 新口径 270 人”的对照探针就是在改动前后各算一次得到的，说明新测试断言的是真实行为而不是空断言。
-- **未验证**：本轮改动后的 Playwright E2E 与远端 CI（记录时仍在跑）；真实 HTTP 链路上“用 counselor01 令牌 PUT 昵称后再取 `/demo-api/data`”的端到端复现未执行——要做需改动网关库里的演示账号昵称，属共享演示基础设施的写操作，留作可选验证项；除 counselor01 外没有第二个辅导员账号，空范围分支只在单测里成立。
+- **未验证**：真实 HTTP 链路上“用 counselor01 令牌 PUT 昵称后再取 `/demo-api/data`”的端到端复现未执行——要做需改动网关库里的演示账号昵称，属共享演示基础设施的写操作，留作可选验证项；除 counselor01 外没有第二个辅导员账号，空范围分支只在单测里成立。
 - **回退**：把 `counselor_labels()` 换回 `nickName or userName` 即恢复旧行为，`COUNSELOR_LABELS` 与新增单测一并删除；不涉及数据、接口或配置变更。
 - **同批审计里被逐条复核后否掉的三条**（记下来免得以后重复排查）：① “chunked POST 会被误报 400 / 线程挂住”——实测无此路径：`_read_json` 拿不到 `Content-Length` 时按 0 处理直接回 400，而 `protocol_version` 是 stdlib 默认 HTTP/1.0，响应后 socket 关闭不会卡；`Content-Length` 大于实发字节时 `timeout = 10` 会触发 `TimeoutError` 并由 stdlib 关掉连接，最坏占用一个槽位 ≤10 秒；且现有前端全部用 `JSON.stringify` 发体、nginx 保持默认请求缓冲，够不着这条路。② “`state["checked"]` 无上限增长”——前提不成立：`_check_change` 对不存在的编号先 404，键只能来自 96 条基础异动与上限 500 的本地台账，重复核对是覆盖写，量级约 ≤596；孤儿键要手改台账才会出现，`merge_ledger` 也已按可见编号过滤，剩下的只是文件体积。③ “问数审计的整文件重写不原子”——确实不原子（追加后读全量再 `write_text`），但该文件只存审计元数据、不含问题原文、服务端也没有读取方，进程恰好被杀最多丢掉部分审计行，不会损坏业务数据；把它当合规证据前再改成 tmp+`os.replace` 即可。
 - **授权**：B 类（演示环境权限判定与测试），不改网关代码、不改认证策略、不读写正式数据；“在网关侧禁止自改昵称”或“改基础数据集把带生字段换成 userName”这两条更彻底的方案属 A 类，需另行批准。
+
+---
+
+## D-059 `.gitignore` 的 `data/` 把入库的演示数据集一起盖掉了
+
+- **状态**：Implemented（2026-10-24 本地实测：62 单测通过 + 负向证据「去掉放行行必然红」）
+- **Decision owner**：AI
+- **问题与证据**：`.gitignore:7` 的 `data/` 本意是挡住可能含个人信息的真实导出，但它匹配任意层级的 `data` 目录，而仓库里唯一真实存在的 `data` 目录恰好是要入库的演示数据集 `demo-api/data/`（`demo-data.json`、`four-sheet.xlsx`）。`git check-ignore --no-index -v` 实测两个已入库文件都命中该规则。已入库文件改内容仍然可见（实测 `git status` 报 ` M demo-api/data/demo-data.json`），所以问题不在日常改动，而在新增：实测在 `demo-api/data/` 放一个新文件，`git status --porcelain` 完全不出现——用脚本重新生成的新学期数据会静默漏提交，本地跑得好、别人 clone 下来或 CI 里才发现缺文件（`test_four_sheet_file_is_present` 只能证明已有文件在，不能证明新文件进来了）。
+- **决定**：保留 `data/` 这张宽网（它对 `data/`、`import-api/data/` 这类真实导出目录仍有价值），只给演示数据集开一条明确的白名单 `!demo-api/data/` + `!demo-api/data/*`，并在 `.gitignore` 里写清为什么要两行（只放行目录不放行内容，git 不会重新进入被排除的目录）。
+- **备选方案**：把 `data/` 收窄成 `/data/` 之类的具体路径——否掉，收窄等于放弃对未来新增真实导出目录的默认保护，方向反了；把演示数据集从 `data/` 改名到 `fixtures/`——否掉，`demo-api/data/` 被 `DATA_PATH`、`FOUR_SHEET_PATH`、Dockerfile 拷贝、多处文档引用，改名是纯 churn 且会碰到别的 Agent 正在改的文件；只在文档里写一句"提交数据集请加 -f"——否掉，把静默失败转嫁成人工记忆，正是本次要消除的东西。
+- **影响与兼容性**：不影响运行时行为与任何接口；`git add` 现在能正常发现 `demo-api/data/` 下的新数据文件；真实导出路径的忽略状态逐项复测未变（`data/real-students.csv`、`import-api/data/real-students.csv`、`demo-api/state/ledger.json` 仍命中忽略）。
+- **涉及文件**：`.gitignore`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。顺带把测试里重复的 `Path(__file__).resolve().parents[2]` 收敛成 `REPO_ROOT`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s demo-api/tests -p 'test_*.py'` → **62 passed**（较上轮 +2），新增 `DatasetTrackingTest`：已入库的 `demo-data.json` 与一个尚未入库的新数据集路径都必须不被忽略；三条真实导出/台账路径必须仍被忽略。**负向证据**：临时删掉两行 `!demo-api/data*` 后重跑，`test_demo_dataset_is_not_hidden_by_the_data_rule` 报 `AssertionError: True is not false`，恢复后 `Ran 2 tests ... OK`，证明断言的是真实 git 行为而非空断言。
+- **未验证**：远端 CI（本条记录时尚未运行）；非 git 工作区（如解压的源码包）下该测试会 `SkipTest`，这种环境里没有忽略规则可校验，属预期跳过而非通过；`.gitignore` 改动对已有 `.git` 之外的工具（如某些打包脚本按 ignore 规则收集文件）的连带影响未逐一排查。
+- **回退**：删除 `.gitignore` 中新增的两行放行与注释，并删除 `DatasetTrackingTest`；`REPO_ROOT` 可保留，不影响行为。
+- **授权**：B 类（仓库配置与测试），不改数据、不改部署、不读写正式环境。
