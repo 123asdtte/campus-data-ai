@@ -340,6 +340,12 @@ PROBE
           fi
           echo "探测：$local_cand 仍有思维链（${PROBE_REASON_LEN} 字节），换下一个"
         else
+          if [ "${PROBE_CODE:-}" = "429" ]; then
+            # 限流已触发：继续换开关只会把仅剩的配额烧光，正式请求必然 429。
+            # 2026-10-24 实测：网关限流窗口很紧，探测 6 次后正式请求 100% 429。
+            echo "探测：$local_cand 触发限流（HTTP 429），停止探测，把配额留给正式请求"
+            break
+          fi
           echo "探测：$local_cand 未被接受（HTTP ${PROBE_CODE:-未知}），换下一个"
         fi
         local_i=$((local_i + 1))
