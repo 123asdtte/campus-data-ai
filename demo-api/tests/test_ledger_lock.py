@@ -17,14 +17,7 @@ class LedgerResponseOutsideLockTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self._state_dir = demo.STATE_DIR
-        self._state_path = demo.STATE_PATH
-        self._log_path = demo.ASSISTANT_LOG_PATH
         demo.STATE_DIR = Path(self.tmp.name)
-        # STATE_PATH / ASSISTANT_LOG_PATH 在模块导入时就用旧 STATE_DIR 绑定好了（app.py:29-31），
-        # 只换 STATE_DIR 并不会换台账文件——必须先真的写一次才发现测试落在仓库的 state/ 里，
-        # 所以三个名字都要换、都要还原。
-        demo.STATE_PATH = demo.STATE_DIR / "ledger.json"
-        demo.ASSISTANT_LOG_PATH = demo.STATE_DIR / "assistant-audit.jsonl"
         self.responses = []
 
         def spy(self_handler, status, payload):
@@ -41,8 +34,6 @@ class LedgerResponseOutsideLockTest(unittest.TestCase):
     def tearDown(self):
         demo.Handler._json = self._json
         demo.STATE_DIR = self._state_dir
-        demo.STATE_PATH = self._state_path
-        demo.ASSISTANT_LOG_PATH = self._log_path
         self.tmp.cleanup()
 
     def assert_unlocked(self, index=0):

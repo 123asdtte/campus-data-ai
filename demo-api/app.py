@@ -27,8 +27,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data" / "demo-data.json"
 FOUR_SHEET_PATH = BASE_DIR / "data" / "four-sheet.xlsx"
 STATE_DIR = Path(os.environ.get("STATE_DIR", str(BASE_DIR / "state")))
-STATE_PATH = STATE_DIR / "ledger.json"
-ASSISTANT_LOG_PATH = STATE_DIR / "assistant-audit.jsonl"
 ASSISTANT_LOG_KEEP = 500
 GATEWAY_BASE = os.environ.get("GATEWAY_BASE", "http://gateway:9180").rstrip("/")
 CLIENT_ID = os.environ.get(
@@ -94,6 +92,17 @@ def counts(items: list[str]) -> list[dict]:
     ]
 
 
+# 台账与审计路径都在调用时按当前 STATE_DIR 解析，不在导入期算好存成常量。
+# 只换 STATE_DIR 就能隔离状态是测试最自然的写法：D-072 里有一条只 patch STATE_DIR
+# 的测试，因为导入期绑定没生效，把虚构数据写进了真实的 state/ledger.json。
+def state_path() -> Path:
+    return STATE_DIR / "ledger.json"
+
+
+def assistant_log_path() -> Path:
+    return STATE_DIR / "assistant-audit.jsonl"
+
+
 class LedgerUnavailable(RuntimeError):
     """台账文件存在却读不出来。此时绝不能把它当成空表写回去，否则已有异动记录会静默丢失。"""
 
@@ -104,11 +113,12 @@ def empty_ledger() -> dict:
 
 def quarantine_ledger(reason: str) -> None:
     # 隔离副本是为了「事后还能救」，所以这一步自己失败也不能盖掉真正的原因。
-    target = STATE_PATH.with_name(
+    path = state_path()
+    target = path.with_name(
         f"ledger.corrupt-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')}.json"
     )
     try:
-        target.write_bytes(STATE_PATH.read_bytes())
+        target.write_bytes(path.read_bytes())
         os.chmod(target, 0o600)
         print(f"[demo-api] 台账损坏（{reason}），原文件已隔离为 {target}", file=sys.stderr)
     except OSError as error:
@@ -118,7 +128,7 @@ def quarantine_ledger(reason: str) -> None:
 def load_ledger() -> dict:
     """读取台账。文件不存在就是空台账；文件读不动或结构不合法则抛错，交由调用方决定降级还是拒绝。"""
     try:
-        raw = STATE_PATH.read_text(encoding="utf-8")
+        raw = state_path().read_text(encoding="utf-8")
     except FileNotFoundError:
         return empty_ledger()
     except (OSError, UnicodeDecodeError) as error:
@@ -152,10 +162,11 @@ def read_ledger_for_display() -> tuple[dict, str | None]:
 
 def save_ledger(state: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temp = STATE_PATH.with_suffix(".tmp")
+    path = state_path()
+    temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     os.chmod(temp, 0o600)
-    os.replace(temp, STATE_PATH)
+    os.replace(temp, path)
 
 
 # 演示数据用中文姓名标带班辅导员，账号昵称恰好也填了这个姓名。但网关允许本人改昵称
@@ -784,15 +795,16 @@ def record_assistant_audit(user: dict, roles: set[str], result: dict, question: 
     }
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        log_path = assistant_log_path()
         with STATE_LOCK:
-            with open(ASSISTANT_LOG_PATH, "a", encoding="utf-8") as handle:
+            with open(log_path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
             # 追加写出来的文件跟着 umask（容器里是 0644），而台账是 0600：审计里记着
             # 谁在哪个页面问了什么，敏感度不低于台账，不能比台账更好读。后续截断重写
             # 沿用同一个 inode，所以这里收紧一次就够。
-            os.chmod(ASSISTANT_LOG_PATH, 0o600)
-            lines = ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()[-ASSISTANT_LOG_KEEP:]
-            ASSISTANT_LOG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            os.chmod(log_path, 0o600)
+            lines = log_path.read_text(encoding="utf-8").splitlines()[-ASSISTANT_LOG_KEEP:]
+            log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError as error:
         print(f"[demo-api] 问数审计写入失败：{error}", file=sys.stderr)
 

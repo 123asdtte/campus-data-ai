@@ -562,13 +562,10 @@ class AssistantAuditTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self._state_dir = demo.STATE_DIR
-        self._log_path = demo.ASSISTANT_LOG_PATH
         demo.STATE_DIR = self.dir
-        demo.ASSISTANT_LOG_PATH = self.dir / "assistant-audit.jsonl"
 
     def tearDown(self):
         demo.STATE_DIR = self._state_dir
-        demo.ASSISTANT_LOG_PATH = self._log_path
         self.tmp.cleanup()
 
     def test_records_identity_without_question_text(self):
@@ -577,20 +574,20 @@ class AssistantAuditTest(unittest.TestCase):
             {"intent": "out_of_scope", "scope": {"label": "本班范围"}},
             "张三的身份证号是多少", "/counselor",
         )
-        entry = json.loads(demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").strip())
+        entry = json.loads(demo.assistant_log_path().read_text(encoding="utf-8").strip())
         self.assertEqual(entry["actor"], "counselor01")
         self.assertEqual(entry["roles"], ["counselor"])
         self.assertEqual(entry["intent"], "out_of_scope")
         self.assertEqual(entry["scope"], "本班范围")
         self.assertEqual(entry["page"], "/counselor")
-        self.assertNotIn("张三", demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8"))
+        self.assertNotIn("张三", demo.assistant_log_path().read_text(encoding="utf-8"))
         self.assertEqual(entry["question_chars"], len("张三的身份证号是多少"))
 
     def test_log_stays_bounded(self):
         for index in range(demo.ASSISTANT_LOG_KEEP + 40):
             demo.record_assistant_audit(
                 {"userName": f"u{index}"}, COUNSELOR_ROLE, {"intent": "count"}, "问", "")
-        lines = demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()
+        lines = demo.assistant_log_path().read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), demo.ASSISTANT_LOG_KEEP)
         self.assertEqual(json.loads(lines[-1])["actor"], f"u{demo.ASSISTANT_LOG_KEEP + 39}")
 
@@ -632,13 +629,10 @@ class LedgerIntegrityTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self._state_dir = demo.STATE_DIR
-        self._state_path = demo.STATE_PATH
         demo.STATE_DIR = self.dir
-        demo.STATE_PATH = self.dir / "ledger.json"
 
     def tearDown(self):
         demo.STATE_DIR = self._state_dir
-        demo.STATE_PATH = self._state_path
         self.tmp.cleanup()
 
     def quarantined(self) -> list[Path]:
@@ -656,23 +650,23 @@ class LedgerIntegrityTest(unittest.TestCase):
     def test_truncated_file_is_refused_and_kept_recoverable(self):
         demo.save_ledger({"changes": [{"change_no": "BG-OLD", "type": "休学"}], "checked": {}})
         broken = '{"changes": [{"change_no": "BG-OLD", "type": "休学"}], "checked": '
-        demo.STATE_PATH.write_text(broken, encoding="utf-8")
+        demo.state_path().write_text(broken, encoding="utf-8")
         with self.assertRaises(demo.LedgerUnavailable):
             demo.load_ledger()
         # 写链路唯一入口是 load_ledger，它抛错就说明这条写被拦在覆盖之前；原字节必须还在。
-        self.assertEqual(demo.STATE_PATH.read_text(encoding="utf-8"), broken)
+        self.assertEqual(demo.state_path().read_text(encoding="utf-8"), broken)
         copies = self.quarantined()
         self.assertEqual(len(copies), 1)
         self.assertEqual(copies[0].read_text(encoding="utf-8"), broken)
 
     def test_wrong_shape_is_not_silently_emptied(self):
-        demo.STATE_PATH.write_text('{"changes": {"不是": "数组"}, "checked": {}}', encoding="utf-8")
+        demo.state_path().write_text('{"changes": {"不是": "数组"}, "checked": {}}', encoding="utf-8")
         with self.assertRaises(demo.LedgerUnavailable):
             demo.load_ledger()
         self.assertEqual(len(self.quarantined()), 1)
 
     def test_display_path_degrades_instead_of_failing(self):
-        demo.STATE_PATH.write_text("{{{", encoding="utf-8")
+        demo.state_path().write_text("{{{", encoding="utf-8")
         state, warning = demo.read_ledger_for_display()
         self.assertEqual(state, {"changes": [], "checked": {}})
         # 退回了基础演示数据就必须把「台账没计入」说出来，否则用户会把缺数当成没发生异动。
@@ -746,16 +740,15 @@ class AssistantAuditPermissionTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self._state, self._log = demo.STATE_DIR, demo.ASSISTANT_LOG_PATH
+        self._state = demo.STATE_DIR
         demo.STATE_DIR = Path(self.tmp.name) / "state"
-        demo.ASSISTANT_LOG_PATH = demo.STATE_DIR / "assistant-audit.jsonl"
         os.umask(0o022)
 
     def tearDown(self):
-        demo.STATE_DIR, demo.ASSISTANT_LOG_PATH = self._state, self._log
+        demo.STATE_DIR = self._state
 
     def _audit_mode(self):
-        return stat.S_IMODE(os.stat(demo.ASSISTANT_LOG_PATH).st_mode)
+        return stat.S_IMODE(os.stat(demo.assistant_log_path()).st_mode)
 
     def test_audit_file_is_not_group_or_world_readable(self):
         demo.record_assistant_audit(
@@ -769,7 +762,7 @@ class AssistantAuditPermissionTest(unittest.TestCase):
             demo.record_assistant_audit(
                 {"userName": f"辅导员{index}"}, {"counselor"}, {"intent": "affairs"}, "追问", "/changes",
             )
-        self.assertEqual(len(demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()), 3)
+        self.assertEqual(len(demo.assistant_log_path().read_text(encoding="utf-8").splitlines()), 3)
         self.assertEqual(self._audit_mode(), 0o600)
 
 
