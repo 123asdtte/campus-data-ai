@@ -1072,3 +1072,22 @@
 - **验证（实测）**：学工处用例单跑 5.7s 通过；辅导员 403 用例通过；全量 **15 passed / 49.7s**（2026-10-24）。
 - **回退**：删除该用例。
 - **授权**：B 类（测试补齐）；无需人工授权。
+
+## D-042 全局悬浮 AI 助手与服务端课表问答
+
+- **状态**：Implemented（2026-10-24 本地实测）
+- **Decision owner**：AI
+- **问题与证据**：① 课表问答与学生课表页绑定，管理员问数在独立 `/assistant`，师生必须离开当前业务页；② 两套问答都是浏览器内规则，前端掌握全部判断；③ 源数据 119 条排课 `weekday` 为 1–7 数字，前端按中文星期过滤导致这些课在课表中消失；④ 390px 下固定 232px 侧栏导致整页横向溢出（实测 523px）。
+- **决定**：
+  1. demo-api 新增 `POST /assistant/query`：从 Bearer token 调网关解析身份，学生经 `scoped_payload` 只取本人班级课表；教职工按角色返回本班/全校聚合；不接收前端 UID/角色；问题限 1–200 字；成绩、他人、联系方式等问题直接拒答。
+  2. 服务端解析今天/明天/后天/本周/下周/星期几/上午下午晚上/第 N 节/剩余课程，返回结构化 `courses`、`scope`、`action` 和来源说明；不调用外部模型。
+  3. 前端新增 `FloatingAssistant`（挂在 `AppLayout`，全角色、跨路由保留会话）；学生课程卡可点击，通过事件或路由 state 定位并高亮课表单元格；移除课表页内嵌聊天面板，统一入口。
+  4. 星期在 demo-api 加载、前端 `demo/schedule.ts`、数据生成器三处归一化；数字星期不再漏课。
+  5. `<=900px` 侧栏改为顶部横向导航，内容/悬浮面板不再横向溢出。
+- **备选方案**：只把独立 AI 页塞进弹窗——无法获得页面上下文和课表定位；只在前端做问答——无法满足服务端独立授权的安全要求，均不采用。
+- **影响与兼容性**：`/assistant` 页面保留给管理员；新增接口受 nginx 限流与网关鉴权保护；响应不含身份证/电话/原始学号；课表数据经 `/demo-api/data` 时星期已归一化，页面统计口径不变。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/api/assistant.ts`、`web/src/components/FloatingAssistant.tsx`、`web/src/components/AppLayout.tsx`、`web/src/demo/schedule.ts`、`web/src/pages/StudentSchedulePage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`scripts/demo/build_demo_dataset.py`。
+- **验证（实测）**：demo-api **32 passed**；E2E **16 passed / 1.1m**；接口实测“这周五第一节在哪”返回 1 门课与教室，“下周”14 门，“成绩”拒答；390×844 下 `scrollWidth=390`，面板宽 370.2、左右各约 10px。
+- **未验证**：未接 Dify/LLM；教职工问答仍是受控规则；服务端审计目前只写 stderr，正式版需落库；真实课表接口尚未接入。
+- **回退**：删除 `/assistant/query` 与 `FloatingAssistant`，恢复课表页内嵌问答；无数据库变更。
+- **授权**：B 类（演示环境功能与测试）；不涉及正式数据或外部服务。

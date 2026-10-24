@@ -181,6 +181,78 @@ class ScopedPayloadTest(unittest.TestCase):
         self.assertEqual(len(payload["students"]), len(demo.DATA["students"]))
 
 
+class AssistantQueryTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.payload = demo.scoped_payload(student_user(), STUDENT_ROLE)
+        cls.student = cls.payload["students"][0]
+        cls.schedule = cls.payload["schedule"]
+        cls.metrics = cls.payload["metrics"]
+        cls.now = demo.datetime(2026, 10, 24, 15, 0)
+
+    def answer(self, question: str) -> dict:
+        return demo.schedule_answer(question, self.student, self.schedule, self.metrics, self.now)
+
+    def test_all_schedule_weekdays_are_normalized(self):
+        self.assertEqual(len(demo.DATA["schedule"]), self.metrics["schedule_meta"]["rows"])
+        self.assertTrue(all(row["weekday"] in demo.WEEKDAYS for row in demo.DATA["schedule"]))
+        self.assertEqual(demo.normalize_weekday("3"), "周三")
+        self.assertEqual(demo.normalize_weekday("星期五"), "周五")
+
+    def test_week_matches_parity_and_ranges(self):
+        self.assertTrue(demo.week_matches("1-16周", 8))
+        self.assertFalse(demo.week_matches("1-16周(单)", 8))
+        self.assertTrue(demo.week_matches("1-16周(双)", 8))
+        self.assertFalse(demo.week_matches("2-6周", 8))
+        self.assertTrue(demo.week_matches("", 8))
+
+    def test_explicit_weekday_first_period_returns_room(self):
+        reply = self.answer("这周五第一节在哪？")
+        self.assertEqual(reply["intent"], "schedule_day")
+        self.assertEqual(reply["scope"]["weekday"], "周五")
+        self.assertEqual(reply["scope"]["week"], 8)
+        self.assertTrue(all(course["period"] == "1-2节" for course in reply["courses"]))
+        self.assertTrue(all(course["room"] for course in reply["courses"]))
+
+    def test_remaining_classes_only_returns_later_periods(self):
+        thursday_1030 = demo.datetime(2026, 10, 22, 10, 30)
+        reply = demo.schedule_answer(
+            "今天还剩几节课？", self.student, self.schedule, self.metrics, thursday_1030,
+        )
+        self.assertEqual(reply["intent"], "schedule_remaining")
+        self.assertTrue(reply["courses"])
+        self.assertTrue(all(demo.period_numbers(course["period"]) >= {9} for course in reply["courses"]))
+        self.assertIn("10:30", reply["answer"])
+
+    def test_schedule_never_leaks_other_classes(self):
+        keys = {self.student["class_name"], self.student["class_short"]}
+        own_courses = {
+            row["course"] for row in demo.DATA["schedule"]
+            if row["class_name"] in keys or row["class_short"] in keys
+        }
+        reply = self.answer("下周有哪些课？")
+        self.assertTrue(reply["courses"])
+        self.assertTrue(all(course["course"] in own_courses for course in reply["courses"]))
+
+    def test_sensitive_question_is_refused(self):
+        reply = self.answer("我的成绩和别的同学电话是多少？")
+        self.assertEqual(reply["intent"], "refused")
+        self.assertEqual(reply["courses"], [])
+        self.assertIn("只能查询本人课表", reply["answer"])
+
+    def test_staff_scope_and_counselor_scope(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        staff_reply = demo.staff_answer("人工智能学院有多少学生？", staff_payload, STAFF)
+        self.assertEqual(staff_reply["intent"], "count")
+        self.assertIn("人工智能学院", staff_reply["answer"])
+        self.assertIn("全校范围", staff_reply["scope"]["label"])
+
+        counselor_payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        counselor_reply = demo.staff_answer("我班有多少学生？", counselor_payload, COUNSELOR_ROLE)
+        self.assertIn("本班范围", counselor_reply["scope"]["label"])
+        self.assertIn(str(len(counselor_payload["students"])), counselor_reply["answer"])
+
+
 class QuietServer(demo.Server):
     def handle_error(self, request, client_address) -> None:
         # 测试里主动断开半开连接，忽略由此产生的写回失败

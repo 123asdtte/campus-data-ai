@@ -19,7 +19,7 @@ import threading
 import urllib.error
 import urllib.request
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -43,6 +43,19 @@ DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CHANGE_NO_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 STATE_LOCK = threading.Lock()
 
+WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+WEEKDAY_NUMBERS = {str(index + 1): day for index, day in enumerate(WEEKDAYS)}
+CN_NUMBERS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "日": 7, "天": 7}
+PERIOD_SCOPES = {
+    "上午": {1, 2, 3, 4},
+    "下午": {5, 6, 7, 8},
+    "晚上": {9, 10, 11, 12},
+}
+SENSITIVE_PATTERN = re.compile(
+    r"成绩|分数|其他学生|别人|电话|手机号|身份证|导出|名单|请假|处分|心理|宿舍|家庭"
+)
+MAX_QUESTION_CHARS = 200
+
 # Docker Desktop 会注入 127.0.0.1:8080 代理；容器内没有该代理。
 # 网关调用必须直连，不能被环境代理劫持。
 NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -52,6 +65,24 @@ try:
 except (OSError, json.JSONDecodeError) as exc:
     print(f"demo-api: 无法加载 {DATA_PATH}: {exc}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def normalize_weekday(value: object) -> str:
+    text = str(value or "").strip()
+    if text in WEEKDAYS:
+        return text
+    if text in WEEKDAY_NUMBERS:
+        return WEEKDAY_NUMBERS[text]
+    text = text.replace("星期", "").replace("礼拜", "").replace("周", "")
+    return {
+        "一": "周一", "二": "周二", "三": "周三", "四": "周四",
+        "五": "周五", "六": "周六", "日": "周日", "天": "周日",
+    }.get(text, str(value or "").strip())
+
+
+# 源表里有 1-5 的数字星期，统一成中文星期，避免课表和问答漏课。
+for _row in DATA.get("schedule") or []:
+    _row["weekday"] = normalize_weekday(_row.get("weekday"))
 
 
 def counts(items: list[str]) -> list[dict]:
@@ -119,6 +150,388 @@ def merge_ledger(user: dict, roles: set[str], state: dict) -> tuple[list[dict], 
     numbers = {c.get("change_no") for c in all_changes}
     checked = [no for no in state["checked"] if no in numbers]
     return all_changes, checked
+
+
+COLLEGE_ALIASES = {
+    "计算机": "人工智能学院",
+    "人工智能": "人工智能学院",
+    "护理": "康养护理学院",
+    "康养": "康养护理学院",
+    "汽车": "汽车工程学院",
+    "财经": "财经商贸学院",
+    "会计": "财经商贸学院",
+    "轨道": "轨道交通学院",
+    "智能装备": "智能装备学院",
+    "机电": "智能装备学院",
+}
+
+
+def week_matches(weeks: object, current_week: int) -> bool:
+    text = str(weeks or "")
+    if not text:
+        return True
+    if "单" in text and current_week % 2 == 0:
+        return False
+    if "双" in text and current_week % 2 == 1:
+        return False
+    ranges = re.findall(r"(\d+)\s*-\s*(\d+)", text)
+    if ranges:
+        return any(int(start) <= current_week <= int(end) for start, end in ranges)
+    numbers = [int(number) for number in re.findall(r"\d+", text)]
+    return not numbers or current_week in numbers
+
+
+def period_numbers(period: object) -> set[int]:
+    return {int(number) for number in re.findall(r"\d+", str(period or ""))}
+
+
+def course_place(row: dict) -> str:
+    return str(row.get("room") or row.get("note") or "地点待定")
+
+
+def course_card(row: dict, date_text: str | None = None) -> dict:
+    return {
+        "weekday": row.get("weekday") or "",
+        "period": row.get("period") or "",
+        "course": row.get("course") or "",
+        "teacher": row.get("teacher") or "教师待定",
+        "room": course_place(row),
+        "date": date_text,
+    }
+
+
+def resolve_scope(question: str, now: datetime, current_week: int) -> dict:
+    week = current_week
+    day_index = now.weekday()
+    whole_week = False
+    explicit_day = re.search(r"(下|本|这)?(?:周|星期|礼拜)([一二三四五六日天])", question)
+    if explicit_day:
+        day_index = CN_NUMBERS[explicit_day.group(2)] - 1
+        if explicit_day.group(1) == "下":
+            week += 1
+        elif explicit_day.group(1) in ("本", "这"):
+            week = current_week
+    elif re.search(r"大后天", question):
+        day_index = (day_index + 3) % 7
+    elif re.search(r"后天", question):
+        day_index = (day_index + 2) % 7
+    elif re.search(r"明天|明日", question):
+        day_index = (day_index + 1) % 7
+    elif re.search(r"下周|下星期|下礼拜", question):
+        week += 1
+        whole_week = True
+    elif re.search(r"本周|这周|这星期|这礼拜", question):
+        week = current_week
+        whole_week = True
+
+    scope_numbers: set[int] | None = None
+    scope_label = ""
+    for label, numbers in PERIOD_SCOPES.items():
+        if label in question:
+            scope_numbers = numbers
+            scope_label = label
+            break
+    single = re.search(r"第\s*([一二三四五六七八九十]|\d{1,2})\s*节", question)
+    if single:
+        raw = single.group(1)
+        number = int(raw) if raw.isdigit() else CN_NUMBERS.get(raw, 0)
+        if number:
+            scope_numbers = {number}
+            scope_label = f"第{number}节"
+
+    return {
+        "week": week,
+        "day_index": day_index,
+        "whole_week": whole_week,
+        "periods": scope_numbers,
+        "period_label": scope_label,
+        "explicit_day": bool(explicit_day),
+        "week_ref": explicit_day.group(1) if explicit_day else None,
+    }
+
+
+def date_for_scope(now: datetime, current_week: int, week: int, day_index: int) -> str:
+    monday = now.date() - timedelta(days=now.weekday())
+    return (monday + timedelta(weeks=week - current_week, days=day_index)).isoformat()
+
+
+def format_period_times(period_times: list[dict]) -> dict[str, str]:
+    return {
+        str(item.get("period") or ""): f"{item.get('start') or ''}–{item.get('end') or ''}"
+        for item in period_times
+    }
+
+
+def schedule_answer(
+    question: str,
+    student: dict,
+    schedule: list[dict],
+    metrics: dict,
+    now: datetime,
+) -> dict:
+    schedule_meta = metrics.get("schedule_meta") or {}
+    current_week = int(schedule_meta.get("current_week") or 1)
+    period_times = schedule_meta.get("period_times") or []
+    time_by_period = format_period_times(period_times)
+    base_note = f"按第 {current_week} 周演示课表；最终以青果/教务处为准。"
+    base = {
+        "courses": [],
+        "action": None,
+        "note": base_note,
+        "as_of": now.isoformat(timespec="seconds"),
+    }
+
+    if SENSITIVE_PATTERN.search(question):
+        return {
+            **base,
+            "intent": "refused",
+            "answer": "学生助手只能查询本人课表，不能查询成绩、其他学生、联系方式，也不能导出名单。",
+            "scope": {"label": "仅本人课表", "week": current_week},
+        }
+
+    if not schedule:
+        return {
+            **base,
+            "intent": "no_data",
+            "answer": f"当前演示课表里没有你的排课数据（{student.get('class_short') or student.get('class_name') or '本人班级'}）。请以教务处/青果为准。",
+            "scope": {"label": "仅本人课表", "week": current_week},
+        }
+
+    help_words = ("帮助", "能做什么", "怎么用", "你好", "你是谁")
+    if any(word in question for word in help_words):
+        return {
+            **base,
+            "intent": "help",
+            "answer": "我是课表助手，只能看到你自己的班级课表。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、下周有哪些课。",
+            "scope": {"label": "仅本人课表", "week": current_week},
+            "suggestions": ["明天下午有什么课？", "今天还剩几节课？", "这周五第一节在哪？", "下周有哪些课？"],
+        }
+
+    scope = resolve_scope(question, now, current_week)
+    week = scope["week"]
+    day_index = scope["day_index"]
+    week_rows = [row for row in schedule if week_matches(row.get("weeks"), week)]
+    if not week_rows:
+        return {
+            **base,
+            "intent": "no_data",
+            "answer": f"第 {week} 周演示课表里没有你的排课。请以教务处/青果为准。",
+            "scope": {"label": f"第 {week} 周", "week": week},
+        }
+
+    remaining = bool(re.search(r"还剩|还有|剩下|剩余", question)) and not scope["whole_week"]
+    rows = week_rows
+    if not scope["whole_week"]:
+        rows = [row for row in rows if row.get("weekday") == WEEKDAYS[day_index]]
+    if scope["periods"] is not None:
+        rows = [row for row in rows if period_numbers(row.get("period")) & scope["periods"]]
+
+    if remaining and date_for_scope(now, current_week, week, day_index) == now.date().isoformat():
+        rows = [
+            row for row in rows
+            if time_by_period.get(str(row.get("period")), "99:99").split("–")[-1] > now.strftime("%H:%M")
+        ]
+
+    rows.sort(key=lambda row: (
+        WEEKDAYS.index(row.get("weekday")) if row.get("weekday") in WEEKDAYS else 9,
+        min(period_numbers(row.get("period")) or {99}),
+    ))
+
+    if scope["whole_week"]:
+        label = "本周" if week == current_week else f"第 {week} 周"
+        days = []
+        for day in WEEKDAYS:
+            day_rows = [row for row in rows if row.get("weekday") == day]
+            if not day_rows:
+                continue
+            line = "；".join(
+                f"{row['period']} {row['course']}（{row.get('teacher') or '教师待定'}，{course_place(row)}）"
+                for row in day_rows
+            )
+            days.append(f"{day}：{line}")
+        if not days:
+            answer = f"{label}没有符合条件的课程。{base_note}"
+        else:
+            answer = f"{label}共 {len(rows)} 门课：\n" + "\n".join(days) + f"\n{base_note}"
+        day_text = None
+        weekday_text = None
+        date_text = None
+    else:
+        weekday_text = WEEKDAYS[day_index]
+        date_text = date_for_scope(now, current_week, week, day_index)
+        if week == current_week:
+            if not scope["explicit_day"] and day_index == now.weekday():
+                label = "今天"
+            elif not scope["explicit_day"] and day_index == (now.weekday() + 1) % 7:
+                label = "明天"
+            elif not scope["explicit_day"] and day_index == (now.weekday() + 2) % 7:
+                label = "后天"
+            elif scope["week_ref"] in ("本", "这"):
+                label = f"本周{weekday_text[1:]}"
+            else:
+                label = weekday_text
+        else:
+            label = f"下{weekday_text[1:]}"
+        suffix = f"（{scope['period_label']}）" if scope["period_label"] else ""
+        if remaining:
+            if rows:
+                answer = (
+                    f"{label}{suffix}还剩 {len(rows)} 门课（截至 {now.strftime('%H:%M')}）：\n"
+                    + "\n".join(
+                        f"{row['period']} {row['course']}（{course_place(row)}）" for row in rows
+                    )
+                    + f"\n{base_note}"
+                )
+            else:
+                answer = f"{label}{suffix}的课已经结束或没有剩余课程。{base_note}"
+        elif rows:
+            date_label = f"{date_text} {weekday_text}" if label in ("今天", "明天", "后天") else date_text
+            answer = (
+                f"{label}（{date_label}）{suffix}有 {len(rows)} 门课：\n"
+                + "\n".join(
+                    f"{row['period']} {time_by_period.get(str(row.get('period')), '')} · {row['course']}"
+                    f"（{row.get('teacher') or '教师待定'}，{course_place(row)}）"
+                    for row in rows
+                )
+                + f"\n{base_note}"
+            )
+        else:
+            answer = f"{label}{suffix}没有课。{base_note}"
+
+    return {
+        **base,
+        "intent": "schedule_remaining" if remaining else ("schedule_week" if scope["whole_week"] else "schedule_day"),
+        "answer": answer,
+        "scope": {
+            "label": label,
+            "date": date_text,
+            "weekday": weekday_text,
+            "week": week,
+            "period": scope["period_label"] or None,
+        },
+        "courses": [
+            course_card(row, date_for_scope(now, current_week, week, WEEKDAYS.index(row["weekday"])))
+            if row.get("weekday") in WEEKDAYS else course_card(row)
+            for row in rows
+        ],
+        "suggestions": ["今天还剩几节课？", "明天下午有什么课？", "这周五第一节在哪？", "下周有哪些课？"],
+    }
+
+
+def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
+    students = payload.get("students") or []
+    metrics = payload.get("metrics") or {}
+    changes = payload.get("changes") or []
+    is_counselor = "counselor" in roles and not (roles & STAFF_ROLES)
+    scope_label = "本班范围" if is_counselor else "全校范围"
+    report_target = "/counselor" if is_counselor else "/reports"
+    change_target = "/changes" if is_counselor else "/changes"
+    base = {"courses": [], "note": f"{scope_label}演示数据；不返回身份证、电话或原始学号。", "action": None}
+    q = question
+
+    raw_sensitive = re.search(r"身份证|电话|手机号|原始学号|成绩", q)
+    if raw_sensitive:
+        return {
+            **base,
+            "intent": "refused",
+            "answer": "我不会返回身份证、电话、原始学号或成绩明细；如需名单请使用报表中心，并按角色权限导出脱敏字段。",
+            "scope": {"label": scope_label},
+        }
+
+    if any(word in q for word in ("帮助", "能做什么", "怎么用", "你好", "你是谁")):
+        return {
+            **base,
+            "intent": "help",
+            "answer": "我可以按当前账号的数据范围统计人数、学籍状态、异动分布和数据质量，并引导你到对应页面。当前是本地规则模式，不调用外部模型。",
+            "scope": {"label": scope_label},
+            "suggestions": ["人工智能学院有多少学生？", "全校休学和退学各有多少人？", "数据质量怎么样？", "最近的学籍异动情况"],
+            "action": {"label": "打开数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
+        }
+
+    college = next((item.get("name") for item in metrics.get("college_counts") or [] if item.get("name") and item["name"] in q), None)
+    if not college:
+        college = next((name for alias, name in COLLEGE_ALIASES.items() if alias in q), None)
+    base_students = [student for student in students if student.get("college") == college] if college else students
+    scope = college or scope_label
+    statuses = [
+        item.get("name") for item in metrics.get("status_counts") or []
+        if item.get("name") and item["name"] in q
+    ]
+    if "在校" in q and "在籍" not in statuses:
+        statuses.append("在籍")
+
+    if any(word in q for word in ("数据质量", "缺失", "异常", "同名", "数据标记")):
+        quality = metrics.get("data_quality") or {}
+        if not quality:
+            return {
+                **base,
+                "intent": "quality",
+                "answer": "当前角色没有全校数据质量统计范围；请联系学工处或管理员。",
+                "scope": {"label": scope_label},
+            }
+        return {
+            **base,
+            "intent": "quality",
+            "answer": (
+                f"{scope_label}共 {len(students)} 名学生。需重点核对：重复学号 "
+                f"{(quality.get('duplicate_rows') or {}).get('count', 0)} 行、同班同名 "
+                f"{(quality.get('same_name_groups') or {}).get('count', 0)} 组、身份证校验异常 "
+                f"{(quality.get('id_invalid') or {}).get('count', 0)} 条、班级名称未匹配 "
+                f"{(quality.get('class_not_found') or {}).get('count', 0)} 人。"
+            ),
+            "scope": {"label": scope_label},
+            "action": {"label": "查看数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
+        }
+
+    if any(word in q for word in ("名单", "报表", "导出", "表格")):
+        template = "退学名单" if "退学" in q else ("学籍异动名单" if "异动" in q else "班级花名册")
+        return {
+            **base,
+            "intent": "report",
+            "answer": f"可以到报表中心使用「{template}」模板：选择字段与范围后导出。导出只含 UID 和脱敏字段，并记录操作人与时间。",
+            "scope": {"label": scope_label},
+            "action": {"label": "打开报表中心" if not is_counselor else "打开辅导员台", "to": report_target},
+        }
+
+    if any(word in q for word in ("异动", "休学", "退学", "转专业", "变化")):
+        type_counts = metrics.get("change_type_counts") or []
+        top = "、".join(f"{item.get('name')} {item.get('count')}" for item in type_counts[:3])
+        return {
+            **base,
+            "intent": "changes",
+            "answer": f"{scope_label}共有 {len(changes)} 条学籍异动记录" + (f"；主要类型：{top}。" if top else "。") + "异动需教务确认后才联动学生状态。",
+            "scope": {"label": scope_label},
+            "action": {"label": "打开学籍异动", "to": change_target},
+        }
+
+    if any(word in q for word in ("多少", "人数", "几个", "几名", "统计")):
+        if statuses:
+            parts = []
+            for status in statuses[:4]:
+                count = sum(1 for student in base_students if student.get("status") == status)
+                parts.append(f"{status} {count} 人")
+            return {
+                **base,
+                "intent": "count",
+                "answer": f"{scope}：{'，'.join(parts)}。统计范围为{scope_label}演示数据。",
+                "scope": {"label": scope_label},
+                "action": {"label": "查看数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
+            }
+        return {
+            **base,
+            "intent": "count",
+            "answer": f"{scope}共有 {len(base_students)} 名学生，其中在籍 {sum(1 for student in base_students if student.get('status') == '在籍')} 人。",
+            "scope": {"label": scope_label},
+        }
+
+    return {
+        **base,
+        "intent": "unknown",
+        "answer": "我暂时只理解人数统计、学籍状态、数据质量、学籍异动和报表引导。你可以试试：“人工智能学院有多少学生”“全校休学和退学各有多少人”。",
+        "scope": {"label": scope_label},
+        "suggestions": ["人工智能学院有多少学生？", "全校休学和退学各有多少人？", "数据质量怎么样？", "最近的学籍异动情况"],
+        "action": {"label": "打开数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
+    }
 
 
 def validate_change(body: dict, user: dict, roles: set[str]) -> tuple[dict | None, int, str]:
@@ -371,7 +784,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
-        if path not in ("/changes", "/changes/import", "/changes/check"):
+        if path not in ("/changes", "/changes/import", "/changes/check", "/assistant/query"):
             self._json(404, {"error": "not found"})
             return
         identity = self._identify()
@@ -379,6 +792,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         user = identity["user"]
         roles = identity["roles"]
+        if path == "/assistant/query":
+            self._assistant_query(user, roles)
+            return
         if not (roles & STAFF_ROLES or "counselor" in roles):
             self._json(403, {"error": "当前角色不能管理学籍异动"})
             return
@@ -391,6 +807,47 @@ class Handler(BaseHTTPRequestHandler):
             self._import_changes(user, roles, body)
         else:
             self._check_change(user, roles, body)
+
+    def _assistant_query(self, user: dict, roles: set[str]) -> None:
+        body = self._read_json()
+        if body is None:
+            return
+        question = str(body.get("question") or "").strip()
+        if not 1 <= len(question) <= MAX_QUESTION_CHARS:
+            self._json(400, {"error": f"问题需为 1-{MAX_QUESTION_CHARS} 字"})
+            return
+        page = str(body.get("page") or "").strip()[:60]
+        payload = scoped_payload(user, roles)
+        if payload is None:
+            self._json(403, {"error": "当前角色没有可用的数据范围"})
+            return
+
+        now = datetime.now().astimezone()
+        if "student_portal" in roles:
+            students = payload.get("students") or []
+            if not students:
+                self._json(403, {"error": "当前账号没有绑定的学生档案"})
+                return
+            result = schedule_answer(
+                question,
+                students[0],
+                payload.get("schedule") or [],
+                payload.get("metrics") or {},
+                now,
+            )
+        elif roles & STAFF_ROLES or "counselor" in roles:
+            result = staff_answer(question, payload, roles)
+        else:
+            self._json(403, {"error": "当前角色不能使用 AI 助手"})
+            return
+
+        result["context"] = page
+        username = (user.get("userName") or "").strip()
+        print(
+            f"[demo-api] assistant {result.get('intent')} by {username} page={page or '-'}",
+            file=sys.stderr,
+        )
+        self._json(200, result)
 
     def _create_change(self, user: dict, roles: set[str], body: dict) -> None:
         fields, status, error = validate_change(body, user, roles)

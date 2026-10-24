@@ -5,6 +5,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
 import { useSession } from '../session/SessionContext';
 import SchoolCrest from './SchoolCrest';
+import FloatingAssistant from './FloatingAssistant';
 
 const { Sider, Content } = Layout;
 
@@ -134,6 +135,8 @@ export default function AppLayout() {
             <Outlet />
           </Suspense>
         </Content>
+
+        <FloatingAssistant />
       </Layout>
     </Layout>
   );

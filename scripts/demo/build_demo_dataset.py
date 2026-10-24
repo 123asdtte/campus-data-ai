@@ -412,7 +412,11 @@ def build(source: Path, out_dir: Path, private_dir: Path) -> dict[str, Any]:
             schedule_unmatched += 1
             continue
         class_name, class_short = resolved
-        weekday = row.get("星期", "").replace("星期", "周")
+        weekday_raw = str(row.get("星期", "")).strip()
+        weekday = {
+            "1": "周一", "2": "周二", "3": "周三", "4": "周四",
+            "5": "周五", "6": "周六", "7": "周日",
+        }.get(weekday_raw, weekday_raw.replace("星期", "周"))
         schedule.append(
             {
                 "class_name": class_name,

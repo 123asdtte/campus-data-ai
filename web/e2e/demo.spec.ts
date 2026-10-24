@@ -47,26 +47,56 @@ test.describe('本地演示关键路径', () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
-  test('学生只看到本人课表，越权路由被送回', async ({ page }) => {
+  test('学生课表 + 悬浮 AI 查询、拒答与课表定位', async ({ page }) => {
     await login(page, 'SK-2026-000001', 'Demo@2026');
     await expect(page).toHaveURL(/\/my-schedule/);
     await expect(page.getByRole('heading', { name: '我的课表' })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: '课表提问' })).toHaveCount(1);
     await expect(page.getByText('SK-2026-000001').first()).toBeVisible();
     await expect(page.getByText('条排课')).toBeVisible();
     await expect(page.getByRole('link', { name: /学生信息/ })).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: '课表提问' })).toHaveCount(0);
 
     await page.goto('/students');
     await expect(page).toHaveURL(/\/my-schedule/);
 
-    await page.getByRole('button', { name: '今天下午有没有课？' }).click();
-    await expect(page.getByText(/青果\/教务处/)).toBeVisible();
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const dialog = page.getByRole('dialog', { name: 'AI 助手' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText(/当前页面 · 我的课表/)).toBeVisible();
 
-    const answers = page.locator('.ai-message.is-assistant .ai-bubble p');
-    await page.getByRole('button', { name: '明天几节课？' }).click();
-    await expect(answers.last()).toContainText('明天');
-    await page.getByRole('button', { name: '这周有哪些课？' }).click();
-    await expect(answers.last()).toContainText('本周');
+    await dialog.getByRole('button', { name: '这周五第一节在哪？' }).click();
+    const course = dialog.locator('.fa-course').first();
+    await expect(course).toBeVisible({ timeout: 15000 });
+    await expect(course).toContainText('程序设计基础');
+    await course.click();
+    await expect(page.locator('td.is-focus')).toHaveCount(1);
+
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    await expect(page.getByRole('dialog', { name: 'AI 助手' })).toContainText('程序设计基础');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'AI 助手' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const reopened = page.getByRole('dialog', { name: 'AI 助手' });
+    await reopened.getByRole('textbox', { name: '向 AI 助手提问' }).fill('我的成绩是多少？');
+    await reopened.getByRole('button', { name: '发送问题' }).click();
+    await expect(reopened.getByText(/只能查询本人课表/)).toBeVisible({ timeout: 15000 });
+  });
+
+  test('悬浮助手在移动端不溢出', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, 'SK-2026-000001', 'Demo@2026');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const dialog = page.getByRole('dialog', { name: 'AI 助手' });
+    await expect(dialog).toBeVisible();
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    expect(scrollWidth).toBeLessThanOrEqual(390);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
   });
 
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
@@ -148,6 +178,13 @@ test.describe('本地演示关键路径', () => {
     await expect(page).toHaveURL(/\/workbench/);
     await page.goto('/students');
     await expect(page).toHaveURL(/\/workbench/);
+
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const dialog = page.getByRole('dialog', { name: 'AI 助手' });
+    await expect(dialog.getByText(/当前页面 · 数据工作台/)).toBeVisible();
+    await dialog.getByRole('button', { name: '人工智能学院有多少学生？' }).click();
+    await expect(dialog.getByText(/名学生/)).toBeVisible({ timeout: 15000 });
+    await page.keyboard.press('Escape');
 
     await page.locator('a.app-nav-item', { hasText: '学籍异动' }).click();
     await expect(page.getByRole('heading', { name: '学籍异动' })).toBeVisible();
