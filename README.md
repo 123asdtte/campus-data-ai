@@ -8,6 +8,7 @@
 > RuoYi-Vue-Plus 相关的一切内容都位于**仓库之外的隔离 POC 目录**，是迁移方案的验证环境，**不是**生产系统的一部分。
 
 > **本地演示版**：见 [docs/LOCAL-DEMO.md](docs/LOCAL-DEMO.md)。使用虚构数据、独立容器 `127.0.0.1:8083`，不改动现有 `8082` 前端。
+> **上线状态**：生产环境尚未部署；阻塞项、授权要求与回退方式见 [PRODUCTION-READINESS-REPORT.md](PRODUCTION-READINESS-REPORT.md)。
 
 ---
 
