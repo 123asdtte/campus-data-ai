@@ -832,7 +832,7 @@
   3. Playwright + `@playwright/test`，本机复用 Edge channel，失败保留 trace/screenshot（采用）。
 - **决定**：
   - 新增 `web/playwright.config.ts` 与 `web/e2e/demo.spec.ts`；
-  - 串行 5 条用例：未登录跳转、学生课表与越权回送、辅导员发起/刷新/核对持久化、CSV 导入持久化、管理员全校数据与四件套下载；
+  - 串行 6 条用例：未登录跳转、学生课表与越权回送、辅导员发起/刷新/核对持久化、CSV 导入持久化、管理员 CSV 导入预检（只校验不提交）、管理员全校数据与四件套下载；
   - 测试前后删除 `demo-api/state/ledger.json`（仅演示台账），避免测试数据残留；
   - 默认 `channel: msedge`，CI 可用 `PW_CHANNEL=chromium`（需先安装浏览器）；
   - `test-results/`、`playwright-report/` 加入忽略。
@@ -842,7 +842,7 @@
   - 尚未接入 CI，也未覆盖移动端；
   - 依赖系统 Edge 或预装 Chromium。
 - **涉及文件**：`web/playwright.config.ts`、`web/e2e/demo.spec.ts`、`web/package.json`、`web/package-lock.json`、`.gitignore`、`docs/LOCAL-DEMO.md`。
-- **验证（实测）**：`cd web && PW_CHANNEL=msedge npx playwright test` → **5 passed / 16.9s**；测试后 `demo-api/state/ledger.json` 已清理。
+- **验证（实测）**：`cd web && PW_CHANNEL=msedge npx playwright test` → **6 passed / 17.7s**；导入预检走真实网关/import-api 校验但未提交；测试后 `demo-api/state/ledger.json` 已清理。
 - **回退**：删除 E2E 配置/用例与 devDependency，移除 npm 脚本与忽略项；无业务数据变更。
 - **授权**：B 类（本地测试与交付质量）。
 

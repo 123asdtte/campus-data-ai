@@ -90,6 +90,28 @@ test.describe('本地演示关键路径', () => {
     await expect(page.getByRole('row', { name: /UI-IMP-E2E/ })).toContainText('E2E 导入测试');
   });
 
+  test('管理员导入预检：上传 CSV 后可校验（不提交）', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.locator('a.app-nav-item', { hasText: '数据导入' }).click();
+    await expect(page.getByRole('heading', { name: '数据导入' })).toBeVisible();
+
+    await page.locator('input[type=file]').setInputFiles(
+      path.resolve(here, '../../samples/test_acceptance.csv'),
+    );
+    await expect(page.getByText(/已选择：test_acceptance\.csv/)).toBeVisible();
+    await page.getByRole('button', { name: '上传并识别' }).click();
+    await expect(page.getByText('识别结果')).toBeVisible();
+    await expect(page.getByText(/识别到/)).toBeVisible();
+
+    const validateResponse = page.waitForResponse(
+      (response) => response.url().includes('/imports/') && response.url().includes('/validate'),
+    );
+    await page.getByRole('button', { name: '开始校验' }).first().click();
+    const response = await validateResponse;
+    expect(response.status()).toBe(200);
+    await expect(page.getByText('03 校验结果')).toBeVisible();
+  });
+
   test('管理员可查看全校数据并下载四件套', async ({ page }) => {
     await login(page, 'admin', 'admin123');
     await page.locator('a.app-nav-item', { hasText: '数据工作台' }).click();
