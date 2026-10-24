@@ -76,9 +76,10 @@ def load_ledger() -> dict:
 
 
 def save_ledger(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     temp = STATE_PATH.with_suffix(".tmp")
     temp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.chmod(temp, 0o600)
     os.replace(temp, STATE_PATH)
 
 
