@@ -1478,10 +1478,10 @@
 ## 环境与阻塞（2026-10-24 本轮）
 
 - Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样取不到服务端信息，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本地无法重建 `demo-api` 容器，也无法跑 Playwright。受影响且**仍未验证**的事项：D-063 悬浮助手 Esc 焦点守卫（无自动化覆盖）、D-071 跨周定位的新提示（逻辑已改为「当前周确有该课才高亮，否则明说未定位」，但页面表现没看过）、D-065 学生页 KPI 的截图核对、D-072 锁改动在高并发下的尾延迟。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`，或整体 `powershell -File scripts/demo/verify-local-demo.ps1`。
-- 远端 CI 最新实测（2026-10-24 13:17 UTC）：分支头 `c786abe`（纯文档）的一轮 checks 多数仍 pending，已见「脚本语法与孤儿清理自检」「后端语法与导入检查」「Compose 组合校验」pass。上一个代码头 `b0e603f`（D-072）可见「本地演示 API 测试」「前端类型检查与构建」「后端接口与校验测试」「AI 助手原型测试」「AI 评审」pass，「演示栈 E2E」当时仍 pending；远端日志没取到用例条数，所以不引用远端具体数字。任何一次 CI 绿都不等于生产验收。
-- PR #58 当前状态：`OPEN`、`MERGEABLE`、`mergeStateStatus=UNSTABLE`（checks 未跑完）、`reviewDecision` 为空。合并属于业务负责人批准范围，本轮未自行合并。
-- 本地测试基线：`demo-api` **91 tests OK (skipped=2)**，`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；27 条 Playwright E2E 因演示栈不可用未跑。
-- 历史 CI 记录：`94b6770`（D-065）当时 10 项 check-run 全部 completed success（含「演示栈 E2E」），D-065 据此升级为 Verified in CI；那条 E2E 绿只证明当时的镜像与用例，不代表本轮 D-071 的前端改动已被 E2E 覆盖。
+- 远端 CI 历史记录（2026-10-24 13:17 UTC，已被下一条取代）：分支头 `c786abe`（纯文档）的一轮 checks 多数仍 pending，已见「脚本语法与孤儿清理自检」「后端语法与导入检查」「Compose 组合校验」pass。上一个代码头 `b0e603f`（D-072）可见「本地演示 API 测试」「前端类型检查与构建」「后端接口与校验测试」「AI 助手原型测试」「AI 评审」pass，「演示栈 E2E」当时仍 pending；远端日志没取到用例条数，所以不引用远端具体数字。任何一次 CI 绿都不等于生产验收。
+- 远端 CI 最新实测（2026-10-24 13:36 UTC）：分支头 `1d567c2` 的 10 项 checks 全部 SUCCESS（含「演示栈 E2E」「前端类型检查与构建」）。这只说明该提交上既有用例在 Linux 远端跑通，不等于 D-071 的新提示、D-065 的 KPI 版式已被覆盖——那些仍需本地浏览器核对或新增用例。
+- 本地测试基线：`demo-api` **95 tests OK (skipped=2)**（D-073 +3、D-074 +1），整轮连跑 10 次一致；`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；27 条 Playwright E2E 因演示栈不可用未跑。
+- PR #58 当前状态（2026-10-24 13:41 UTC 实测，分支头 `1d567c2`）：`OPEN`、`MERGEABLE`、`mergeStateStatus=CLEAN`、`reviewDecision` 为空（无人提交审查）。合并仍需业务负责人批准，本轮不自行合并。- 历史 CI 记录：`94b6770`（D-065）当时 10 项 check-run 全部 completed success（含「演示栈 E2E」），D-065 据此升级为 Verified in CI；那条 E2E 绿只证明当时的镜像与用例，不代表本轮 D-071 的前端改动已被 E2E 覆盖。
 
 
 ## D-067 问数端点第一次有了 HTTP 层回归，同时暴露出「缺 token 时客户端读到 0 字节」
@@ -1566,8 +1566,45 @@
 - **问题 1（S3，真实稳定性缺陷）**：`_check_change` 把 404、403 写在 `with STATE_LOCK:` 里，`_create_change` 把 409 写在锁里。`Handler` 的 `timeout = 10` 意味着一个不再收数据的客户端可以把 `wfile.write` 卡到 10 秒；这期间全局锁不放手，别人的建单、导入、核销以及 `scoped_payload()` 的台账读全部串行等待。演示栈并发槽有 32 个，但一把锁把并发优势抹平了。
 - **修法**：两个 handler 都改成「锁内只读台账 + 落账，结果装进 `response`，`self._json()` 与日志都挪到 `with` 之外」。响应状态码与 body 一字未改，只调整了写出时机；越权仍然是 403、不存在仍然是 404、超限仍然是 409，权限判断依旧在锁内读到的最新台账上做。
 - **问题 2（写这条时发现的新缺陷，测试隔离）**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入时就绑定了路径（app.py:29-31），所以测试里只换 `demo.STATE_DIR` 并不会换台账文件。第一版 `test_ledger_lock.py` 就这样把 6 条虚构测试行写进了仓库真实的 `demo-api/state/ledger.json`（本地运行时状态，已被 gitignore，不影响远端）。核对内容后确认这 6 行 `created_by=xgb01 / reason=演示测试` 全是本轮测试写入、没有夹带别人的数据，才还原成空台账；新测试现在同时替换并在 `tearDown` 还原 `STATE_DIR`、`STATE_PATH`、`ASSISTANT_LOG_PATH`，跑完两轮后 `state/ledger.json` 仍是 0 条，隔离成立。
+- **后续（D-073）**：这条债在本轮还掉了。理由换了——新增一条锁/路径回归时，「只换 STATE_DIR」是测试作者的默认预期，留着导入期绑定就等于在每个新用例里埋一次串写；改动面（9 处读写 + 3 个测试文件的 patch）经全量回归验证，见 D-073。
 - **为什么不顺手把路径改成调用期解析**：现有 `test_app.py`、`test_http_api.py` 直接 patch `ASSISTANT_LOG_PATH` 这个名字，改成函数解析要一并动这些用例，收益只是「少写三行 setUp」，而容器里 `STATE_DIR` 是导入前就注入的环境变量，产品行为没有缺陷。先记为可维护性债，等有真实需求（运行期切状态目录）再一并改。
 - **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **91 tests OK (skipped=2)**，连跑两次一致（87 → 91）；新回归 `demo-api/tests/test_ledger_lock.py` 断言「调用 `Handler._json` 的那一刻 `STATE_LOCK.locked()` 为假」，并用一段等价脚本证明探针有牙：锁内调用采样 `True`、锁外采样 `False`（`[True, False]`），所以修复前这类断言必然变红，不是空断言。
 - **未验证**：远端 CI（本条推送后回填）；并发压测下 409/403 的真实尾延迟；Docker 演示栈与 Playwright E2E（引擎仍返回 500）。
 - **回退**：`git revert` 本次提交，`test_ledger_lock.py` 随之一并删除。
 - **授权**：B 类（本地虚构数据与本地状态文件；清理动作只针对本轮测试自己写入的行，且已先核对无他人数据）。
+
+
+## D-073 台账与审计路径改在调用时解析：只换 STATE_DIR 就必须换掉全部状态文件
+
+- **日期**：2026-10-24
+- **状态**：Fixed locally（`585a3cd`）+ 远端 CI 待本轮推送后回填
+- **问题**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入期就把路径拼死了。测试隔离状态最自然的写法是只换 `demo.STATE_DIR`，而这个写法**静默无效**：读写仍然落在仓库真实的 `demo-api/state/` 里。D-072 的第一版锁测试就是这样把虚构异动写进了本地台账，我当时用「setUp 里同时替换三个名字」绕过去，把坑留在了原地。
+- **决定**：删掉两个模块常量，改成 `state_path()` / `assistant_log_path()` 在每次读写时按当前 `STATE_DIR` 解析（app.py:99-107）。产品行为不变：容器里 `STATE_DIR` 依旧是启动时注入的环境变量，解析结果与过去逐字节一致。测试侧只保留一处 `demo.STATE_DIR = 临时目录`，`test_app.py`/`test_http_api.py`/`test_ledger_lock.py` 里那 6 处手工同步 `STATE_PATH`/`ASSISTANT_LOG_PATH` 的补丁全部删掉。
+- **为什么不留在测试侧**：`quarantine_ledger()` 用 `STATE_PATH.with_name()` 派生隔离副本，导入期绑定下损坏备份也会跑到真实目录里，排障的人按临时目录找不到；这类「换个目录不生效」的债会在每条新测试上重新踩一次。
+- **验证（实测）**：新增 `demo-api/tests/test_state_dir_isolation.py`（3 条：台账读写、审计写入、损坏隔离副本都必须落在当前 `STATE_DIR` 内；`tearDown` 再断言真实 `state/` 目录的内容指纹前后一致）。
+  - 探针命中分支：把 `state_path`/`assistant_log_path` 包一层计数后跑该文件，调用次数 6 / 2，非空断言。
+  - 可证伪：在同一进程里把两个函数退回「导入期算好的固定路径」，该文件立刻 `FAILED (failures=4)`，报的就是「台账没写进当前 STATE_DIR」和「本次测试改动了真实 state/ 目录」。
+  - 整轮 `python -m unittest discover -s tests -p 'test_*.py'` → **94 tests OK (skipped=2)**（91 → 94），且真实 `state/` 目录 sha1 指纹在整轮前后完全相同（`{'changed': []}`）。
+- **本轮自己造成的污染与处置**：上面那次「退回导入期绑定」的变异探针把 `BG-DIR-1` 虚构记录写进了本地 `demo-api/state/ledger.json`（39 → 113 字节）并生成了一个隔离副本。核对内容确认全是探针写入后，用 `save_ledger(empty_ledger())` 由应用自己的写路径还原成空台账（39 字节），删掉探针生成的那个副本；目录里另有两个更早运行留下的 3 字节 `{{{` 副本**未动**（不是本轮产生的，删除别人的产物不在这次授权范围内）。`demo-api/state/` 被 gitignore 命中（`git status --ignored` 显示 `!!`），远端与 PR 不含这些文件。
+- **未验证**：容器内（Linux）路径行为——本机 Docker 引擎仍返回 500；远端 CI 待回填。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`demo-api/tests/test_http_api.py`、`demo-api/tests/test_ledger_lock.py`、`demo-api/tests/test_state_dir_isolation.py`（新增）。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 585a3cd`（含其测试文件），历史行为逐字节还原。
+- **授权**：B 类（本地代码与本地虚构状态文件；未触碰正式数据、认证或外部服务）。
+
+
+## D-074 413 也会被 RST 吞掉：排空改成「有上限、有短超时」，并把两条契约拆开钉
+
+- **日期**：2026-10-24
+- **状态**：Fixed locally（`4965452`）+ 远端 CI 待本轮推送后回填
+- **问题**：D-070 让早退错误先排空请求体再回响应，但对 `Content-Length > MAX_BODY_BYTES` 明确选择**不排空**，理由是「读干净等于放弃了这个上限本身」。代价当时没量化，这轮量化了：整轮测试 10 次里 **4 次**红，红的是 `test_body_over_limit_is_rejected_not_parsed`，异常 `ConnectionAbortedError [WinError 10053]`——客户端把 64KB+ 的请求体发完了，字节还躺在接收缓冲区里，服务端带着未读数据关闭就是 RST，把**已经送达**的 413 一起丢弃。前端用户看到的仍是「网络错误」，而不是「请求体过大」。单独跑那条用例 10 次全绿，所以它是整轮上下文里的时序问题，不是新代码写坏了。
+- **先证伪自己的猜测**：怀疑是排空超时太短，把 `DRAIN_TIMEOUT_SECONDS` 从 1.0 调到 10.0 做 A/B，各 4 轮整轮——两边都还是同一用例红 1 次，超时假设不成立。真正的差异在测试自己：那份 body 用 `json.dumps` 默认 `ensure_ascii=True`，中文被转义成 6 字节/字，长度 393,292 字节，**超过**新的排空上限 `DRAIN_MAX_BYTES = 4 × MAX_BODY_BYTES = 262,144`，按设计就不排空。
+- **修法**：`_drain_body()` 分块读（8KB/次）到声明长度为止，上限 `DRAIN_MAX_BYTES`、超时 1 秒（到点放弃，慢速客户端不能占着 32 个并发槽之一不放），结束后把 socket 超时还原成 `Handler.timeout`；`_read_json` 的 413 分支从 `_json` 改走 `_reject`。于是「刚超限」这个真实触发区间（64KB～256KB）能稳定送达，比它更大的请求体仍然只拒绝、不替攻击者吞数据。
+- **测试**：契约按大小拆成两条，都不减断言。
+  - `test_over_limit_body_still_delivers_the_413`：请求体落在排空窗口内，裸 socket 分两次写，连打 3 次，必须每次都拿到 413 且关闭是 FIN。修复后 10/10 轮全绿；把 `_drain_body` 置空（= 修复前行为）后 6/6 轮全红。
+  - `test_body_far_over_limit_is_never_parsed`：请求体用**合法且会被答出来**的巨大 JSON（「明天有什么课」+ padding，1.5MB），断言问数审计行数不变（真的没被解析），响应若能读到必须是 413，连接被 RST 中止是本用例被明确接受的失败方式。把 `MAX_BODY_BYTES` 上限取消（变异）后该用例变红，证明「行数不变」不是空断言。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **95 tests OK (skipped=2)**，整轮连跑 **10/10 全绿**（修复前同一条命令是 6/10）。排空调用探针记录到 8 次调用、`Content-Length` 分别为 393292 / 34 / 196654×3 / 30 / 17，说明拒绝路径确实走到了排空。`demo-api/state/` 指纹在探针前后不变。
+- **仍未验证**：容器内（Linux）与真实 nginx `client_max_body_size 1m` 前后的 413 表现（引擎 500）；浏览器 fetch 发超限请求时的具体报错文案。远端 CI 待回填。
+- **影响**：超限请求的拒绝语义、状态码、错误文案都没变；变的是「拒绝的送达性」——从尽力而为（实测 60%）变成窗口内保证。多花的成本是有界排空最多 256KB 读 + 最多 1 秒。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_http_api.py`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 4965452`，413 恢复为不排空直接回复（那条时序红会重新出现，实测约 4/10）。
+- **授权**：B 类（本地代码、临时端口真实服务、虚构请求体）。
