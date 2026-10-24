@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Input } from 'antd';
 import { CloseOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -52,6 +52,14 @@ export default function FloatingAssistant() {
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesBox = useRef<HTMLDivElement>(null);
+
+  // 面板最高 620px，多轮问答后最新回答会落在可视区外；用户正在回看历史时不要抢滚动。
+  useEffect(() => {
+    const el = messagesBox.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
+  }, [messages, pending]);
 
   const contextLabel = PAGE_LABELS[pathname] ?? '数据管理';
   const suggestions = isStudent ? STUDENT_SUGGESTIONS : STAFF_SUGGESTIONS;
@@ -146,11 +154,14 @@ export default function FloatingAssistant() {
             </button>
           </header>
 
-          <div className="fa-messages" aria-live="polite">
+          <div className="fa-messages" ref={messagesBox} aria-live="polite">
             {messages.map((message) => (
               <div className={`fa-message is-${message.role}`} key={message.id}>
                 <div className={`fa-bubble${message.error ? ' is-error' : ''}`}>
                   <p>{message.text}</p>
+                  {message.reply?.scope?.label ? (
+                    <span className="fa-scope">数据范围 · {message.reply.scope.label}</span>
+                  ) : null}
                   {message.reply?.courses.length ? (
                     <div className="fa-courses">
                       {message.reply.courses.map((course, index) => (

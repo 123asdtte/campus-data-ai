@@ -53,6 +53,10 @@ export async function askAssistant(question: string, page: string): Promise<Assi
       | (AssistantReply & { error?: string })
       | null;
     if (!response.ok || !payload) {
+      // 限流与并发满的响应体不是本服务的 JSON（来自 nginx / demo-api），要给出可行动的提示而不是 HTTP 码
+      if (response.status === 429) throw new Error('问数请求过于频繁，请稍候十几秒再问一次。');
+      if (response.status === 503) throw new Error('演示服务并发已满，请稍后重试。');
+      if (response.status === 403) throw new Error(payload?.error || '当前账号没有使用该问数范围的权限。');
       throw new Error(payload?.error || `查询失败（HTTP ${response.status}）`);
     }
     return payload;

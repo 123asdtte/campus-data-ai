@@ -157,6 +157,7 @@ test.describe('本地演示关键路径', () => {
     // 这条账号的演示课表是空的：修好后不能再拿“没有课”去回答档案问题
     await expect(bubble).not.toContainText('没有课');
     await expect(bubble.locator('.fa-note')).toContainText('学号、证件号');
+    await expect(bubble.locator('.fa-scope')).toContainText('仅本人档案');
     await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('我的学号是多少？');
     await panel.getByRole('button', { name: '发送问题' }).click();
     await expect(panel.locator('.fa-message.is-assistant').last()).toContainText('只回答你自己的课表和本人学籍信息');
@@ -170,6 +171,7 @@ test.describe('本地演示关键路径', () => {
     await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('人工智能学院有多少学生？');
     await panel.getByRole('button', { name: '发送问题' }).click();
     await expect(panel.getByText(/不在你的数据范围/)).toBeVisible({ timeout: 15000 });
+    await expect(panel.locator('.fa-scope').last()).toContainText('本班范围');
     await expect(panel.getByText(/人工智能学院共有/)).toHaveCount(0);
   });
 
@@ -182,6 +184,7 @@ test.describe('本地演示关键路径', () => {
     await panel.getByRole('button', { name: '发送问题' }).click();
     const bubble = panel.locator('.fa-message.is-assistant').last();
     await expect(bubble).toContainText('条异动已批但平台未核对', { timeout: 15000 });
+    await expect(bubble.locator('.fa-scope')).toContainText('全校范围');
     await expect(bubble.locator('.fa-action')).toContainText('打开学籍异动');
     await expect(bubble.locator('.fa-note')).toContainText('不返回身份证');
     await page.keyboard.press('Escape');
@@ -433,5 +436,38 @@ test.describe('本地演示关键路径', () => {
     await expect(page).toHaveURL(/\/login/);
     await expect(page.getByRole('alert')).toContainText('登录状态已失效');
     expect(await page.evaluate(() => window.localStorage.getItem('campus.gateway.token'))).toBeNull();
+  });
+
+  test('悬浮助手连续追问后会把最新回答滚进可视区', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 560 });
+    await login(page, 'admin', 'admin123');
+    await page.goto('/students');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    const box = panel.locator('.fa-messages');
+    const bubbles = panel.locator('.fa-message.is-assistant');
+    const questions = ['数据质量怎么样？', '最近的学籍异动情况'];
+    for (const [index, question] of questions.entries()) {
+      await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill(question);
+      await panel.getByRole('button', { name: '发送问题' }).click();
+      // 第 0 条是欢迎语，所以第 index 个回答落在 nth(index + 1)
+      await bubbles.nth(index + 1).waitFor({ timeout: 15000 });
+    }
+
+    const state = await box.evaluate((el) => {
+      const chips = el.querySelectorAll('.fa-scope');
+      const last = chips[chips.length - 1] as HTMLElement;
+      return {
+        chipCount: chips.length,
+        overflow: el.scrollHeight - el.clientHeight,
+        chipBelowFold: Math.round(last.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom),
+        gapToBottom: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+      };
+    });
+    expect(state.chipCount).toBe(questions.length);
+    // 先证明对话确实溢出面板，否则“滚到可视区”这条断言不成立
+    expect(state.overflow).toBeGreaterThan(40);
+    expect(state.chipBelowFold).toBeLessThanOrEqual(1);
+    expect(state.gapToBottom).toBeLessThanOrEqual(1);
   });
 });

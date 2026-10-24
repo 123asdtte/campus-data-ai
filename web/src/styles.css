@@ -3317,6 +3317,19 @@ body {
   background: var(--danger-soft);
 }
 
+.fa-scope {
+  display: inline-block;
+  margin-top: 7px;
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
 .fa-bubble.is-error p {
   color: var(--danger);
 }
