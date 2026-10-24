@@ -1,4 +1,4 @@
-import BrandMark from './BrandMark';
+import schoolLogo from '../assets/school-logo.png';
 import LoginGateArt from './LoginGateArt';
 
 export default function LoginBrandPanel() {
@@ -7,7 +7,9 @@ export default function LoginBrandPanel() {
       <span className="login-brand-glow" aria-hidden="true" />
       <LoginGateArt />
       <div className="login-brand-logo">
-        <span className="login-brand-mark"><BrandMark size={32} /></span>
+        <span className="login-brand-mark">
+          <img src={schoolLogo} alt="" aria-hidden="true" />
+        </span>
         <span className="login-brand-name">
           <b>郴州思科职业学院</b>
           <small>数据管理平台 · DATA PLATFORM</small>

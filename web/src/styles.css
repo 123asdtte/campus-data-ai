@@ -92,12 +92,17 @@ body {
 }
 
 .app-brand-mark {
-  width: 24px;
-  height: 24px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  color: var(--hl-hi, #232327);
   flex: none;
+}
+
+.app-brand-logo {
+  display: block;
+  width: 32px;
+  height: auto;
 }
 
 .app-brand-text {
