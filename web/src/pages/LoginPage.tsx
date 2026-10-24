@@ -2,10 +2,8 @@ import { useState } from 'react';
 import { Alert, Button, Form, Input } from 'antd';
 import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import BrandMark from '../components/BrandMark';
 import LoginBrandPanel from '../components/LoginBrandPanel';
-import LoginGateArt from '../components/LoginGateArt';
-import LoginNotice from '../components/LoginNotice';
+import LoginDataArt from '../components/LoginDataArt';
 import { login } from '../api/auth';
 import { useSession } from '../session/SessionContext';
 
@@ -39,42 +37,22 @@ export default function LoginPage() {
 
   return (
     <div className="login-shell">
-      <header className="login-header">
-        <div className="login-lockup">
-          <span className="login-lockup-mark"><BrandMark size={30} /></span>
-          <span className="login-lockup-text">
-            <b>郴州思科职业学院</b>
-            <small>数据管理平台 · DATA PLATFORM</small>
-          </span>
-        </div>
-        <div className="login-header-meta">
-          <SafetyCertificateOutlined />
-          <span>统一身份认证平台</span>
-          <i aria-hidden="true" />
-          <span className="login-header-en">UNIFIED IDENTITY</span>
-        </div>
-      </header>
+      <div className="login-frame">
+        <LoginBrandPanel />
 
-      <div className="login-crumb">
-        <div className="login-crumb-path">
-          <span>数据管理平台</span>
-          <i aria-hidden="true">/</i>
-          <b>统一身份认证</b>
-        </div>
-        <div className="login-crumb-meta">
-          <SafetyCertificateOutlined />
-          <span>授权访问 · 操作留痕</span>
-        </div>
-      </div>
-
-      <main className="login-main">
-        <LoginGateArt />
-        <div className="login-stage">
-          <LoginBrandPanel />
+        <main className="login-right">
+          <div className="login-right-meta">
+            <SafetyCertificateOutlined />
+            <span>统一身份认证平台</span>
+          </div>
 
           <section className="login-card" aria-labelledby="login-title">
+            <div className="login-card-top">
+              <span className="login-card-badge"><i aria-hidden="true" />统一身份认证</span>
+              <span className="login-card-ss">SSO</span>
+            </div>
+
             <header className="login-card-head">
-              <span className="login-eyebrow">UNIFIED IDENTITY</span>
               <h2 id="login-title">账号登录</h2>
               <p>使用学校统一账号登录，系统将按角色进入工作台。</p>
             </header>
@@ -130,9 +108,9 @@ export default function LoginPage() {
             </div>
           </section>
 
-          <LoginNotice />
-        </div>
-      </main>
+          <LoginDataArt />
+        </main>
+      </div>
 
       <footer className="login-footer">
         <span>© {new Date().getFullYear()} 郴州思科职业学院 · 数据管理平台</span>
