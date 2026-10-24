@@ -141,6 +141,15 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 python scripts/demo/smoke-demo.py
 ```
 
+关键业务端到端回归（需演示栈已启动；测试前后会清空演示异动台账）：
+
+```powershell
+cd web
+npm run test:e2e
+```
+
+默认使用系统 Edge（`channel: msedge`）；CI 已安装 Chromium 时可设 `PW_CHANNEL=chromium`。
+
 ---
 
 ## 8. 已验证
@@ -164,6 +173,7 @@ python scripts/demo/smoke-demo.py
 - 异动台账：辅导员发起异动 → 服务端返回 `YD-LOCAL-*` 并进入“待平台核对”；刷新页面记录仍在，`docker compose ... --force-recreate demo-api` 后仍在；平台核对结果同样持久化
 - 异动权限（API 实测）：学生发起/核对 403；辅导员只能登记/核对本人学生（越界 403），学工处可登记他班学生；非法类型/日期 400
 - 异动导入：带 BOM 的模板 CSV 经前端解析后批量提交，2 条写入并刷新后仍在；重复异动编号自动追加 `-IMPn`；非法类型/越界行按行跳过；单次上限 200 条
+- Playwright E2E：**5 passed**（2026-10-24，16.9s）——未登录跳转、学生课表与越权回送、辅导员发起/核对/CSV 导入的刷新持久化、管理员全校数据与四件套下载
 
 ---
 
@@ -174,6 +184,7 @@ python scripts/demo/smoke-demo.py
 - 学生/辅导员/学工处的身份与菜单由网关角色绑定；演示数据已由 `demo-api` 在服务端按 token 过滤。数据查询为内存只读，学籍异动为**受限写入**（JSON 台账），不做分页、数据库事务或独立审计表；正式版必须改为数据库 API + 行级权限 + 审计。
 - 异动登记与平台核对已写入 `demo-api` 的 JSON 台账（`demo-api/state/ledger.json`，容器外持久化），但仍是**单文件演示存储**：无数据库事务、分页、并发审计与备份；正式版必须落到数据库与审计表。删除该文件即重置台账。
 - 学生自助、报表导出记录目前仍是**前端本地状态 / 浏览器 localStorage**；正式版必须落到后端与审计表。
+- E2E 依赖已启动的 8083 演示栈与本机 Edge/Chromium，尚未接入 CI；测试会清空演示异动台账（仅限演示环境）。
 - 资料库流水线是**用已生成数据模拟**；正式版需要接后端上传/解析/任务队列。
 - 业务页面按桌面 1920 设计；登录页已适配移动端，其余页面尚未专门适配。
 - AI 问数当前是**本地规则版**，不是 Dify/LLM；当前独立的只读 AI POC 不在这套演示入口内。

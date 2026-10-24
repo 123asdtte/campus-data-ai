@@ -816,3 +816,32 @@
   - `npm run build` 通过。
 - **回退**：移除两个 POST 路由与前端 `ledger.ts` 调用，恢复本地 state 逻辑；删除 `demo-api/state`；无业务数据变更。
 - **授权**：B 类（演示环境业务闭环）；生产数据库落库需人工授权后实施。
+
+---
+
+## D-027 关键业务 Playwright 端到端回归
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 已有 HTTP 冒烟与手工浏览器验证，但登录、角色路由、学生范围、异动持久化、CSV 导入、四件套下载没有可重复的浏览器级回归；
+  - 前端缺少 E2E 框架，关键交互只能靠人工点检，改动后容易回归。
+- **可选方案**：
+  1. 继续手工验证——不可重复、无证据（否决）；
+  2. Selenium——需另装驱动，Windows/CI 兼容成本高（否决）；
+  3. Playwright + `@playwright/test`，本机复用 Edge channel，失败保留 trace/screenshot（采用）。
+- **决定**：
+  - 新增 `web/playwright.config.ts` 与 `web/e2e/demo.spec.ts`；
+  - 串行 5 条用例：未登录跳转、学生课表与越权回送、辅导员发起/刷新/核对持久化、CSV 导入持久化、管理员全校数据与四件套下载；
+  - 测试前后删除 `demo-api/state/ledger.json`（仅演示台账），避免测试数据残留；
+  - 默认 `channel: msedge`，CI 可用 `PW_CHANNEL=chromium`（需先安装浏览器）；
+  - `test-results/`、`playwright-report/` 加入忽略。
+- **影响与兼容性**：新增开发依赖 `@playwright/test`；不改运行时代码、接口或数据；测试依赖已启动的 8083 演示栈。
+- **风险与限制**：
+  - 测试会清空演示异动台账，不得指向正式环境；
+  - 尚未接入 CI，也未覆盖移动端；
+  - 依赖系统 Edge 或预装 Chromium。
+- **涉及文件**：`web/playwright.config.ts`、`web/e2e/demo.spec.ts`、`web/package.json`、`web/package-lock.json`、`.gitignore`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`cd web && PW_CHANNEL=msedge npx playwright test` → **5 passed / 16.9s**；测试后 `demo-api/state/ledger.json` 已清理。
+- **回退**：删除 E2E 配置/用例与 devDependency，移除 npm 脚本与忽略项；无业务数据变更。
+- **授权**：B 类（本地测试与交付质量）。
