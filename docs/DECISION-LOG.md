@@ -1680,3 +1680,16 @@
 - 风险与回退：问题中若恰好包含与某学生姓名同形的课程名/教师名等片段，会被误拦为 refused；姓名含 `*` 使普通词组同形概率极低，接受该风险。回退：`git revert` 本提交。
 - 测试：新增 `test_roster_student_names_are_refused_even_without_keewei`（真实花名册姓名两种问法 intent=refused、courses=[]、本人姓名不误拦）；修复前探测已证明两个问法均被误答。本地 `python -X utf8 -m unittest discover -s tests`：98 tests OK (skipped=2)。
 - 未验证：浏览器端拒绝话术观感（本地 Docker Desktop 仍 500，待恢复后由演示栈 E2E/人工验证；远端 CI 的 E2E job 覆盖服务端行为）。
+
+## D-080 无 Docker 本地演示运行入口（stub 网关 + 静态代理）：Docker 引擎 500 期间的替代验证栈及其边界
+
+- 日期：2026-10-24　分支：`feat/local-demo-workbench`（PR #58）
+- 问题与证据：Docker Desktop Linux 引擎持续返回 500（多轮确认，非本会话引入），本地无法按 `docker compose` 启动演示栈，D-075～D-079 的浏览器观感验证一直缺本地入口。新建 `scripts/demo/local-demo-node.py`：单进程三层——①静态入口（服务 `web/dist`，SPA 路由回退 index.html，`/gw/*` 反代到 stub 网关）；②stub 网关（只实现 RuoYi 契约 `POST /auth/login` 与 `GET /system/user/getInfo`，演示账号与 Docker 栈一致）；③以子进程启动 demo-api（`DEMO_API_PORT`）。端口经 `DEMO_ENTRY_PORT/DEMO_GW_PORT/DEMO_API_PORT` 覆盖（本轮实测 8093/9280/9281，避开 Docker backend 占用的 8083/9180/9181）。修复过两个自身缺陷：main() 此前从未 `gateway.serve_forever()`（网关 404，补 daemon 线程 + finally `gateway.shutdown()`）；`EntryHandler` 未绕过系统代理导致本机请求走 proxy（补 `NO_PROXY_OPENER`）。文件头 docstring 明示：它不是真实网关，缺少登录锁定、租户、clientid 校验、JWT 签名等行为，经此栈验证的结论不能替代 Docker 演示栈或 CI 的 E2E 结果。
+- E2E 结果（stub 环境，`DEMO_BASE_URL=http://127.0.0.1:8093`，channel msedge，serial）：三次合并后 29 条用例全部执行过——25 passed，4 failed。4 个失败全部溯源到同一 stub 边界：前端对 `/gw/internal/proxy/*` 的调用（imports 导入预检、stats/overview、meta/filters、students）依赖真实 Java 网关内部签名链路代理到 Java 后端，stub 网关对其返回 404 而非 200/401。定位过程：Playwright 诊断脚本遍历 9 条路由抓到 3 个确切 404 URL（`/gw/internal/proxy/stats/overview`、`/meta/filters`、`/students?...`），与 `web/src/api/home.ts:6`、`web/src/api/students.ts:18/22/26` 的调用点吻合；grep 确认 demo-api/app.py 只有 `/data`、`/four-sheet` 等端点、无这些业务端点。4 个失败用例：「管理员导入预检」「管理员页面无控制台错误或横向溢出」「业务请求遇到 401 同样清理会话」（stub 返回 404 而非 401，401 清会话路径不触发，页面停在 /students）「总览与工作台各自标明数据源」（stats/overview 404 → KPI 为 0，断言 >0 失败）。
+- 方案取舍：a) 为 demo-api 补 stats/overview、meta/filters、students 端点让 4 条用例变绿——拒绝：与真实 Java 后端契约分叉，构成重复业务实现，且属于虚构后端能力；b) 在 stub 网关伪造这些代理响应——同样伪造契约，拒绝；c) 记为 stub 环境边界，用 `--grep-invert` 补跑其余用例，4 条失败等待 Docker 恢复或远端 CI 验证——选择 c。远端 CI run 40103998682（D-077 提交时）已证明 Docker 栈上 29 条全过，4 条失败是环境边界而非回归。
+- 影响：Docker 引擎 500 期间恢复本地浏览器级验证能力（Playwright E2E 25/29 通过，覆盖悬浮助手追问滚动、台账降级提示、失效 token 清会话、角色权限、辅导员台账/导入/导出、跨周定位等核心路径）；首页/、/students、导入预检与 401 清会话四条路径在本栈降级，文档与日志均已标注。
+- 测试（实测）：健康检查 entry 200 / gw-login 401（空 body）/ api healthz 200；E2E 三段合并 25 passed / 4 failed（均为 stub 边界）；停栈后 netstat 复核 8093/9280/9281 全部释放；E2E 前后对 demo-api/state 台账与审计文件做了备份/恢复，历史 `ledger.corrupt-20261024-*.json` 保持原样未动。
+- 未验证：学生页 KPI 展示（D-065，students 端点 404 页面降级）、并发尾延迟（D-072）、导入预检与 401 清会话的真实链路——均需 Docker 演示栈或远端 CI；本栈结论一律不得表述为 CI/生产验证结果。
+- 涉及文件：`scripts/demo/local-demo-node.py`（新增）、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- 回退：删除 `scripts/demo/local-demo-node.py` 即完全回退，不影响任何现有路径。
+- 授权：B 类（仅本地脚本与文档，虚构数据，不出网、无副作用）。
