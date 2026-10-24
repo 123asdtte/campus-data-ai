@@ -38,6 +38,7 @@ CHANGE_STATUSES = {"审批中", "已批", "退回"}
 MAX_LOCAL_CHANGES = 500
 MAX_IMPORT_ROWS = 200
 MAX_BODY_BYTES = 64 * 1024
+MAX_CONCURRENT_REQUESTS = max(1, int(os.environ.get("MAX_CONCURRENT_REQUESTS", "32")))
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CHANGE_NO_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 STATE_LOCK = threading.Lock()
@@ -516,6 +517,46 @@ class Handler(BaseHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            # 先读掉请求头再回 503，避免 Windows 上未读数据触发 RST 使客户端收不到响应
+            try:
+                request.settimeout(0.5)
+                data = b""
+                while b"\r\n\r\n" not in data and len(data) < 8192:
+                    chunk = request.recv(1024)
+                    if not chunk:
+                        break
+                    data += chunk
+            except OSError:
+                pass
+            body = json.dumps({"error": "服务繁忙，请稍后重试"}, ensure_ascii=False).encode("utf-8")
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Content-Type: application/json; charset=utf-8\r\n"
+                    b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
+                    b"Connection: close\r\n\r\n" + body
+                )
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 def main() -> None:

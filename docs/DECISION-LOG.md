@@ -938,3 +938,20 @@
   - 冒烟全部 PASS（含新增压缩断言）；Playwright **5 passed / 15.8s**。
 - **回退**：删除两个 server 的 gzip 指令并重建 web 镜像；无数据变更。
 - **授权**：B 类（本地性能与交付质量）。
+
+---
+
+## D-033 demo-api 并发请求上限
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：`ThreadingHTTPServer` 每个请求一个线程，网关校验最长 5 秒；公网试用时并发请求可无限累积线程，慢连接超时只能限制单个连接寿命，不能限制总量。
+- **决定**：
+  - 默认最多 32 个并发请求（`MAX_CONCURRENT_REQUESTS` / Compose `DEMO_MAX_CONCURRENT`），槽满立即返回 503；
+  - 503 前先读取请求头，避免 Windows 上未读数据触发 RST 导致客户端收不到响应；
+  - 线程结束时释放槽，异常启动线程也释放。
+- **影响与兼容性**：演示的正常并发远低于 32；导出、导入、登录路径不变。超出上限的请求得到明确 503，而不是无限等待。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docker-compose.demo.yml`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：单元测试 **19 passed**，连续 10 次全部通过；单槽场景第二个请求返回 503，释放后恢复 200；重建容器后冒烟 PASS、Playwright **9 passed / 27.6s**。
+- **回退**：删除并发槽逻辑与 Compose 环境变量；无数据变更。
+- **授权**：B 类（公网试用稳定性加固）。

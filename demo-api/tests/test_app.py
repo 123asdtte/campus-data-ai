@@ -5,8 +5,13 @@
 """
 from __future__ import annotations
 
+import socket
 import sys
+import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -173,6 +178,60 @@ class ScopedPayloadTest(unittest.TestCase):
         payload = demo.scoped_payload(staff_user(), STAFF)
         self.assertIsNotNone(payload)
         self.assertEqual(len(payload["students"]), len(demo.DATA["students"]))
+
+
+class QuietServer(demo.Server):
+    def handle_error(self, request, client_address) -> None:
+        # 测试里主动断开半开连接，忽略由此产生的写回失败
+        pass
+
+
+class ConcurrencyLimitTest(unittest.TestCase):
+    def test_rejects_when_slots_exhausted_then_recovers(self):
+        original = demo.MAX_CONCURRENT_REQUESTS
+        demo.MAX_CONCURRENT_REQUESTS = 1
+        server = QuietServer(("127.0.0.1", 0), demo.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_address[1]
+        holder = None
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
+                self.assertEqual(response.status, 200)
+
+            holder = socket.create_connection(("127.0.0.1", port), timeout=3)
+            holder.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\n")
+            deadline = time.time() + 3
+            while server._slots._value > 0 and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(server._slots._value, 0, "慢请求未占用唯一并发槽")
+
+            with self.assertRaises(urllib.error.HTTPError) as context:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3)
+            self.assertEqual(context.exception.code, 503)
+
+            holder.close()
+            holder = None
+            deadline = time.time() + 3
+            while server._slots._value == 0 and time.time() < deadline:
+                time.sleep(0.02)
+            time.sleep(0.05)
+
+            status = None
+            for _ in range(50):
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
+                        status = response.status
+                    break
+                except (urllib.error.HTTPError, urllib.error.URLError):
+                    time.sleep(0.02)
+            self.assertEqual(status, 200)
+        finally:
+            if holder is not None:
+                holder.close()
+            server.shutdown()
+            server.server_close()
+            demo.MAX_CONCURRENT_REQUESTS = original
 
 
 if __name__ == "__main__":
