@@ -144,6 +144,7 @@ python scripts/demo/smoke-demo.py
 - 登录页适配 390px 移动端；业务页面仍按桌面 1920 设计
 - 冒烟脚本 `scripts/demo/smoke-demo.py`：healthz、登录页、四角色登录/角色/身份、缺 token/伪 token/不存在账号拒绝，全部 PASS（2026-10-24）
 - 响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy` 已启用，`Server` 隐藏版本号（8083 实测）
+- 路由拆包：入口 JS 1.39 MB → 0.69 MB；登录首屏不加载员工页/表格/xlsx chunk，懒加载页面实测正常
 
 ---
 

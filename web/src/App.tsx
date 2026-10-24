@@ -1,21 +1,24 @@
+import { lazy } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Button, Result, Spin } from 'antd';
 import AppLayout from './components/AppLayout';
-import HomePage from './pages/HomePage';
-import StudentsPage from './pages/StudentsPage';
-import ImportPage from './pages/ImportPage';
-import WorkbenchPage from './pages/WorkbenchPage';
-import ReportsPage from './pages/ReportsPage';
-import ChangesPage from './pages/ChangesPage';
-import CounselorPage from './pages/CounselorPage';
-import StudentPortalPage from './pages/StudentPortalPage';
-import PipelinePage from './pages/PipelinePage';
-import AssistantPage from './pages/AssistantPage';
-import StudentSchedulePage from './pages/StudentSchedulePage';
 import { SessionProvider, useSession } from './session/SessionContext';
 import LoginPage from './pages/LoginPage';
 import { isLoggedIn } from './api/auth';
+
+// 业务页按路由拆包：登录页保持同步加载，其余页面首次进入时再拉取。
+const HomePage = lazy(() => import('./pages/HomePage'));
+const StudentsPage = lazy(() => import('./pages/StudentsPage'));
+const ImportPage = lazy(() => import('./pages/ImportPage'));
+const WorkbenchPage = lazy(() => import('./pages/WorkbenchPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const ChangesPage = lazy(() => import('./pages/ChangesPage'));
+const CounselorPage = lazy(() => import('./pages/CounselorPage'));
+const StudentPortalPage = lazy(() => import('./pages/StudentPortalPage'));
+const PipelinePage = lazy(() => import('./pages/PipelinePage'));
+const AssistantPage = lazy(() => import('./pages/AssistantPage'));
+const StudentSchedulePage = lazy(() => import('./pages/StudentSchedulePage'));
 
 /**
  * PR-D 登录守门：所有业务页面必须持有网关 token。

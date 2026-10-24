@@ -1,4 +1,5 @@
-import { Layout } from 'antd';
+import { Suspense } from 'react';
+import { Layout, Spin } from 'antd';
 import { AppstoreOutlined, CalendarOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, InboxOutlined, LogoutOutlined, RobotOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
@@ -129,7 +130,9 @@ export default function AppLayout() {
         </header>
 
         <Content className="app-content">
-          <Outlet />
+          <Suspense fallback={<div style={{ minHeight: 320, display: 'grid', placeItems: 'center' }}><Spin /></div>}>
+            <Outlet />
+          </Suspense>
         </Content>
       </Layout>
     </Layout>
