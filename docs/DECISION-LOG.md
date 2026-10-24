@@ -879,7 +879,7 @@
   - 移除登录错误外层容器的重复 `role="alert"`，只保留 AntD Alert 的语义。
 - **影响与兼容性**：仅影响前端登录态处理；正常登录、角色路由、数据缓存和台账写入路径不变。失效时页面会整体回到登录页，未保存的前端表单内容会丢失（演示环境可接受）。
 - **涉及文件**：`web/src/api/auth.ts`、`web/src/session/SessionContext.tsx`、`web/src/demo/useDemoData.ts`、`web/src/demo/ledger.ts`、`web/src/pages/LoginPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
-- **验证（实测）**：`npm run build` 通过；Playwright **8 passed / 23.8s**——刷新页面加载失效 token、业务请求（学生列表刷新）遇到 401 两条路径均跳转 `/login`、显示失效提示、token 已清空。
+- **验证（实测）**：`npm run build` 通过；Playwright **9 passed / 28.9s**——刷新页面加载失效 token、业务请求（学生列表刷新）遇到 401 两条路径均跳转 `/login`、显示失效提示、token 已清空；另含管理员九页控制台/横向溢出检查。
 - **回退**：还原上述文件；无数据与接口变更。
 - **授权**：B 类（本地演示前端健壮性）。
 

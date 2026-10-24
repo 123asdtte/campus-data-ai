@@ -128,6 +128,26 @@ test.describe('本地演示关键路径', () => {
     expect(download.suggestedFilename()).toBe('four-sheet.xlsx');
   });
 
+  test('管理员页面无控制台错误或横向溢出', async ({ page }) => {
+    const problems: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') problems.push(`console: ${msg.text()}`);
+    });
+    page.on('pageerror', (err) => problems.push(`pageerror: ${err.message}`));
+
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await login(page, 'admin', 'admin123');
+
+    const routes = ['/', '/workbench', '/pipeline', '/reports', '/assistant', '/changes', '/counselor', '/students', '/import'];
+    for (const route of routes) {
+      await page.goto(route);
+      await expect(page.locator('h1, h2').first()).toBeVisible();
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+      expect(scrollWidth, `${route} 出现横向溢出`).toBeLessThanOrEqual(1366);
+    }
+    expect(problems).toEqual([]);
+  });
+
   test('失效 token 清除会话并回到登录页', async ({ page }) => {
     await login(page, 'SK-2026-000001', 'Demo@2026');
     await expect(page).toHaveURL(/\/my-schedule/);
