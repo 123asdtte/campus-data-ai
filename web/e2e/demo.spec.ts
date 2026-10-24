@@ -185,6 +185,30 @@ test.describe('本地演示关键路径', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('跨周课程定位：当前周不可见时明说未定位，可见时真正高亮', async ({ page }) => {
+    await login(page, 'SK-2026-000001', 'Demo@2026');
+    await page.goto('/my-schedule');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('下周有哪些课程安排？');
+    const responseReady = page.waitForResponse((res) => res.url().includes('/demo-api/assistant/query'));
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const reply = await (await responseReady).json();
+    expect(reply.courses?.length ?? 0, '演示数据下周应有排课：锚点漂移时先查 demo-data.json 的 current_week').toBeGreaterThan(0);
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+
+    // 演示数据第 8 周课表里没有「周三 5-6节 高等数学(一)」：点击后必须明说未定位，不能假装已定位
+    await bubble.locator('.fa-course').filter({ hasText: '高等数学(一)' }).filter({ hasText: '周三' }).click();
+    await expect(page.getByText('不在当前第 8 周的周三 5-6节，页面未做定位')).toBeVisible({ timeout: 15000 });
+
+    // 对照：同一门课当前周可见的格子（周二 1-2节）要真的高亮，且不再弹提示
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    await bubble.locator('.fa-course').filter({ hasText: '高等数学(一)' }).filter({ hasText: '周二' }).click();
+    await expect(page.getByText('不在当前第')).toHaveCount(0);
+    await expect(page.locator('td[data-weekday="周二"][data-period="1-2节"]')).toHaveClass(/is-focus/);
+    await page.keyboard.press('Escape');
+  });
+
   test('辅导员问全院人数时，助手说明数据范围而不是给出口径错误的数字', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await page.getByRole('button', { name: '打开 AI 助手' }).click();
