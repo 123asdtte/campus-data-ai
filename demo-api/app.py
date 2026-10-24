@@ -154,12 +154,23 @@ def save_ledger(state: dict) -> None:
     os.replace(temp, STATE_PATH)
 
 
-def counselor_keys(user: dict) -> tuple[set[str], set[str]]:
-    counselor = (user.get("nickName") or user.get("userName") or "").strip()
+# 演示数据用中文姓名标带班辅导员，账号昵称恰好也填了这个姓名。但网关允许本人改昵称
+# （PUT /system/user/profile），拿昵称当身份等于让辅导员自己改名就能看见别人的学生，
+# 所以带生关系只认不可自改的 userName，再由这张服务端映射解析出数据里的姓名标签。
+# 正式环境必须由数据库里的师生绑定关系决定，这里只是演示环境的等价物。
+COUNSELOR_LABELS = {"counselor01": "戴雅琴"}
+
+
+def counselor_labels(user: dict) -> set[str]:
     username = (user.get("userName") or "").strip()
+    return {label for label in (COUNSELOR_LABELS.get(username), username) if label}
+
+
+def counselor_keys(user: dict) -> tuple[set[str], set[str]]:
+    labels = counselor_labels(user)
     students = [
         s for s in (DATA.get("students") or [])
-        if s.get("counselor") in {counselor, username}
+        if s.get("counselor") in labels
     ]
     uids = {s.get("uid") for s in students if s.get("uid")}
     class_keys = {
@@ -806,8 +817,7 @@ def scoped_payload(user: dict, roles: set[str]) -> dict | None:
         }
 
     if "counselor" in roles:
-        counselor = (user.get("nickName") or user.get("userName") or "").strip()
-        username = (user.get("userName") or "").strip()
+        labels = counselor_labels(user)
         uids, class_keys = counselor_keys(user)
         students = [s for s in students_all if s.get("uid") in uids]
         schedule = [
@@ -817,7 +827,7 @@ def scoped_payload(user: dict, roles: set[str]) -> dict | None:
         changes, checked = merge_ledger(user, roles, state)
         classes = [
             c for c in (DATA.get("class_summary") or [])
-            if c.get("counselor") in {counselor, username}
+            if c.get("counselor") in labels
         ]
         return {
             "meta": DATA.get("meta") or {},

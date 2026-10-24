@@ -641,3 +641,52 @@ class LedgerIntegrityTest(unittest.TestCase):
         payload = demo.scoped_payload(staff_user(), STAFF)
         self.assertIsNotNone(payload)
         self.assertEqual(len(payload["changes"]), len(demo.DATA["changes"]))
+
+
+SEED_ACCOUNTS = Path(__file__).resolve().parents[2] / "scripts" / "demo" / "seed-demo-accounts.sql"
+
+
+class CounselorScopeIdentityTest(unittest.TestCase):
+    """带生范围只能由不可自改的 userName 决定：网关允许本人改昵称，拿昵称定范围等于让辅导员自己换范围。"""
+
+    def setUp(self):
+        own_label = demo.COUNSELOR_LABELS["counselor01"]
+        students = demo.DATA["students"]
+        self.own = {s["uid"] for s in students if s["counselor"] == own_label}
+        other = next(
+            s["counselor"] for s in students
+            if s["counselor"] != own_label
+        )
+        self.other_label = other
+        self.others = {s["uid"] for s in students if s["counselor"] == other}
+
+    def test_renaming_to_another_counselor_does_not_widen_scope(self):
+        user = {"userName": "counselor01", "nickName": self.other_label}
+        self.assertEqual(demo.visible_uids(user, COUNSELOR_ROLE), self.own)
+
+    def test_unmapped_counselor_gets_no_scope(self):
+        user = {"userName": "counselor99", "nickName": self.other_label}
+        self.assertEqual(demo.visible_uids(user, COUNSELOR_ROLE), set())
+        payload = demo.scoped_payload(user, COUNSELOR_ROLE)
+        self.assertEqual(payload["students"], [])
+        self.assertEqual(payload["class_summary"], [])
+
+    def test_scope_label_matches_seeded_account_nickname(self):
+        # 映射与演示账号种子必须一致，否则改种子会悄悄把辅导员的范围改成空。
+        seed = SEED_ACCOUNTS.read_text(encoding="utf-8")
+        labels = {s["counselor"] for s in demo.DATA["students"]}
+        for username, label in demo.COUNSELOR_LABELS.items():
+            self.assertRegex(
+                seed,
+                rf"'{username}',\s*'{re.escape(label)}'",
+                f"{username} 的种子昵称与 COUNSELOR_LABELS 不一致",
+            )
+            self.assertIn(label, labels)
+
+    def test_counselor_payload_only_exposes_own_classes(self):
+        payload = demo.scoped_payload(
+            {"userName": "counselor01", "nickName": self.other_label}, COUNSELOR_ROLE
+        )
+        self.assertEqual({s["uid"] for s in payload["students"]}, self.own)
+        self.assertTrue(all(c["counselor"] != self.other_label for c in payload["class_summary"]))
+        self.assertTrue(all(row["uid"] in self.own for row in payload["changes"]))
