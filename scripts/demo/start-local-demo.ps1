@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$Bind = '127.0.0.1',
+    [int]$Port = 8083,
+    [switch]$NoBrowser
+)
 
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -10,38 +14,32 @@ if (-not $gateway) {
     throw 'campus-gateway is not running. Start the main campus-data-ai stack first.'
 }
 
-Write-Host '[demo] building data api image ...'
-& docker build -t campus-demo-api:local-demo demo-api
-if ($LASTEXITCODE -ne 0) { throw 'demo-api docker build failed' }
-
-& docker rm -f campus-demo-api 2>$null | Out-Null
-Write-Host '[demo] starting campus-demo-api on campus-net ...'
-& docker run -d --name campus-demo-api --network campus-net --network-alias demo-api --restart unless-stopped campus-demo-api:local-demo | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'demo-api docker run failed' }
-
-$apiState = ''
-for ($i = 0; $i -lt 15; $i++) {
-    Start-Sleep -Seconds 1
-    $apiState = (& docker inspect -f '{{.State.Health.Status}}' campus-demo-api 2>$null)
-    if ($apiState -eq 'healthy') { break }
+# 旧版脚本用 docker run 创建的同名容器会与 Compose 冲突，先清理
+foreach ($name in @('campus-demo-api', 'campus-web-demo')) {
+    if (& docker ps -a --filter "name=^/$name$" --format '{{.Names}}') {
+        & docker rm -f $name | Out-Null
+    }
 }
-if ($apiState -ne 'healthy') { throw "demo-api health check failed: $apiState" }
 
-Write-Host '[demo] building local web image ...'
-& docker build -f web/Dockerfile.web -t campus-data-web:local-demo web
-if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
+$env:DEMO_BIND = $Bind
+$env:DEMO_PORT = "$Port"
+$composeArgs = @('compose', '-p', 'campus-demo', '-f', 'docker-compose.demo.yml')
 
-& docker rm -f campus-web-demo 2>$null | Out-Null
-Write-Host '[demo] starting campus-web-demo on 127.0.0.1:8083 ...'
-& docker run -d --name campus-web-demo --network campus-net -p 127.0.0.1:8083:80 --restart unless-stopped campus-data-web:local-demo | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'docker run failed' }
+Write-Host "[demo] compositing demo stack on ${Bind}:${Port} ..."
+& docker @composeArgs up -d --build
+if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed' }
 
-Start-Sleep -Seconds 3
-$code = & curl.exe -s -o NUL -w '%{http_code}' http://127.0.0.1:8083/healthz
+$url = "http://127.0.0.1:$Port"
+$code = ''
+for ($i = 0; $i -lt 30; $i++) {
+    Start-Sleep -Seconds 1
+    $code = & curl.exe -s -o NUL -w '%{http_code}' "$url/healthz"
+    if ($code -eq '200') { break }
+}
 if ($code -ne '200') { throw "web health check failed: HTTP $code" }
 
 Write-Host ''
-Write-Host 'Local demo: http://127.0.0.1:8083' -ForegroundColor Cyan
+Write-Host "Local demo: $url" -ForegroundColor Cyan
 Write-Host 'Login: admin / admin123' -ForegroundColor Cyan
 Write-Host 'Existing 8082 frontend is untouched.'
-Start-Process 'http://127.0.0.1:8083'
+if (-not $NoBrowser) { Start-Process $url }

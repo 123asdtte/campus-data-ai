@@ -2,6 +2,13 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-& docker rm -f campus-web-demo 2>$null | Out-Null
-& docker rm -f campus-demo-api 2>$null | Out-Null
-Write-Host '[demo] campus-web-demo and campus-demo-api stopped. The main stack and 8082 frontend are untouched.'
+$repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+Set-Location $repo
+
+& docker compose -p campus-demo -f docker-compose.demo.yml down
+foreach ($name in @('campus-demo-api', 'campus-web-demo')) {
+    if (& docker ps -a --filter "name=^/$name$" --format '{{.Names}}') {
+        & docker rm -f $name | Out-Null
+    }
+}
+Write-Host '[demo] demo stack stopped. The main stack and 8082 frontend are untouched.'

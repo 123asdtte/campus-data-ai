@@ -113,14 +113,24 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 前置：主栈已启动，`campus-gateway` 正在运行（登录和 `/gw` 代理依赖它）。
 
 ```powershell
-# 启动本地演示（构建本地前端镜像，8083，不改动 8082）
+# 启动本地演示（Compose 构建前端与 demo-api，监听 127.0.0.1:8083，不改动 8082）
 .\scripts\demo\start-local-demo.ps1
 
 # 停止
 .\scripts\demo\stop-local-demo.ps1
 ```
 
-脚本会检查网关、构建 `campus-data-web:local-demo` 与 `campus-demo-api:local-demo`、在 `campus-net` 启动两个容器，并检查健康状态。
+脚本会检查网关，移除以 `docker run` 创建的同名旧容器，再用
+`docker compose -p campus-demo -f docker-compose.demo.yml up -d --build`
+启动两个服务，并等待 Web 健康检查通过。`demo-api` 通过服务名在 `campus-net`
+内被 Nginx 解析，无需手工维护网络别名。
+
+试用机需要非回环监听时，显式指定绑定地址与端口（须同时配置安全组/IP 白名单）：
+
+```powershell
+.\scripts\demo\start-local-demo.ps1 -Bind 0.0.0.0 -Port 8088
+# 等价：$env:DEMO_BIND='0.0.0.0'; $env:DEMO_PORT='8088'; docker compose -p campus-demo -f docker-compose.demo.yml up -d --build
+```
 
 启动后跑只读冒烟（登录页、四角色身份、缺 token/伪 token/不存在账号拒绝）：
 
