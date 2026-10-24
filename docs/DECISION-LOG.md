@@ -1498,6 +1498,8 @@
 
 ## D-068 「缺 token 客户端读到 0 字节」：原始 socket 单独复测拿到完整 401，但写进测试仍拿不到
 
+> **已被 D-070 定位并修复（2026-10-24，提交 `96e66d9`）**：矛盾的两半都查清了——测试自己的桩绑成了 TestCase 方法，外加一个真实的「早退错误未排空请求体 → RST 吞掉响应」缺陷。下面这段保留为当时的实测记录，不再代表当前状态。
+
 - **状态**：未修复、未定性（该用例继续保持 `expectedFailure`，本轮没有把任何未验证的改法带进仓库）
 - **Decision owner**：AI
 - **新增证据（与 D-067 相反方向）**：远端 Linux 的「本地演示 API 测试」日志同样写 `expected failure`（run 40094219979 / job 120872991810），所以这不是 Windows 现象。但我在一次性脚本里用原生 socket 向同一 `Server`/`Handler` 发同一条无 `Authorization` 的 POST（带 `Content-Length` 的完整请求体），立即读、延时 0.4s 读、显式 `Connection: close` 三种时序都收到 206 字节的 `HTTP/1.0 401 Unauthorized` + JSON 响应体，与服务端 `log_message` 记到的 401 一致——也就是说**服务端确实写了完整响应**。
@@ -1525,3 +1527,19 @@
 - **未验证**：远端 CI 结果；`app.py` 里若有人日后只留正则、删掉 strptime，这条用例在 CI 会先响。
 - **回退**：删除 `DateValidationTest` 与本条记录，无代码与配置变更。
 - **授权**：B 类（虚构数据、只读校验函数测试，不落台账）。
+
+## D-070 「缺 token 客户端读到 0 字节」查到底：一半是测试自己的桩绑错，一半是真实的 RST 丢响应
+
+- **日期**：2026-10-24
+- **状态**：Fixed locally（提交 `96e66d9`，分支 `feat/local-demo-workbench`，PR #58）；远端 CI 见下一条推送后的 check-run，本地不代替远端
+- **推翻的旧结论**：D-068 记的「矛盾点还没定位」和 D-067 里那条 `expectedFailure`。
+- **问题与证据（两段，各自独立成立）**
+  1. **测试自身缺陷**：`setUp` 用 `demo.Handler._identify = self._identify` 复原原函数，而 `cls._identify` 存的就是那个函数对象——通过实例访问会绑成 TestCase 的方法，于是 handler 线程里的 `self` 是测试实例，`self.headers` 直接 `AttributeError: 'HttpAssistantTest' object has no attribute 'headers'`，连接被就地关掉，客户端读到 0 字节。服务端日志里那条 401 属于别的请求。这就是 D-068 里「独立脚本能拿到完整 401、写进测试就拿不到」的全部原因。
+  2. **真实服务端缺陷**：`_identify` / `do_POST` 在读请求体之前就要回 401、403、404，socket 带着未读数据关闭时内核回 RST 而不是 FIN；客户端在这之后才把请求体补写完，RST 会把它这边**已经收到**的响应一起丢弃。独立探针（不打桩、真实 Handler、同一端口）实测：「先发请求头、停 50ms 再发请求体」修复前 4/4 `ConnectionAbortedError，已收到 0 字节`，修复后 4/4 拿到完整 `HTTP/1.0 401`（206 字节）；`curl` 3/3、`http.client` 8/8 前后都是 401 —— 因为这两种写法把请求头和请求体合并成一次写。**结论**：缺陷只在「延迟写请求体」的客户端上暴露，而浏览器 `fetch` 完全可能这样发，所以用户侧表现是「AI 面板报网络错误」而不是「未登录」。
+- **修法与取舍**：新增 `Handler._reject(status, message)`，早退错误前先 `_drain_body()` 再 `_json`；`_drain_body` 只在 `0 < Content-Length <= MAX_BODY_BYTES` 时读，且 `_body_consumed`（在 `_read_json` 的 `finally` 里置位）为真就跳过——否则会对同一个长度二次 read，一直堵到 `timeout = 10` 才返回，把所有正常 POST 拖慢 10 秒。`_identify` 的 4 条错误分支、`do_POST` 的 404/403 改走 `_reject`；`_read_json` 内部（400/408，请求体已读过）保持 `_json`。
+- **明确不修的一处**：413 分支仍然不排空请求体。把超限的体读干净等于放弃 `MAX_BODY_BYTES` 这个上限本身（超大上传的拒绝成本会变成先收完），所以这里宁可让超限客户端看到连接被重置。已在 `_drain_body` 注释里写明。
+- **测试**：撤销 `expectedFailure` 改成硬断言，并新增 `test_deferred_request_body_does_not_lose_the_401`（裸 socket 先头后体）和 `test_role_denied_post_keeps_the_response`（403 也必须送达）。另外把「故意把连接搞坏」的两条（413、裸 socket）拆进 `HttpAbusiveClientTest`（独立 Server 实例）：同进程混跑时 Winsock 会把下一个用例打成 `WinError 10053`，这是测试隔离问题，不是产品行为，断言一条没减。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **87 tests OK (skipped=2)**，连跑三次一致（85 → 87，expected failures 1 → 0）；裸 socket 探针修复前后对照如上。`test_deferred_request_body_does_not_lose_the_401` 在去掉 `_drain_body` 时会变红，不是空断言。
+- **未验证**：远端 CI；Docker 演示栈、Playwright 27 条 E2E、真实浏览器 `fetch` 的延迟写体行为（Docker Desktop Linux 引擎本轮仍返回 500，8083 起不来）。
+- **回退**：`git revert 96e66d9`（`app.py` 与测试文件同时回到 `expectedFailure` 版本）。
+- **授权**：B 类（本地虚构数据、只读契约测试，不落台账、不碰生产）。
