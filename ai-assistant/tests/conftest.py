@@ -14,6 +14,22 @@ import pytest
 # 默认指向 docker-compose.ai-poc.yml 暴露的 127.0.0.1:55435；
 # CI 的 services.postgres 使用 5432，通过 AI_DB_PORT 覆盖。
 # 下面的默认口令仅用于本地/CI 的一次性测试库，禁止用于任何共享环境。
+#
+# 安全闸门：test_assistant.py 会 DELETE ai.students。默认的 55435 是本地 POC 库，
+# 不是一次性测试库；未显式指定 AI_DB_PORT 时禁止自动连过去。
+_allow_live = os.environ.get("AI_TEST_ALLOW_LIVE", "").lower() in ("1", "true", "yes")
+_LIVE_DB_SKIP = (
+    "AI 测试默认不连接 55435 的 POC 库：请用 AI_DB_PORT 指向隔离测试库"
+    "（CI 使用 5432），或在确认数据可丢弃后显式设置 AI_TEST_ALLOW_LIVE=1。"
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    """未显式指定测试库时整体跳过，避免误连可写的 POC 库。"""
+    if os.environ.get("AI_DB_PORT") or _allow_live:
+        return
+    for item in items:
+        item.add_marker(pytest.mark.skip(reason=_LIVE_DB_SKIP))
 _admin_pw = os.environ.get("AI_DB_PASSWORD", "ai_dba_pw")
 _ro_pw = os.environ.get("AI_RO_PASSWORD", "ai_ro_pw")
 _audit_pw = os.environ.get("AI_AUDIT_PASSWORD", "ai_audit_pw")

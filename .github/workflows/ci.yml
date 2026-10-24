@@ -7,6 +7,156 @@ on:
   pull_request:
 
 jobs:
+  demo-tests:
+    name: 本地演示 API 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 语法检查
+        run: python -m compileall -q demo-api/app.py demo-api/tests
+      - name: unittest（身份范围、校验、台账、并发、数据一致性）
+        run: python -m unittest discover -s demo-api/tests -p 'test_*.py' -v
+
+  demo-e2e:
+    name: 演示栈 E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: 构建网关 jar（镜像运行前置）
+        working-directory: gateway
+        run: mvn -B -DskipTests -pl ruoyi-admin -am package
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 安装前端依赖
+        working-directory: web
+        run: npm ci
+      - name: 生成 CI 专用环境变量
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=ci-demo-placeholder
+          APP_DB_PASSWORD=ci-demo-placeholder
+          RO_DB_PASSWORD=ci-demo-placeholder
+          GATEWAY_DB_PASSWORD=ci-demo-placeholder
+          GATEWAY_REDIS_PASSWORD=ci-demo-placeholder
+          INTERNAL_HMAC_SECRET=ci-demo-hmac-secret-0123456789abcdef
+          JWT_SECRET_KEY=ci-demo-jwt-secret-0123456789abcdef
+          # 与生产一致的内部签名链路：网关签名、导入服务验签、nonce 落库
+          INTERNAL_AUTH_ENABLED=true
+          EOF
+      - name: 启动数据库
+        run: docker compose up -d gateway-db gateway-redis campus-db
+      - name: 等待数据库健康
+        run: |
+          set -e
+          wait_healthy() {
+            for i in $(seq 1 80); do
+              status=$(docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null || echo missing)
+              if [ "$status" = "healthy" ]; then
+                echo "$1 healthy after ${i} checks"
+                return 0
+              fi
+              sleep 3
+            done
+            echo "::error::$1 240 秒内未就绪（最后状态：$status）"
+            return 1
+          }
+          wait_healthy campus-gateway-db
+          wait_healthy campus-db
+      - name: 初始化演示库角色与内部认证（003/004/006）
+        run: |
+          set -e
+          for file in sql/003_roles.sql sql/004_internal_auth.sql sql/006_import_scope.sql; do
+            echo "applying $file"
+            docker compose exec -T campus-db psql -U campus_dba -d campus \
+              -v ON_ERROR_STOP=1 \
+              -v app_password=ci-demo-placeholder \
+              -v ro_password=ci-demo-placeholder < "$file"
+          done
+      - name: 启动网关与导入服务
+        run: docker compose up -d import-api gateway
+      - name: 等待网关与导入服务就绪
+        run: |
+          set -e
+          wait_healthy() {
+            for i in $(seq 1 80); do
+              status=$(docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null || echo missing)
+              if [ "$status" = "healthy" ]; then
+                echo "$1 healthy after ${i} checks"
+                return 0
+              fi
+              sleep 3
+            done
+            echo "::error::$1 240 秒内未就绪（最后状态：$status）"
+            return 1
+          }
+          wait_healthy campus-import-api
+          wait_healthy campus-gateway
+      - name: 写入演示账号
+        run: |
+          docker compose exec -T gateway-db psql -U gateway_dba -d campus_gateway \
+            -v ON_ERROR_STOP=1 < scripts/demo/seed-demo-accounts.sql
+      - name: 启动演示栈
+        run: |
+          docker compose -p campus-demo \
+            -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml up -d --build
+      - name: 等待演示站就绪
+        run: |
+          set -e
+          for i in $(seq 1 60); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8083/login)" = "200" ]; then
+              echo "demo web ready after ${i} checks"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::演示站 180 秒内未就绪"
+          docker compose -p campus-demo \
+            -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml logs
+          exit 1
+      - name: 安装 Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Playwright E2E（条数随用例增长，日志里的 Running N tests 为准；含悬浮 AI、服务端问数、人数/条数口径、本人档案、数据范围标注、页面上下文推荐问题、自然问法命中质量口径、最新回答自动滚动、移动端表格滚动）
+        working-directory: web
+        env:
+          PW_CHANNEL: chromium
+          DEMO_BASE_URL: http://127.0.0.1:8083
+        run: npx playwright test
+      - name: 失败时导出演示栈日志
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          docker compose -p campus-demo \
+            -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml logs --no-color > artifacts/demo-stack.log || true
+          docker compose logs --no-color gateway gateway-db gateway-redis campus-db import-api > artifacts/gateway-stack.log || true
+      - name: 上传失败现场
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-e2e-failure
+          path: |
+            web/test-results
+            artifacts
+          retention-days: 7
+      - name: 清理
+        if: always()
+        run: |
+          docker compose -p campus-demo \
+            -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml down -v || true
+          docker compose down -v || true
+
   frontend:
     name: 前端类型检查与构建
     runs-on: ubuntu-latest
@@ -144,6 +294,7 @@ jobs:
           set -e
           docker compose config -q
           docker compose -f docker-compose.web.yml config -q
+          docker compose -p campus-demo -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml config -q
           docker compose -f docker-compose.web.yml -f docker-compose.tls.yml config -q
           docker compose -f docker-compose.ai-poc.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q

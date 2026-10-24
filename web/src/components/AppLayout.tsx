@@ -1,32 +1,65 @@
-import { Layout } from 'antd';
-import { AppstoreOutlined, CloudUploadOutlined, LogoutOutlined, TeamOutlined } from '@ant-design/icons';
+import { Suspense } from 'react';
+import { Alert, Layout, Spin } from 'antd';
+import { AppstoreOutlined, CalendarOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, InboxOutlined, LogoutOutlined, RobotOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
-import BrandMark from './BrandMark';
+import { PAGE_TITLES } from '../pageTitles';
+import { useDemoData } from '../demo/useDemoData';
+import { useSession } from '../session/SessionContext';
+import SchoolCrest from './SchoolCrest';
+import FloatingAssistant from './FloatingAssistant';
 
 const { Sider, Content } = Layout;
 
-const NAV = [
+const STAFF_NAV = [
   { to: '/', label: '总览', icon: <AppstoreOutlined /> },
+  { to: '/workbench', label: '数据工作台', icon: <DatabaseOutlined /> },
+  { to: '/pipeline', label: '资料库流水线', icon: <InboxOutlined /> },
+  { to: '/reports', label: '报表中心', icon: <FileTextOutlined /> },
+  { to: '/assistant', label: 'AI 问数', icon: <RobotOutlined /> },
+  { to: '/changes', label: '学籍异动', icon: <SwapOutlined /> },
+  { to: '/counselor', label: '辅导员台', icon: <UserOutlined /> },
   { to: '/students', label: '学生信息', icon: <TeamOutlined /> },
   { to: '/import', label: '数据导入', icon: <CloudUploadOutlined /> },
 ];
 
-const TITLE: Record<string, string> = {
-  '/': '总览',
-  '/students': '学生信息',
-  '/import': '数据导入',
-};
+const STUDENT_NAV = [
+  { to: '/my-schedule', label: '我的课表', icon: <CalendarOutlined /> },
+];
+
+function roleLabel(roles: string[]): string {
+  if (roles.includes('student_portal')) return '学生';
+  if (roles.includes('counselor')) return '辅导员';
+  if (roles.includes('xgb')) return '学工处';
+  if (roles.includes('superadmin')) return '管理员';
+  return '用户';
+}
 
 export default function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const active = NAV.find((item) => (item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)));
-  // 显示的是网关登录账号，不再使用前端自填的 X-Actor 展示名
-  const username = getLoginUser() ?? '未知用户';
+  const { session, loading, clear } = useSession();
+  const { data } = useDemoData();
+  const roles = session?.roles ?? [];
+  const isStudent = roles.includes('student_portal');
+  const isCounselor = roles.includes('counselor');
+  const isXgb = roles.includes('xgb');
+  let nav = STAFF_NAV;
+  if (isStudent) {
+    nav = STUDENT_NAV;
+  } else if (isCounselor) {
+    nav = STAFF_NAV.filter((item) => ['/counselor', '/changes'].includes(item.to));
+  } else if (isXgb) {
+    nav = STAFF_NAV.filter((item) => ['/workbench', '/pipeline', '/reports', '/changes', '/counselor'].includes(item.to));
+  }
+  const active = nav.find((item) => (item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)));
+  const username = session?.user.nickName ?? getLoginUser() ?? '未知用户';
+  const uid = session?.user.userName ?? '';
   const initials = username.slice(0, 1).toUpperCase();
+  const role = loading ? '身份加载中' : roleLabel(roles);
 
   const onLogout = () => {
+    clear();
     logout();
     navigate('/login', { replace: true });
   };
@@ -36,7 +69,7 @@ export default function AppLayout() {
       <Sider width={232} className="app-sider" theme="light">
         <div className="app-brand">
           <span className="app-brand-mark">
-            <BrandMark size={24} />
+            <SchoolCrest />
           </span>
           <div className="app-brand-text">
             <div className="app-brand-title">郴州思科职业学院</div>
@@ -46,7 +79,7 @@ export default function AppLayout() {
 
         <nav className="app-nav">
           <div className="app-nav-label">业务模块</div>
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -72,12 +105,12 @@ export default function AppLayout() {
           <div className="app-header-left">
             <span className="app-crumb">数据管理</span>
             <span className="app-crumb-sep">/</span>
-            <span className="app-header-title">{TITLE[active?.to ?? ''] ?? '总览'}</span>
+            <span className="app-header-title">{PAGE_TITLES[active?.to ?? ''] ?? '总览'}</span>
           </div>
           <div className="app-header-right">
-            <span className="app-actor">
+            <span className="app-actor" title={uid ? `UID：${uid}` : undefined}>
               <span className="app-actor-avatar">{initials}</span>
-              {username}（已登录）
+              {username}（{role}）
             </span>
             <button type="button" className="app-nav-item" style={{ width: 'auto' }} onClick={onLogout}>
               <LogoutOutlined />
@@ -87,8 +120,21 @@ export default function AppLayout() {
         </header>
 
         <Content className="app-content">
-          <Outlet />
+          {data?.meta.ledger_warning && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="数据可能不完整"
+              description={data.meta.ledger_warning}
+            />
+          )}
+          <Suspense fallback={<div style={{ minHeight: 320, display: 'grid', placeItems: 'center' }}><Spin /></div>}>
+            <Outlet />
+          </Suspense>
         </Content>
+
+        <FloatingAssistant />
       </Layout>
     </Layout>
   );

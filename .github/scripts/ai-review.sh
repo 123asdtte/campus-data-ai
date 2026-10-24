@@ -22,6 +22,10 @@ SHA="${SHA:0:7}"
 # 没有 --max-time 时 curl 会一直挂着，把 runner 耗到 GitHub 的 6 小时上限。
 LLM_TIMEOUT="${LLM_TIMEOUT:-300}"      # 单次请求上限（秒）
 LLM_RETRY="${LLM_RETRY:-1}"            # 5xx / 超时的额外重试次数
+# 连接阶段上限。2026-10-24 实测：上游地址路由不通时，curl 只有 --max-time，
+# 探测干等 30s、正式请求干等 300s 全耗在 TCP 连不上上；--connect-timeout
+# 把「连不上」（秒级可判死）和「生成慢」（需要长超时）分开约束。
+LLM_CONNECT_TIMEOUT="${LLM_CONNECT_TIMEOUT:-15}"
 # LLM 环节（探测 + 正式请求 + 重试）的总预算。job 上限是 15 分钟，checkout、
 # 取 diff、发评论还要占掉一部分；不设总账的话，探测跑满再叠加重试会把 job
 # 拖过 900s，最后被 kill 在「发布失败说明」之前 —— 留痕逻辑等于白写。
@@ -38,11 +42,12 @@ DIFF_EXCLUDE="${DIFF_EXCLUDE:-^(docs/|samples/|import-api/wheels/|web/node_modul
 # 数值型变量来自仓库 Variables，配错成非数字时会在后面的算术展开处直接终止
 # 脚本——而那时还没走到 fail，PR 上一点痕迹都没有。所以先统一校验并回退默认值。
 is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
-for CFG_VAR in LLM_TIMEOUT LLM_RETRY LLM_BUDGET PROBE_TIMEOUT DIFF_LIMIT; do
+for CFG_VAR in LLM_TIMEOUT LLM_RETRY LLM_CONNECT_TIMEOUT LLM_BUDGET PROBE_TIMEOUT DIFF_LIMIT; do
   if ! is_uint "${!CFG_VAR:-}"; then
     case "$CFG_VAR" in
       LLM_TIMEOUT) LLM_TIMEOUT=300 ;;
       LLM_RETRY) LLM_RETRY=1 ;;
+      LLM_CONNECT_TIMEOUT) LLM_CONNECT_TIMEOUT=15 ;;
       LLM_BUDGET) LLM_BUDGET=720 ;;
       PROBE_TIMEOUT) PROBE_TIMEOUT=30 ;;
       DIFF_LIMIT) DIFF_LIMIT=61440 ;;
@@ -283,8 +288,13 @@ probe_once() {
       messages: [{role: "system", content: $sys}, {role: "user", content: $diff}]} + $extra' \
     > /tmp/probe-body.json 2>/dev/null || return 2
   : > /tmp/probe-out.txt
+  # 连接阶段单独约束：探测本身只有 30s，若上游连不上，10s 内就该判死，
+  # 不让它把整个探测超时耗在 TCP 握手上
+  local ctmo=10
+  [ "$tmo" -lt "$ctmo" ] && ctmo=$tmo
   code=$(curl -sS -N -o /tmp/probe-out.txt -w "%{http_code}" \
     --max-time "$tmo" \
+    --connect-timeout "$ctmo" \
     -X POST "${AI_BASE_URL%/}/chat/completions" \
     -H "Authorization: Bearer $AI_API_KEY" \
     -H "Content-Type: application/json" \
@@ -330,6 +340,12 @@ PROBE
           fi
           echo "探测：$local_cand 仍有思维链（${PROBE_REASON_LEN} 字节），换下一个"
         else
+          if [ "${PROBE_CODE:-}" = "429" ]; then
+            # 限流已触发：继续换开关只会把仅剩的配额烧光，正式请求必然 429。
+            # 2026-10-24 实测：网关限流窗口很紧，探测 6 次后正式请求 100% 429。
+            echo "探测：$local_cand 触发限流（HTTP 429），停止探测，把配额留给正式请求"
+            break
+          fi
           echo "探测：$local_cand 未被接受（HTTP ${PROBE_CODE:-未知}），换下一个"
         fi
         local_i=$((local_i + 1))
@@ -423,10 +439,15 @@ while :; do
   fi
   CUR_TIMEOUT=$LLM_TIMEOUT
   [ "$LEFT" -lt "$CUR_TIMEOUT" ] && CUR_TIMEOUT=$LEFT
+  # 连接阶段上限取 min(LLM_CONNECT_TIMEOUT, CUR_TIMEOUT)：CUR_TIMEOUT 可能已被
+  # 剩余预算压得很小，connect-timeout 不应反过来超过总超时
+  CT=$LLM_CONNECT_TIMEOUT
+  [ "$CUR_TIMEOUT" -lt "$CT" ] && CT=$CUR_TIMEOUT
   : > /tmp/review-stream.txt
   START=$SECONDS
   HTTP_CODE=$(curl -sS -N -o /tmp/review-stream.txt -w "%{http_code}" \
     --max-time "$CUR_TIMEOUT" \
+    --connect-timeout "$CT" \
     -X POST "${AI_BASE_URL%/}/chat/completions" \
     -H "Authorization: Bearer $AI_API_KEY" \
     -H "Content-Type: application/json" \
@@ -462,7 +483,8 @@ while :; do
   if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then break; fi
   ATTEMPT=$((ATTEMPT + 1))
   echo "第 $((ATTEMPT - 1)) 次尝试失败（HTTP $HTTP_CODE，${ELAPSED}s），重试中…"
-  sleep 5
+  # 429 用更长的退避：限流窗口通常在秒级以上，实测 sleep 5 后立刻重试仍是 429
+  if [ "$HTTP_CODE" = "429" ]; then sleep 20; else sleep 5; fi
 done
 
 if [ -z "$REVIEW" ]; then

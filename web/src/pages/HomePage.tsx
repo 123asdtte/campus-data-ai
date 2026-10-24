@@ -52,7 +52,7 @@ export default function HomePage() {
             收进一条可追溯的线里。
           </h1>
           <p className="hv-lede">
-            面向学工与教务的本地数据工具：学生信息、学籍异动与导入批次统一入库。每份表格先预览、再校验、后提交，每次写入都留在审计记录里。
+            面向学工与教务的本地数据工具：学生信息与导入批次经网关入库，异动台账另有本地演示数据集（见下方口径说明）。每份表格先预览、再校验、后提交，每次写入都留在审计记录里。
           </p>
           <div className="hv-actions">
             <Link className="hv-link" to="/students">
@@ -60,6 +60,9 @@ export default function HomePage() {
             </Link>
             <Link className="hv-link is-quiet" to="/import">
               导入一份表格 <span>→</span>
+            </Link>
+            <Link className="hv-link is-quiet" to="/workbench">
+              打开数据工作台 <span>→</span>
             </Link>
           </div>
         </div>
@@ -92,6 +95,10 @@ export default function HomePage() {
           <div className="hv-metric-hint">来自导入异常明细</div>
         </div>
       </section>
+      <p className="hv-source">
+        本页数字来自网关库（学生信息与导入批次写入的同一套库）。数据工作台与学籍异动台账读的是
+        <code>demo-api</code> 的本地演示数据集，两套数据彼此独立、条数不一致属预期，不是同步失败。
+      </p>
 
       {error && (
         <div className="hv-error">

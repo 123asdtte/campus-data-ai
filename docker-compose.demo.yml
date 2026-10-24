@@ -1,0 +1,51 @@
+# 本地演示编排：叠加在已运行的主栈（campus-net）之上
+# 启动：docker compose -p campus-demo -f docker-compose.demo.yml up -d --build
+# 停止：docker compose -p campus-demo -f docker-compose.demo.yml down
+# 公网试用时通过环境变量指定绑定地址与端口，例如：
+#   DEMO_BIND=0.0.0.0 DEMO_PORT=8088 docker compose -p campus-demo -f docker-compose.demo.yml up -d
+services:
+  demo-api:
+    build:
+      context: ./demo-api
+    image: campus-demo-api:local-demo
+    container_name: campus-demo-api
+    environment:
+      GATEWAY_BASE: ${GATEWAY_BASE:-http://gateway:9180}
+      MAX_CONCURRENT_REQUESTS: ${DEMO_MAX_CONCURRENT:-32}
+    volumes:
+      # 异动台账写入宿主机，重建容器不丢；删除该目录即重置演示台账
+      - ./demo-api/state:/app/state
+    networks:
+      - campus-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    image: campus-data-web:local-demo
+    build:
+      context: ./web
+      dockerfile: Dockerfile.web
+    container_name: campus-web-demo
+    ports:
+      - "${DEMO_BIND:-127.0.0.1}:${DEMO_PORT:-8083}:80"
+    networks:
+      - campus-net
+    depends_on:
+      demo-api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # 复用主栈已创建的网络与网关别名，不重复定义
+  campus-net:
+    external: true
+    name: campus-net

@@ -649,3 +649,1060 @@
   - 登录 HTTP 200；冒烟（`/gw`）**FAIL=0**（含学生列表与导入）。
 - **回退**：恢复 `mysql-connector-j` 依赖、删除两处 exclusion 并重新构建；无数据变更。
 - **授权**：B 类（非生产关键依赖与许可收敛）。
+
+---
+
+## D-021 本地测试入口与数据库隔离加固
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - `import-api/tests` 缺少 `__init__.py`；本机 site-packages 存在同名 `tests` 包，`from tests import auth_helper` 被遮蔽，7 个测试模块 collection error；
+  - `ai-assistant/tests/conftest.py` 默认指向 55435 的 POC 库，而 `test_assistant.py` 会执行 `DELETE FROM ai.students`；本次因口令不匹配未造成删除，但这是可触发的数据完整性风险；
+  - 本地缺少一键隔离库测试入口，测试库 `127.0.0.1:5433/campus_test` 已存在但依赖手工命令。
+- **可选方案**：
+  1. 只把导入改成相对路径——其他测试模块仍可能被同名包遮蔽；
+  2. 显式声明 `import-api/tests` 为包，并新增只接受测试库的一键脚本（采用）；
+  3. 让 AI 测试默认不连接 POC 库，必须显式指定隔离库或确认数据可丢弃（采用）。
+- **决定**：
+  - 新增 `import-api/tests/__init__.py`；
+  - 新增 `scripts/dev/test-import-api.py`：先校验目标库名含 `test`，再初始化/校验 001/003/004/006，跑关闭态全量与安全开启态子集；
+  - AI 测试在未显式设置 `AI_DB_PORT` 且未设置 `AI_TEST_ALLOW_LIVE=1` 时模块级跳过。
+- **影响与兼容性**：不改变运行时代码、接口、数据库或部署；CI 的 `AI_DB_PORT=5432` 与既有 import-api 测试步骤不受影响。
+- **安全风险与权衡**：测试库仍会被 TRUNCATE；通过库名闸门与独立脚本降低误指向主库的风险。AI 测试若确需连接 POC 库，必须显式授权，不能依赖默认值。
+- **涉及文件**：`import-api/tests/__init__.py`、`scripts/dev/test-import-api.py`、`ai-assistant/tests/conftest.py`、`README.md`、`docs/DECISION-LOG.md`。
+- **验证方法（实测）**：
+  - 隔离库权限校验 11 项 PASS；
+  - 关闭态：**195 passed / 102 skipped / 1 xfailed**；
+  - 认证开启态：**120 passed**；
+  - `cd ai-assistant && python -m pytest -q`：默认模块级 skip，未连接 55435，未执行 DELETE；
+  - 未修改主库 `campus` 与 POC 库数据。
+- **回退**：删除新增脚本/包声明与 AI 闸门，恢复原手工命令；无数据变更。
+- **授权**：A/B 类（测试环境自动化与安全默认值）；真实库测试仍需人工授权。
+
+---
+
+## D-022 基础安全响应头与服务器指纹收敛
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 8083 实测响应仅有 `Server: nginx/1.29.8`，缺少 `X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`；
+  - `/healthz` 同时出现 `Content-Type: application/octet-stream` 与 `text/plain`；`/assets/` 同时出现两条 `Cache-Control`。
+- **决定**：
+  - 新增公共安全头片段，HTTP/TLS server 级 include，并在自带 `add_header` 的 `/healthz`、`/assets/` 内重复 include；
+  - `server_tokens off` 隐藏 Nginx 版本；HSTS 仅加入 TLS 模板；
+  - `/healthz` 改用 `default_type text/plain`；静态资源合并为单条 `Cache-Control: public, max-age=604800, immutable`；
+  - 不启用 CSP，避免阻断 Ant Design 的内联样式；CSP 作为后续独立项评估。
+- **影响与兼容性**：只改 Nginx 响应头，不改应用逻辑、路由、接口或数据；未启用 TLS 的 8083 不发 HSTS。
+- **验证（实测）**：`/login`、`/healthz`、`/assets/index-*.js` 均返回四项安全头；`Server: nginx`；`/healthz` 仅一条 `Content-Type: text/plain`；静态资源仅一条 `Cache-Control`；冒烟脚本通过。
+- **回退**：移除 include 与 `server_tokens` 行并重建 web 镜像；无数据变更。
+- **授权**：A/B 类（非生产配置加固）。
+
+---
+
+## D-023 路由级代码拆分
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 修复前所有业务页静态导入，入口 JS `1,394.92 kB`（gzip `453.23 kB`）；
+  - 登录页首屏因此加载员工工作台、报表、学生列表等全部页面代码。
+- **方案**：
+  1. 只拆 Ant Design vendor——登录仍会加载全部业务代码；
+  2. 业务页使用 `React.lazy` 按路由拆包，登录页保持同步加载（采用）；
+  3. 在 `AppLayout` 的 `Outlet` 外包一层 `Suspense`，页面 chunk 加载时保留侧边栏与页头。
+- **结果**：
+  - 入口 JS 降至 `689.05 kB`（gzip `226.36 kB`），另有 AntD Table `336.77 kB` 与各页面 chunk（2–132 kB），仅访问对应页面时加载；
+  - `xlsx` 仍保持独立按需 chunk；
+  - 登录首屏网络记录只有入口 `index-*.js`，没有 Table、xlsx 或员工页面 chunk。
+- **影响与兼容性**：路由、权限守卫、接口与数据不变；首次进入某个业务页会有短暂加载态，之后由静态缓存命中。
+- **验证（实测）**：管理员登录 → 总览 / 学生信息（21 行）正常；学生登录 → 我的课表正常；无控制台错误；冒烟脚本通过。
+- **回退**：恢复静态 import 并移除 AppLayout 的 Suspense；无数据变更。
+- **授权**：B 类（前端性能与交付质量）。
+
+---
+
+## D-024 演示数据改为服务端按身份返回
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 全量 `web/public/demo/demo-data.json`（约 3.9 MB、5581 名学生）可被任何人匿名 GET；前端仅在浏览器内做角色过滤，拿到文件即可看到全校数据；
+  - `web/public/demo/four-sheet.xlsx` 同样公开可下载，学生/辅导员本不应获得全校四件套。
+- **可选方案**：
+  1. 继续静态文件 + 前端过滤——无法阻止直接下载（否决）；
+  2. 数据文件移出 `public`，改由 Nginx 静态目录托管并加 IP/口令——仍无身份粒度（否决）；
+  3. 新增只读 `demo-api`：数据只存服务端镜像，校验网关 token 后按角色/UID 返回（采用）。
+- **决定**：
+  - 数据迁至 `demo-api/data/`，新增 `demo-api/app.py` 与 `Dockerfile`；
+  - `demo-api` 用 `Authorization: Bearer` 调网关 `/system/user/getInfo` 校验身份：学生仅本人档案、本班课表、本人异动；辅导员仅所带学生/班级/异动；`xgb`/`superadmin` 全校；四件套仅员工角色可下载；
+  - Nginx 增加 `/demo-api/` 代理，旧 `/demo/demo-data.json`、`/demo/four-sheet.xlsx` 显式 404；
+  - 前端改为带 token 请求 `/demo-api/data`，下载按钮改用鉴权 fetch；
+  - 启停脚本增加 `campus-demo-api` 容器并等待健康检查。
+- **实现细节（值得记录）**：
+  - Docker Desktop 会向容器注入 `HTTP_PROXY=http://127.0.0.1:8080`，导致容器内调用 `gateway:9180` 被代理劫持（实测 503）；网关调用使用 `ProxyHandler({})` 强制直连；
+  - 容器名 `campus-demo-api` 与上游名 `demo-api` 不一致，首次出现 Nginx 502；启动脚本增加 `--network-alias demo-api`。
+- **影响与兼容性**：
+  - 演示数据不再能通过 URL 匿名获取；前端页面结构与路由不变；
+  - `demo-api` 为只读服务，不写任何数据；未来改为数据库查询时保持同一响应形状即可；
+  - 这是演示级隔离，不等于生产级行级数据权限。
+- **风险与限制**：
+  - 身份校验依赖网关可用；网关不可用时返回 503，不降级为公开数据；
+  - 数据仍为虚构数据；接入真实学生数据前必须改为数据库查询 + 行级授权 + 审计；
+  - 未做速率限制与响应缓存。
+- **涉及文件**：`demo-api/app.py`、`demo-api/Dockerfile`、`demo-api/data/*`、`web/nginx-common.conf`、`web/nginx.conf`、`web/nginx.tls.conf`、`web/src/demo/useDemoData.ts`、`web/src/demo/download.ts`、`web/src/pages/{Workbench,Reports,Pipeline}Page.tsx`、`web/vite.config.ts`、`scripts/demo/{start-local-demo.ps1,stop-local-demo.ps1,smoke-demo.py,build_demo_dataset.py}`、`docs/LOCAL-DEMO.md`、`web/public/demo/README.md`。
+- **验证（实测）**：
+  - `python scripts/demo/smoke-demo.py` 全部 PASS：学生 1 学生/15 排课、辅导员 270 学生/10 班级、学工处与管理员 5581 学生；四件套学生/辅导员 403、学工处/管理员 200；匿名 `/demo-api/data` 401；旧公开数据入口 404；
+  - 学生、辅导员、管理员页面均正常加载，无控制台错误；
+  - `npm run build` 通过。
+- **回退**：恢复 `public/demo` 静态文件与页面链接，删除 `demo-api` 与 Nginx 代理；无数据变更。
+- **授权**：B 类（演示环境安全加固）；生产数据隔离需人工授权后实施。
+
+---
+
+## D-025 启用内容安全策略（CSP）
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：D-022 因 Ant Design 需要内联样式而暂缓 CSP；复核前端无外部字体、CDN 或第三方脚本（`index.html`、样式文件均无外部 URL），具备启用条件。
+- **决定**：
+  - 在公共安全头片段增加
+    `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`；
+  - 保留 `style-src 'unsafe-inline'` 以兼容 Ant Design 运行时样式，脚本仍只允许同源；
+  - 冒烟脚本新增基础安全头与 CSP 断言。
+- **影响与兼容性**：只改响应头；同源 API、gateway 代理、登录、懒加载页面与本地文件导出均不受影响；未引入 nonce/hash，因此内联脚本仍被禁止。
+- **验证（实测）**：`/login` 返回完整 CSP；学生刷新 `/my-schedule` 正常渲染，无控制台 error/warn；冒烟新增断言通过。
+- **回退**：删除 CSP `add_header` 行并重建 web 镜像；无数据变更。
+- **授权**：B 类（演示环境安全加固）。
+
+---
+
+## D-026 学籍异动改为服务端持久化演示台账
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 学工核心诉求是“把原始 Excel 异动表变成在线统一管理”；
+  - 改造前 `ChangesPage` 的发起、核对只写入 React state，刷新即重置，两个浏览器互不可见，无法支撑演示中的“登记 → 核对 → 复查”。
+- **可选方案**：
+  1. 直接建业务库表——需要正式迁移与授权，超出本轮演示边界（否决）；
+  2. `localStorage`——仍是单浏览器，无法统一管理（否决）；
+  3. 在 `demo-api` 增加受限写接口，JSON 台账落在容器外卷，沿用网关 token 与角色范围（采用）。
+- **决定**：
+  - 新增 `POST /changes`（登记）、`POST /changes/import`（批量导入）与 `POST /changes/check`（平台核对）；
+  - 角色：学生 403；辅导员仅本人所带学生；学工处/管理员可登记任意学生；
+  - 校验：UID 必须存在、异动类型白名单、日期 `YYYY-MM-DD`、原因 1–200 字、去向 ≤200 字、请求体 ≤64KB、单次导入 ≤200 条；
+  - 导入按行校验，非法/越界行返回 `skipped` 原因而不整批失败；保留原异动编号，重复时追加 `-IMPn`；
+  - 台账最多 500 条；写文件使用锁 + 临时文件 + `os.replace` 原子替换；
+  - 记录 `created_by/created_at` 与 `checked{by,at}`；`/data` 合并本地异动并返回 `platform_checked`；
+  - Compose 挂载 `./demo-api/state:/app/state`，重建容器不丢；删除该目录即重置；
+  - 前端新增 `demo/ledger.ts`，写成功后失效数据缓存，其他页面下次进入可看到新台账。
+- **影响与兼容性**：
+  - `demo-api` 从纯只读变为“只读查询 + 受限异动写入”；学生/辅导员的数据范围规则不变；
+  - 真实学籍状态、青果/线下审批均不回写；
+  - 仍是单文件演示存储，不是生产数据库。
+- **风险与限制**：
+  - 无数据库事务、逐条审计表、分页与备份；单进程锁只在单实例内有效；
+  - 需要清理时删除 `demo-api/state/ledger.json`；文件损坏会回退为空台账；
+  - 生产必须改为数据库 + 行级授权 + 审计与迁移。
+- **涉及文件**：`demo-api/app.py`、`demo-api/Dockerfile`、`docker-compose.demo.yml`、`.gitignore`、`web/src/demo/ledger.ts`、`web/src/demo/useDemoData.ts`、`web/src/demo/types.ts`、`web/src/pages/ChangesPage.tsx`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：
+  - API：学生登记/核对 403；辅导员本班登记 201、他班登记 403；学工处登记他班 201；非法类型/日期 400；学生仅见本人异动，辅导员不见他班异动；
+  - UI：辅导员选择本人学生发起休学 → 出现 `YD-LOCAL-*` 与成功提示；刷新后记录仍在；平台核对后状态持久化；
+  - UI 导入：带 BOM 的 CSV 2 条写入、刷新后仍在；非法类型/越界行按行跳过；空导入 400；
+  - API 导入：学生 403；辅导员 200（合法 1 条 + 跳过 3 条）；重复编号生成 `-IMP1`；201 条 413；
+  - `docker compose ... up -d --force-recreate demo-api` 后本地异动与核对状态仍存在；
+  - `npm run build` 通过。
+- **回退**：移除两个 POST 路由与前端 `ledger.ts` 调用，恢复本地 state 逻辑；删除 `demo-api/state`；无业务数据变更。
+- **授权**：B 类（演示环境业务闭环）；生产数据库落库需人工授权后实施。
+
+---
+
+## D-027 关键业务 Playwright 端到端回归
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 已有 HTTP 冒烟与手工浏览器验证，但登录、角色路由、学生范围、异动持久化、CSV 导入、四件套下载没有可重复的浏览器级回归；
+  - 前端缺少 E2E 框架，关键交互只能靠人工点检，改动后容易回归。
+- **可选方案**：
+  1. 继续手工验证——不可重复、无证据（否决）；
+  2. Selenium——需另装驱动，Windows/CI 兼容成本高（否决）；
+  3. Playwright + `@playwright/test`，本机复用 Edge channel，失败保留 trace/screenshot（采用）。
+- **决定**：
+  - 新增 `web/playwright.config.ts` 与 `web/e2e/demo.spec.ts`；
+  - 串行 6 条用例：未登录跳转、学生课表与越权回送、辅导员发起/刷新/核对持久化、CSV 导入持久化、管理员 CSV 导入预检（只校验不提交）、管理员全校数据与四件套下载；
+  - 测试前后删除 `demo-api/state/ledger.json`（仅演示台账），避免测试数据残留；
+  - 默认 `channel: msedge`，CI 可用 `PW_CHANNEL=chromium`（需先安装浏览器）；
+  - `test-results/`、`playwright-report/` 加入忽略。
+- **影响与兼容性**：新增开发依赖 `@playwright/test`；不改运行时代码、接口或数据；测试依赖已启动的 8083 演示栈。
+- **风险与限制**：
+  - 测试会清空演示异动台账，不得指向正式环境；
+  - 尚未接入 CI，也未覆盖移动端；
+  - 依赖系统 Edge 或预装 Chromium。
+- **涉及文件**：`web/playwright.config.ts`、`web/e2e/demo.spec.ts`、`web/package.json`、`web/package-lock.json`、`.gitignore`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`cd web && PW_CHANNEL=msedge npx playwright test` → **6 passed / 17.7s**；导入预检走真实网关/import-api 校验但未提交；测试后 `demo-api/state/ledger.json` 已清理。
+- **回退**：删除 E2E 配置/用例与 devDependency，移除 npm 脚本与忽略项；无业务数据变更。
+- **授权**：B 类（本地测试与交付质量）。
+
+---
+
+## D-029 演示台账文件权限收敛
+
+- **状态**：Verified（本地容器，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：台账首次写入按默认 umask 生成，容器内为 `644`，同容器任何进程均可读取学生异动记录；这些记录虽为虚构数据，但不应默认全局可读。
+- **决定**：`state/` 目录按 `0700` 创建；写临时文件后 `chmod 0600` 再原子替换为 `ledger.json`。
+- **影响与兼容性**：只影响容器内文件权限；Windows 宿主机绑定目录可能不保留 POSIX 权限，演示环境可接受。
+- **验证（实测）**：辅导员登记异动返回 201；`stat` 显示 `600 root /app/state/ledger.json`；冒烟全部 PASS；台账随后重置。
+- **回退**：移除两处 `mode/chmod`；无数据变更。
+- **授权**：B 类（演示环境安全加固）。
+
+---
+
+## D-030 登录态失效统一处理
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：网关对失效 token 返回 HTTP 200 + `{"code":401}`，`demo-api` 对失效 token 返回 HTTP 401。原实现只在 `fetchSession` 中把失败展示为普通错误，token 仍留在 localStorage；`RequireLogin` 只判断 token 是否存在，失效 token 仍能进入业务页，页面表现为数据加载失败而非重新登录。
+- **可选方案**：
+  1. 每个页面自行处理 401——重复且容易漏；
+  2. 统一在 API 层广播失效事件，由会话层清空并回登录页（采用）；
+  3. 依赖服务端 302——会破坏 SPA 和 JSON 接口语义，未采用。
+- **决定**：
+  - `auth.ts` 新增 `SessionExpiredError`、`notifySessionExpired(failedToken?)`、`SESSION_EXPIRED_EVENT` 和一次性提示标记；
+  - `fetchSession`（HTTP 401 或 `code:401`）、`useDemoData`（HTTP 401）、异动写接口（HTTP 401）、所有网关业务请求（HTTP 401 或 `code:401`）、带鉴权下载（HTTP 401）统一触发失效通知；
+  - `SessionProvider` 监听事件，清空 session、清除数据缓存，并让受保护路由回到 `/login`；
+  - 登录页读取一次性提示，展示“登录状态已失效，请重新登录”；
+  - 通知携带失败请求的 token，与当前 token 不一致时忽略，避免旧请求误清新登录会话；
+  - 移除登录错误外层容器的重复 `role="alert"`，只保留 AntD Alert 的语义。
+- **影响与兼容性**：仅影响前端登录态处理；正常登录、角色路由、数据缓存和台账写入路径不变。失效时页面会整体回到登录页，未保存的前端表单内容会丢失（演示环境可接受）。
+- **涉及文件**：`web/src/api/auth.ts`、`web/src/session/SessionContext.tsx`、`web/src/demo/useDemoData.ts`、`web/src/demo/ledger.ts`、`web/src/pages/LoginPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`npm run build` 通过；Playwright **9 passed / 28.9s**——刷新页面加载失效 token、业务请求（学生列表刷新）遇到 401 两条路径均跳转 `/login`、显示失效提示、token 已清空；另含管理员九页控制台/横向溢出检查。
+- **回退**：还原上述文件；无数据与接口变更。
+- **授权**：B 类（本地演示前端健壮性）。
+
+---
+
+## D-031 入口 HTML 缓存策略
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：`/assets/*` 已按哈希长期缓存，但 `/` 与 SPA 回退返回的 `index.html` 没有显式缓存策略；若浏览器启发式缓存旧 HTML，升级后会请求新镜像中已不存在的旧哈希资源。
+- **可选方案**：为 index.html 加 `no-store`（每次全新加载，放弃校验缓存）、`no-cache`（每次回源校验，采用）、保持现状。
+- **决定**：`location /` 返回 `Cache-Control: no-cache`，并重新引入安全头（location 内 `add_header` 会覆盖 server 级）；`/assets/*` 保持 `max-age=604800, immutable`。
+- **影响与兼容性**：只增加一次 304/200 校验，不影响静态资源长缓存和业务接口。
+- **涉及文件**：`web/nginx-common.conf`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`/` 与 `/students` 返回 `Cache-Control: no-cache` 且安全头仍在；当前入口 JS 返回 `max-age=604800, immutable`；Playwright **7 passed / 20.1s**。
+- **回退**：移除 `location /` 内的缓存与安全头指令；无数据变更。
+- **授权**：B 类（本地演示可部署性）。
+
+---
+
+## D-032 demo-api 慢连接与线程回收
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：`ThreadingHTTPServer` 默认每个连接一个非 daemon 线程且无 socket 超时。公网试用时，慢速或半开连接可长期占用线程，并发积累会导致服务不可用，容器停止也可能被挂起连接拖住。
+- **决定**：`Handler.timeout = 10` 限制单连接读写等待；`Server` 继承 `ThreadingHTTPServer` 并设置 `daemon_threads = True`。
+- **影响与兼容性**：正常请求体小于 64KB、响应在秒级完成，不受影响；代理层读超时为 20s，仍大于服务端 10s。
+- **涉及文件**：`demo-api/app.py`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：容器内发送不完整请求行后保持连接，服务端在 `10.0s` 返回 EOF；重建后 healthz 正常，冒烟全部 PASS。
+- **回退**：删除 `timeout` 与 `Server` 子类；无数据变更。
+- **授权**：B 类（公网试用稳定性加固）。
+
+---
+
+## D-028 启用 Nginx 文本压缩
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - `nginx.conf` / `nginx.tls.conf` 未配置 `gzip`；实测入口 JS `689,089 B` 无 `Content-Encoding`；
+  - 员工数据接口 `/demo-api/data` 实测 `3,074,533 B`，未压缩传输，首屏和页面切换成本高。
+- **可选方案**：
+  1. 构建时预压缩 + `gzip_static`——需改构建产物与镜像，收益接近但链路更长（暂缓）；
+  2. Brotli——标准镜像不含模块，需换镜像（暂缓）；
+  3. 直接启用 Nginx gzip（采用）。
+- **决定**：
+  - HTTP/TLS 两个 server 均启用 `gzip on`、`gzip_comp_level 5`、`gzip_min_length 1024`、`gzip_vary on`、`gzip_proxied any`；
+  - 类型：`text/plain text/css application/json application/javascript application/xml image/svg+xml`；
+  - 冒烟新增入口脚本与员工数据的 `Content-Encoding: gzip` 断言。
+- **影响与兼容性**：只改响应传输；浏览器自动解压；E2E 下载、API JSON、登录均不受影响；`Vary: Accept-Encoding` 正确返回。
+- **风险与限制**：压缩增加少量 CPU；未压缩已压缩媒体；BREACH 风险不适用（token 在请求头，不在响应体）。
+- **涉及文件**：`web/nginx.conf`、`web/nginx.tls.conf`、`scripts/demo/smoke-demo.py`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：
+  - 入口 JS `689,089 → 227,056 B`；
+  - 员工 `/demo-api/data` `3,074,533 → 170,250 B`，`Content-Encoding: gzip`、`Vary: Accept-Encoding`；
+  - 冒烟全部 PASS（含新增压缩断言）；Playwright **5 passed / 15.8s**。
+- **回退**：删除两个 server 的 gzip 指令并重建 web 镜像；无数据变更。
+- **授权**：B 类（本地性能与交付质量）。
+
+---
+
+## D-033 demo-api 并发请求上限
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：`ThreadingHTTPServer` 每个请求一个线程，网关校验最长 5 秒；公网试用时并发请求可无限累积线程，慢连接超时只能限制单个连接寿命，不能限制总量。
+- **决定**：
+  - 默认最多 32 个并发请求（`MAX_CONCURRENT_REQUESTS` / Compose `DEMO_MAX_CONCURRENT`），槽满立即返回 503；
+  - 503 前先读取请求头，避免 Windows 上未读数据触发 RST 导致客户端收不到响应；
+  - 线程结束时释放槽，异常启动线程也释放。
+- **影响与兼容性**：演示的正常并发远低于 32；导出、导入、登录路径不变。超出上限的请求得到明确 503，而不是无限等待。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docker-compose.demo.yml`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：单元测试 **19 passed**，连续 10 次全部通过；单槽场景第二个请求返回 503，释放后恢复 200；重建容器后冒烟 PASS、Playwright **9 passed / 27.6s**。
+- **回退**：删除并发槽逻辑与 Compose 环境变量；无数据变更。
+- **授权**：B 类（公网试用稳定性加固）。
+
+---
+
+## D-034 演示台账备份与恢复
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：此前只有 `reset-ledger.ps1`，无法在演示前保存已整理的台账，也无法在误删后恢复；生产数据库备份属于 C 类未授权事项。
+- **决定**：
+  - `backup-ledger.ps1`：默认写入 `demo-api/state/backups/ledger-时间戳.json`，复制后校验 JSON 及 `changes/checked` 字段，失败则删除不完整副本；
+  - `restore-ledger.ps1`：校验来源、数组类型与 500 条上限；恢复前自动备份当前台账；运行中的 demo-api 短暂停止，替换后启动并等待 healthy；
+  - 脚本保持 ASCII 输出，读取 JSON 使用 `-Encoding UTF8`，兼容 Windows PowerShell 5.1。
+- **影响与兼容性**：只影响演示 JSON 台账；恢复期间 demo-api 短暂不可用，Web 与主栈不受影响；不触碰正式数据库。
+- **涉及文件**：`scripts/demo/backup-ledger.ps1`、`scripts/demo/restore-ledger.ps1`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：创建 `YD-LOCAL-*` → 备份 → 重置（本地记录 `[]`）→ 恢复（记录回归）→ demo-api healthy；演练数据与备份文件随后清理。
+- **回退**：删除两个脚本与文档条目；无数据变更。
+- **授权**：B 类（演示环境可运维性）。
+
+---
+
+## D-035 网关与演示 API 按 IP 限流
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：演示 API 可被脚本高频拉取全校数据，登录接口也可能被洪水请求；demo-api 的并发上限只能保护单个进程，不能阻止无意义的重复请求。
+- **决定**：
+  - 在 `nginx.conf` 的 http 上下文定义 `api_req`（20r/s）与 `api_conn`（40）区域，只作用于 `/gw/` 与 `/demo-api/`，静态资源不限；
+  - `burst=60 nodelay`，超限返回 429；
+  - TLS 模板复用同一区域，只补充 429 状态。
+- **影响与兼容性**：单用户正常页面与 E2E 不受影响；同一 NAT 下多人共享 IP 时，20r/s 仍高于演示负载；正式上线需按真实并发与网关容量重新评估。
+- **涉及文件**：`web/nginx.conf`、`web/nginx.tls.conf`、`web/nginx-common.conf`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：`nginx -T` 确认区域与 location 指令生效；200 个并发匿名请求得到 62 个 401（放行）与 138 个 429；8 秒后单请求恢复；Playwright **9 passed / 28.1s**；冒烟全部 PASS。
+- **回退**：移除两个 zone 定义与 location 内 `limit_req/limit_conn`；无数据变更。
+- **授权**：B 类（公网试用入口防护）。
+
+---
+
+## D-036 筛选控件可访问名称
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：自动化巡检发现工作台、报表、异动、辅导员台、学生信息、AI 问数、导入页共 23 个搜索框/下拉/开关/数字输入/学生提问框缺少可访问名称，仅依赖 placeholder 或相邻文本；屏幕阅读器与语音输入难以定位。
+- **决定**：为应用自有控件补充 `aria-label`（搜索学生、学院、学籍状态、班级、学生类型、异动类型、正式审批状态、显示停用记录、输入问题、批次号等）；不改 Ant Design 内部控件。
+- **影响与兼容性**：仅增加无障碍属性，不改变视觉或交互；E2E 按 role + name 定位，同时验证标签存在。
+- **涉及文件**：`web/src/pages/{Students,Workbench,Reports,Changes,Counselor,Assistant,Import,StudentSchedule}Page.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：登录页与 9 个管理员页均有 1 个 h1/main；23 个控件按 role+name 各命中 1 次；`npm run build` 通过；Playwright **10 passed / 38.1s**。
+- **回退**：移除新增 `aria-label`；无数据变更。
+- **授权**：B 类（本地演示可访问性）。
+
+---
+
+## D-037 本地演示一键校验
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：README 与 LOCAL-DEMO 分别列出 healthz、冒烟、单测、E2E 命令，交付/演示前需要人工逐条执行，容易漏跑或看错退出码。
+- **决定**：新增 `scripts/demo/verify-local-demo.ps1`，按顺序检查 healthz、只读冒烟、25 项 demo-api 测试、10 条 Playwright E2E；任一步失败即非零退出；支持 `-SkipE2E`。
+- **影响与兼容性**：不启动/重建容器，不修改数据；要求演示栈已启动。E2E 仍会在前后清空演示台账。
+- **涉及文件**：`scripts/demo/verify-local-demo.ps1`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：脚本完整运行，healthz 200、冒烟 PASS、25 项单测 OK、E2E **10 passed / 35.9s**，最终输出 `All local demo checks passed.`。
+- **回退**：删除脚本与文档命令；无数据变更。
+- **授权**：B 类（工程自动化）。
+
+---
+
+## D-038 登录失败提示按网关真实文案匹配
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：网关实际返回 `Sorry, your account: {0} does not exist`、`User does not exist/Password error`、`Sorry, your account: {0} has been disabled...`、`Password input error {0} times, account locked for {1} minutes`；原翻译只匹配 `user does not exist`，账号不存在时会把英文原文直接展示给用户，锁定提示也会丢失锁定分钟数。
+- **决定**：按网关 `messages_en_US.properties` 的真实文案逐类匹配，分别提示账号不存在、账号或密码不正确、账号停用、连续输错次数、锁定分钟数；锁定匹配放在普通次数匹配之前。
+- **影响与兼容性**：只影响错误提示文案，不改变登录与锁定逻辑；不新增账号枚举入口。
+- **涉及文件**：`web/src/api/auth.ts`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：不存在账号 `__e2e_missing__` 登录停留在 `/login` 并显示“账号不存在”；学生课表“明天/本周”问答断言通过；Playwright **11 passed / 40.3s**。
+- **回退**：还原 `translateLoginError`；无数据变更。
+- **授权**：B 类（本地演示用户体验）。
+
+---
+
+## D-039 已登录用户访问登录页回角色首页
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：已登录用户直接访问 `/login` 时仍看到登录表单；此时会话已存在，重复登录会造成角色首页跳转分支与登录页并存，也容易让演示人员误以为需要再次登录。
+- **决定**：登录页监听会话；一旦 `SessionContext` 拿到有效 session，就按角色替换跳转到 `/my-schedule`、`/counselor`、`/workbench` 或 `/`。会话失效/退出时 session 为空，不触发。
+- **影响与兼容性**：只影响已登录访问登录页的场景；切换账号仍需先退出登录。未登录、登录失败和失效提示路径不变。
+- **涉及文件**：`web/src/pages/LoginPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：管理员登录后访问 `/login` 被替换跳转 `/`；Playwright **13 passed / 43.9s**。
+- **回退**：移除登录页的 session 监听 effect；无数据变更。
+- **授权**：B 类（本地演示导航体验）。
+
+---
+
+## D-040 演示 API 单元测试纳入 CI
+
+- **状态**：Implemented / CI verified（2026-10-24；PR #58 实跑通过）
+- **Decision owner**：AI
+- **问题与证据**：现有 `.github/workflows/ci.yml` 覆盖前端构建、导入后端、网关、数据库测试与 Compose 校验，但新增的 `demo-api/tests`（25 项身份范围、校验、台账、并发、数据一致性）只在本地执行，PR 无法自动防回归。
+- **决定**：在 `ci.yml` 新增 `demo-tests` job：Python 3.12、`compileall demo-api/app.py demo-api/tests`、`python -m unittest discover -s demo-api/tests -p 'test_*.py' -v`；不启动容器、不依赖数据库。
+- **影响与兼容性**：只增加 CI job；不改变演示服务。工作流 YAML 已用 PyYAML 解析通过。
+- **涉及文件**：`.github/workflows/ci.yml`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：本地执行相同 compileall 与 unittest：25 passed；YAML 解析通过，jobs 列表包含 `demo-tests`。分支已推送并创建 [PR #58](https://github.com/123asdtte/campus-data-ai/pull/58)，GitHub Actions 实跑 `本地演示 API 测试` = success（run 40069223609）；同次 CI 的前端构建、网关构建、后端接口测试、Compose 校验等 9 项检查全部 success。
+- **回退**：删除 `demo-tests` job；无运行时变更。
+- **授权**：B 类（工程自动化）；推送/开 PR 仍需用户确认。
+
+## D-041 E2E 补齐学工处角色与越权边界
+
+- **状态**：Implemented（2026-10-24 本地实测）
+- **Decision owner**：AI
+- **问题与证据**：E2E 13 条只覆盖学生、辅导员、管理员。学工处在冒烟中只验证“能登录/身份正确”，但“可见全校数据、无管理员专属页面、直访受限路由被送回”没有回归保护；而 `App.tsx` 中 `students`/`import`/`assistant`/`portal` 均为 `superadmin` 专属。
+- **决定**：新增两条 E2E：① `xgb01` 登录后落到 `/workbench`、看到 5,581 全校学生；导航不含“AI 问数/学生信息/数据导入”；直访 `/assistant`、`/students` 均被送回 `/workbench`；仍可进入“学籍异动”。② `counselor01` 直接请求 `/demo-api/four-sheet`（带本人 token）返回 403，验证服务端角色校验而非仅前端隐藏按钮。
+- **备选方案**：仅在 demo-api 单测中断言角色范围（已存在）——但无法证明前端路由拦截和菜单过滤生效，故补浏览器级用例。
+- **影响与兼容性**：只新增测试，不改业务代码；串行模式下位于辅导员用例之后、管理员用例之前，不影响台账清理逻辑。
+- **涉及文件**：`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：学工处用例单跑 5.7s 通过；辅导员 403 用例通过；全量 **15 passed / 49.7s**（2026-10-24）。
+- **回退**：删除该用例。
+- **授权**：B 类（测试补齐）；无需人工授权。
+
+## D-042 全局悬浮 AI 助手与服务端课表问答
+
+- **状态**：Implemented（2026-10-24 本地实测）
+- **Decision owner**：AI
+- **问题与证据**：① 课表问答与学生课表页绑定，管理员问数在独立 `/assistant`，师生必须离开当前业务页；② 两套问答都是浏览器内规则，前端掌握全部判断；③ 源数据 119 条排课 `weekday` 为 1–7 数字，前端按中文星期过滤导致这些课在课表中消失；④ 390px 下固定 232px 侧栏导致整页横向溢出（实测 523px）。
+- **决定**：
+  1. demo-api 新增 `POST /assistant/query`：从 Bearer token 调网关解析身份，学生经 `scoped_payload` 只取本人班级课表；教职工按角色返回本班/全校聚合；不接收前端 UID/角色；问题限 1–200 字；成绩、他人、联系方式等问题直接拒答。
+  2. 服务端解析今天/明天/后天/本周/下周/星期几/上午下午晚上/第 N 节/剩余课程，返回结构化 `courses`、`scope`、`action` 和来源说明；不调用外部模型。
+  3. 前端新增 `FloatingAssistant`（挂在 `AppLayout`，全角色、跨路由保留会话）；学生课程卡可点击，通过事件或路由 state 定位并高亮课表单元格；移除课表页内嵌聊天面板，统一入口。
+  4. 星期在 demo-api 加载、前端 `demo/schedule.ts`、数据生成器三处归一化；数字星期不再漏课。
+  5. `<=900px` 侧栏改为顶部横向导航，内容/悬浮面板不再横向溢出（同尺寸的“内容列塌陷”缺陷由 D-045 修复）。
+- **备选方案**：只把独立 AI 页塞进弹窗——无法获得页面上下文和课表定位；只在前端做问答——无法满足服务端独立授权的安全要求，均不采用。
+- **影响与兼容性**：`/assistant` 页面保留给管理员；新增接口受 nginx 限流与网关鉴权保护；响应不含身份证/电话/原始学号；课表数据经 `/demo-api/data` 时星期已归一化，页面统计口径不变。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/api/assistant.ts`、`web/src/components/FloatingAssistant.tsx`、`web/src/components/AppLayout.tsx`、`web/src/demo/schedule.ts`、`web/src/pages/StudentSchedulePage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`scripts/demo/build_demo_dataset.py`。
+- **验证（实测）**：demo-api **32 passed**；E2E **16 passed / 1.1m**；接口实测“这周五第一节在哪”返回 1 门课与教室，“下周”14 门，“成绩”拒答；390×844 下 `scrollWidth=390`，面板宽 370.2、左右各约 10px。
+- **未验证**：未接 Dify/LLM；教职工问答仍是受控规则；服务端审计目前只写 stderr，正式版需落库；真实课表接口尚未接入。
+- **回退**：删除 `/assistant/query` 与 `FloatingAssistant`，恢复课表页内嵌问答；无数据库变更。
+- **授权**：B 类（演示环境功能与测试）；不涉及正式数据或外部服务。
+
+## D-043 演示栈 E2E 接入 CI：补齐导入链路并隔离台账
+
+- **状态**：Verified in CI（2026-10-24，PR #58 run 40077110109 / commit 8d9d525，含「演示栈 E2E」在内 8 个 job 全部 success）
+- **Decision owner**：AI
+- **问题与证据**：PR #58 首次实跑 `demo-e2e`（commit 5af7220）为 10 passed / 1 failed / 5 did not run。① `管理员导入预检` 停在“识别结果”之前：job 只启动了 `gateway-db gateway-redis gateway`，`campus-db` 与 `import-api` 未启动，网关 `/internal/proxy/imports/*` 无下游；② `afterAll` 抛 `EACCES: permission denied, unlink demo-api/state/ledger.json`：容器以 root 写入宿主机绑定目录，runner 用户无权删除。
+- **决定**：
+  1. job 先启动 `campus-db gateway-db gateway-redis`，等健康后用 `psql -v app_password/ro_password` 依次执行 `003_roles.sql`、`004_internal_auth.sql`、`006_import_scope.sql`，再启动 `import-api gateway` 并按容器健康状态等待。
+  2. CI 环境变量开启 `INTERNAL_AUTH_ENABLED=true`，让 E2E 走网关签名→导入服务验签的真实链路，而不是绕开内部认证的宽松模式。
+  3. 新增 `docker-compose.demo.e2e.yml`，把 `demo-api` 的 `/app/state` 换成命名卷，`down -v` 即回收；本地开发继续用绑定目录，重建容器不丢台账。
+  4. E2E 的台账清理改为 best-effort（失败仅告警），不再把“宿主机文件属主”当成功能失败；断言与用例数不变。
+- **备选方案**：`sudo rm -f` 宿主机台账（把权限问题写进测试，且本地 Linux 仍会复现）；给 demo-api 加非 root 用户（绑定目录属主仍需约定，收益不匹配风险）；跳过导入用例（等于删测试，不采用）。
+- **影响与兼容性**：只改 CI 编排与测试清理，业务代码路径不变；`compose-config` job 增加 `demo.e2e.yml` 组合校验，避免覆盖文件语法回归。
+- **涉及文件**：`.github/workflows/ci.yml`、`docker-compose.demo.e2e.yml`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：一次性空库按 CI 顺序执行 `001→002→003→004→006` 全部 OK，`campus.students` 200 行；`docker compose -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml config` 渲染出命名卷；demo-api 33 passed；`npx tsc --noEmit` 通过。远端 `demo-e2e` 结果：待本次运行确认，未确认前不记为通过。
+- **远端证据**：run 40077110109（headSha 8d9d525）演示栈 E2E success，16 条用例在 Chromium + 全栈（网关签名→导入服务验签）下通过；同次 本地演示 API 测试、后端接口与校验测试、AI 助手原型测试、前端类型检查与构建、网关构建、Compose 组合校验、后端语法与导入检查均为 success。
+- **回退**：删除 `docker-compose.demo.e2e.yml` 并还原 `ci.yml` 的 `demo-e2e` job。
+- **授权**：B 类（CI 与演示环境，隔离且可回收）。
+
+## D-044 独立 AI 问数页改用服务端问答，去除重复的浏览器规则引擎
+
+- **状态**：Verified in CI（本地 34 单测 / 17 E2E；远端 run 40078483720、commit 784396a 下 8 个 job 全部 success，含「演示栈 E2E」）
+- **Decision owner**：AI
+- **问题与证据**：D-042 已把课表问答搬到服务端，但 `/assistant` 仍保留自己的一套浏览器规则引擎（`COLLEGE_ALIASES` / `findCollege` / `findStatuses` / `buildAnswer` 共 140 行），为了算几个数字把整份 `/demo-api/data` 全量拉到前端；同一入口在同一路由上还叠了悬浮助手，出现两个 AI 面板、两套口径。
+- **决定**：
+  1. `AssistantPage` 改为调用 `POST /demo-api/assistant/query`（`askAssistant`），身份、权限与数据范围全部由服务端判定，页面不再下载全量演示数据、不再自行统计。
+  2. 补齐服务端 `quality` 口径（新增“转专业已批但花名册未更新”“同名同姓仅作提示”），保证迁移后不丢旧文案信息，并用单测锁定六个质量指标都出现在回答里。
+  3. `/assistant` 路由不再渲染悬浮助手入口，避免两个 AI 面板同时出现；其余业务页仍使用悬浮入口。
+  4. 页面补上加载、失败与重试态（失败明确说明“服务端没有返回结果，本回答不含推测数据”），建议问题改为跟随服务端返回的 `suggestions`，问数记录继续留本机。
+- **备选方案**：删掉独立问数页只留悬浮面板——会丢掉边界说明与问数记录侧栏，管理员也需要可展开的对话区；保留前端引擎只做“影子调用”——等于继续维护两套口径，均不采用。
+- **影响与兼容性**：问答口径以服务端为准，前后端不再分叉；管理员问数页少一次约 3 MB 的全量数据请求；`/assistant` 的输入框可访问名保持“输入问题”，既有可访问性用例不受影响。
+- **涉及文件**：`web/src/pages/AssistantPage.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/src/styles.css`、`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/e2e/demo.spec.ts`。
+- **验证（实测）**：demo-api **34 passed**；`npx tsc --noEmit` 通过；Playwright E2E **17 passed / 1.0m**（新增用例断言 `/assistant` 无悬浮入口、点击建议问题命中 `/demo-api/assistant/query` 且返回 200、气泡含“人工智能学院 / 人数统计 / 全校范围演示数据”）。
+- **未验证**：Dify/LLM 接入；真实课表与真实业务库。
+- **回退**：恢复 `AssistantPage` 的本地 `buildAnswer` 与 `useDemoData`，并把悬浮入口在 `/assistant` 重新渲染即可；无数据结构变更。
+- **授权**：B 类（演示环境功能与测试），不涉及正式数据或外部服务。
+
+## D-045 移动端内容列塌陷修复 + 并发用例去时序化
+
+- **状态**：Verified in CI（远端 run 40078483720、commit 784396a：8 个 job 全部 success，含「网关构建」与「演示栈 E2E」；本地 34 单测 / 17 E2E）
+- **Decision owner**：AI
+- **问题与证据**：
+  1. D-042 的移动端外壳只改了 `flex-direction`。真机尺寸实测（390×844）：`.ant-layout` 宽 0、`.app-content` 宽 28、`.wb` 宽 0，即所有业务页在手机上被压成一列 0 宽内容（课表/AI 问数都读不到字）。原因是 AntD 给 `has-sider` 的子 Layout 固定 `flex-basis: auto`，纵向排列后不再撑满交叉轴。之前的 E2E 只断言 `scrollWidth <= 390`，塌陷时 `scrollWidth` 恰好也是 390，所以“绿色”掩盖了缺陷。
+  2. CI run 40077675452 的 `本地演示 API 测试` 失败：`并发槽满时应返回 503` 实得 200。旧用例靠“半截请求占住槽 + 轮询信号量”判断占用，槽位是否在断言前被释放取决于线程时序。
+- **决定**：
+  1. `<=900px` 显式给内容列 `width: 100%; min-width: 0; flex: 1 1 auto !important`，让内容列在纵向外壳里真的占满宽度。
+  2. E2E 移动端用例除了 `scrollWidth`，增加内容列宽 `>=360`、页面容器宽 `>=340` 两条断言，把“塌陷也算不溢出”的盲区堵住。
+  3. 并发用例改为测试线程直接占用信号量制造饱和，再用原始 socket 读满整个 503 响应（含中文提示体），随后释放并断言恢复 200 —— 覆盖同一段网关代码，但不依赖任何线程时序。
+- **备选方案**：给测试加 `try/finally` 重试或删除并发用例（都是在掩盖时序问题，不采用）；移动端改用 AntD 断点组件重排（改动面远大于一条宽度规则，不采用）。
+- **影响与兼容性**：仅 `<=900px` 生效，桌面端布局不变；`demo-api` 运行时行为未改，只改测试写法。
+- **涉及文件**：`web/src/styles.css`、`web/e2e/demo.spec.ts`、`demo-api/tests/test_app.py`。
+- **验证（实测）**：demo-api **34 passed**；`npx tsc --noEmit` 通过；Playwright E2E **17 passed / 1.2m**（含新增宽度断言）；390×844 下重新测量内容列与页面容器均已撑满，桌面 1366 无回归。
+- **未验证**：iOS Safari/安卓实机（仅 Chromium 引擎测量）。
+- **回退**：删除该宽度规则与两条断言即回到 D-042 的状态（同时会重新暴露塌陷缺陷）。
+- **授权**：B 类（演示环境与测试），无正式环境影响。
+
+## D-046 移动端表格「能滚」从人工测量升级为回归保护
+
+- **状态**：Verified in CI（远端 run 40080010707、commit fd28e9d：8 个 job 全部 success，演示栈 E2E 含本用例）
+- **Decision owner**：AI
+- **问题与证据**：D-045 修好内容列塌陷后，390×844 逐路由实测内容列均为 390、无页面级横向溢出，但管理端表格仍比可视区宽：`/workbench` 溢出 777px、`/pipeline` 577、`/reports` 797、`/changes` 837、`/students` 819。复查确认这些表格都落在 `.ant-table-content`（`overflow-x: auto`，如 workbench clientW 323 / scrollW 1100，可滚动）——即列没被吃掉，只是此前没有任何自动化断言守住这一点；若哪天样式或列宽改动把容器改成 `hidden`，列会被静默裁切而 E2E 依旧全绿。
+- **决定**：
+  1. 新增 E2E 用例，对 `/workbench`、`/students`、`/changes` 三条路由断言：溢出时滚动容器 `overflow-x` 必须是 `auto|scroll`，且设置 `scrollLeft` 后真的产生偏移。
+  2. 用例末尾断言“至少一条路由确实溢出并可滚”，避免三条都不溢出时保护退化成空断言。
+  3. 不加纯 CSS 右缘渐隐提示：伪元素无法感知滚动位置，滚到末列仍显示“还有内容”属误导；JS 监听滚动成本大于当前收益（见下）。
+- **备选方案**：CSS 渐隐/滚动条常显（静态提示会在滚到底后继续误导）；把表格改成移动端卡片式重排（改动面覆盖六个业务页，收益不及先把回归网补上）。
+- **影响与兼容性**：只新增测试，不改运行时样式与业务代码；桌面端与既有 17 条用例行为不变。
+- **涉及文件**：`web/e2e/demo.spec.ts`、`.github/workflows/ci.yml`（job 名计数）、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：`npx tsc --noEmit` 通过；Playwright E2E **18 passed / 1.2m**（Chromium/Edge 通道，DEMO_BASE_URL 指向本地演示栈 8083）。负向对照（临时 spec，跑完即删）：对 `/workbench` 注入 `overflow-x: hidden` 后实测 `canScroll=true`、`overflowX="hidden"`、`scrollLeft` 仍可被程序化设为 119.69——说明只有 `overflow-x` 判定能识别裁切，用例保留该断言是必要的，保护不是空转。
+- **未验证**：本次改动的远端 CI 结果（尚未推送运行）；iOS Safari / 安卓实机触摸滑动；`.ant-table-body`（固定表头场景）未单独覆盖，当前演示表格均走 `.ant-table-content`。
+- **回退**：删除该用例与 ci.yml 的计数文案即可，无代码影响。
+- **授权**：B 类（演示环境与测试），不涉及正式数据、迁移或外部服务。
+## D-047 辅导员问全院人数时不再把「带班人数」冒充「学院人数」
+
+- **状态**：Verified in CI（远端 run 40080010707、commit fd28e9d：8 个 job 全部 success，含「演示栈 E2E」）
+- **Decision owner**：AI
+- **问题与证据**：`scoped_payload` 给辅导员用 `scope_metrics` 生成指标，其中 `college_counts` 是按**本人所带学生**聚合的。但 `staff_answer` 的学院分支对所有员工角色共用同一段代码：先按 `college_counts` 命中学院名，再用命中的学院过滤本人学生。实测（戴雅琴，人工智能学院）：本人载荷 `college_counts=[{人工智能学院:270}]`，问“人工智能学院有多少学生？”回答“人工智能学院共有 270 名学生，其中在籍 265 人”；而管理员载荷同一问题的真实全院口径是 **1218 人**。也就是说 AI 用班级数据播报了一个学院级结论，误差 948 人，而且话术上完全看不出口径被缩窄了。这属于“回答看起来合理但数据不真”，正是权限口径必须服务端判定要避免的。
+- **决定**：
+  1. 在学院名命中之后、进入统计之前加角色分支：辅导员命中学院时不再计算，返回新意图 `out_of_scope`，明确“{学院}的全院人数不在你的数据范围内：你可见的是所带班级共 N 人”，并给出“向学工处/管理员查询”的去向。
+  2. 前端 `INTENT_LABELS` 增加 `out_of_scope: 超出数据范围`，与敏感字段拒答 `refused` 区分开，避免把范围问题标成“超敏感拒答”。
+  3. 顺带删除 `change_target = "/changes" if is_counselor else "/changes"` 这个两侧同值的死三元。
+  4. 补 3 条单测（辅导员越界口径改为说明范围、辅导员按状态统计仍可用、管理员仍拿到真实学院总数）+ 1 条浏览器用例断言悬浮面板出现“不在你的数据范围”且不再出现“人工智能学院共有”。
+- **备选方案**：给辅导员载荷塞入真实全院 `college_counts`（等于扩大数据范围，违反既有最小权限设计，不采用）；仅在答案尾部加“本班口径”免责声明（数字仍被冠以学院名，读者照样误读，不采用）。
+- **影响与兼容性**：管理员/学工处全院口径完全不变；辅导员失去“看似学院实为班级”的数字，换成为范围说明与升级路径。`out_of_scope` 是新增意图值，前端未识别时回落到原样显示 intent，不会崩。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/pages/AssistantPage.tsx`、`web/e2e/demo.spec.ts`、`.github/workflows/ci.yml`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`python -m unittest discover -s tests` **37 passed**；`npx tsc --noEmit` 通过；重建 `campus-demo-api` 后 `healthz` 返回 ok，Playwright E2E **19 passed / 1.1m**（新增辅导员范围用例通过，原有课表/台账/导入/权限用例无回归）。
+- **未验证**：本次改动的远端 CI；真实业务库中的学院/班级层级口径（演示数据为虚构）；学工处 `xgb` 角色是否需要同样的学院越界保护（当前 xgb 走全校载荷，全院口径对其是合法范围）。
+- **回退**：删除学院分支的 `is_counselor` early-return 与对应测试即可恢复旧行为（同时重新引入错误口径）。
+- **授权**：B 类（演示环境业务逻辑与测试），不涉及正式数据、迁移或外部服务。
+## D-048 AI 问数审计落到服务端文件，问题原文不进日志
+
+- **状态**：Verified in CI（远端 run 40080509062、commit 1e6f686：8 个 job 全部 success）
+- **Decision owner**：AI
+- **问题与证据**：D-044 之后问数全部由服务端回答，但服务端只在 stderr 打一行 `assistant <intent> by <user>`，可回溯性取决于容器日志留存；`AssistantPage` 里那份“问数记录”是 `localStorage` 的最近 8 条，清缓存即消失，管理员也无法证明“谁在什么时候问过什么口径”。文档里一直写着“正式版写服务端审计”，即当前并没有服务端审计。
+- **决定**：
+  1. `_assistant_query` 在返回答案与返回 403（身份没有可用数据范围）两处调用 `record_assistant_audit`，追加写入 `STATE_DIR/assistant-audit.jsonl`，字段固定为 `time / actor / roles / intent / scope / page / question_chars`。
+  2. **不记录问题原文**：问数里可能带姓名、班级等个人信息，日志文件不该成为第二份学生数据副本；只记字符数用于判断是否有人在试探超长输入。
+  3. 写入用现有 `STATE_LOCK` 串行化，超上限后只保留最近 `ASSISTANT_LOG_KEEP=500` 行；写失败（只读卷等）退化为 stderr 告警，不影响回答。
+  4. 审计目录沿用 `STATE_DIR`：本地是 `demo-api/state/` 绑定目录（已在 `.gitignore`），CI 用命名卷（D-043），因此不需要新的卷或挂载改动。
+- **备选方案**：把问题原文也记下来（等于把可能含 PII 的文本落到第二个存储，且演示阶段并不需要全文检索，不采用）；先做 DB 版审计表（属于生产化待授权项，且当前台账本身还是文件存储，先把“有没有审计”这件事补上更有价值）。
+- **影响与兼容性**：多一个状态文件，不改任何接口契约与响应结构；`demo-api/state/` 已被忽略，不会误提交审计。审计目前是文件且仅保留 500 行，正式环境仍需按审批换成服务端持久化审计（DB）并加留存策略。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`、`docs/DECISION-LOG.md`。
+- **验证（实测）**：`python -m unittest discover -s tests` **39 passed**（新增“身份入库但不含问题原文”“审计行数受上限约束”两条）；重建 `campus-demo-api` 后跑辅导员越界口径 E2E 用例（1 passed），宿主 `demo-api/state/assistant-audit.jsonl` 实测得到 `{"time":"2026-10-24T08:58:49+00:00","actor":"counselor01","roles":["counselor"],"intent":"out_of_scope","scope":"本班范围","page":"/counselor","question_chars":12}`，问题原文确实未落盘。
+- **未验证**：远端 CI；审计日志的读取/导出界面（目前需进容器或读绑定目录）；并发写大量问数下的 500 行截断性能（仅单线程语义正确性验证）；正式环境留存与合规策略。
+- **回退**：删除 `record_assistant_audit` 及两处调用即恢复旧行为；已生成的 jsonl 可手工删除。
+- **授权**：B 类（演示环境可观测性与测试），只写本机演示状态目录，未向任何外部服务发送数据。
+## D-049 并发用例仍有残留时序耦合：一键校验从仓库根目录跑必现失败
+
+- **状态**：Verified in CI（远端 run 40080509062、commit 1e6f686：`本地演示 API 测试` success，42 项单测全绿）
+- **Decision owner**：AI
+- **问题与证据**：D-045 自认为去掉了时序依赖，但 `verify-local-demo.ps1` 的完整门禁一跑就暴露：`python -m unittest discover -s demo-api/tests`（仓库根目录）稳定失败于 `assertTrue(server._slots.acquire(blocking=False))` → `AssertionError: False is not true`；把同样的命令放进 `demo-api/` 里跑又稳定通过。原因是用例在占用槽位之前先发了一次 `/healthz` 预热请求，而 `MAX_CONCURRENT_REQUESTS` 已被改成 1——那个请求的 serve 线程还没走到 `self._slots.release()`，测试线程就来抢同一个槽，抢不到就判定失败。工作目录只改变了加载耗时与线程调度，所以表现为“换个目录就换个结果”，本质仍是竞态。这也说明只用手跑一条命令不足以证明测试稳定，CI 通过也不能反证本地门禁没有这类问题。
+- **决定**：删掉预热请求，改为 `server._slots.acquire(timeout=3)` 直接占用必然空闲的首个槽位；“服务确实能正常回答 200”由释放槽之后的恢复断言覆盖（那段本来就在），覆盖范围不减。
+- **备选方案**：给预热请求后加 `sleep`（把竞态换成猜测的等待时间，不采用）；把 `MAX_CONCURRENT_REQUESTS` 设成 2 再占两个槽（引入第二个隐含约定，且仍要等预热线程释放，不采用）；把用例改成 mock 掉 serve 线程（就不再覆盖真实的网关限流代码路径，不采用）。
+- **影响与兼容性**：只改测试写法，`demo-api` 运行时行为不变；`verify-local-demo.ps1` 不再依赖运行目录。
+- **涉及文件**：`demo-api/tests/test_app.py`、`docs/DECISION-LOG.md`。
+- **验证（实测）**：修复后从仓库根目录与 `demo-api/` 目录各连跑 3 次，共 6 次全部 `OK`（39 tests）；`scripts/demo/verify-local-demo.ps1` 完整 4 步全绿——healthz、只读冒烟、`Ran 39 tests OK`、`19 passed (1.0m)`，输出 `All local demo checks passed.`。
+- **未验证**：本次改动的远端 CI；极端慢机器上 `timeout=3` 是否仍然充裕（当前证据是同机 6 连跑）。
+- **回退**：恢复预热请求与 `acquire(blocking=False)` 即回到旧写法（会重新引入目录相关的失败）。
+- **授权**：B 类（测试），无运行时行为与环境影响。
+## D-050 悬浮助手可直接回答“哪些异动还没核对”，口径由服务端单点定义
+
+- **状态**：Verified in CI（远端 run 40080979059、commit 2d44a68：8 个 job 全部 success，含演示栈 E2E 20 条）
+- **Decision owner**：AI
+- **问题与证据**：台账页把“已批但平台未核对”当作核心待办（`pending` 计数与“待核对”列都靠它），但问数只能回答异动总量与类型分布：辅导员/学工处在台账页问“还有哪些异动没核对”只会命中泛化异动回答，拿不到待办清单，只能回表格自己翻。同时“已批/未核对”的判定此前只写在 `ChangesPage` 里（`status.includes('已批')` 再并入 `platform_checked`），服务端没有同一口径可复用。
+- **决定**：
+  1. 服务端新增 `pending_check_rows(changes, checked)`，把“已批且不在 `platform_checked`”这条衔接口径收敛成单一定义，并用于新的 `pending` 意图。
+  2. `staff_answer` 在异动统计之前插入待办分支：“待核对/没核对/未核对/待处理/审批中”命中时返回条数 + 最多 5 个异动编号（含类型与日期）+ 下一步提示，并带 `action` 跳到 `/changes`；“审批中”单独给在审条数。
+  3. 提示语按台账真实能力措辞：台账没有“待核对”筛选项，但关键字检索覆盖 `change_no`，所以引导“按异动编号搜索后点核对”，不写 UI 里不存在的操作。
+  4. 清单只列异动编号/类型/日期，不列姓名——台账表格里能看到脱敏姓名，但问数回答不必再复制一份。
+- **备选方案**：把待办做成结构化卡片（`AssistantReply.courses` 是课表专用结构，复用会把契约写歪；新起一套卡片结构本轮不做，先用编号 + 跳转满足“定位”诉求）；在前端再算一遍待办口径（等于把同一条业务规则复制成两份，正是 D-044 要消除的问题，不采用）。
+- **影响与兼容性**：新增意图值 `pending`，独立问数页加了“异动待办”标签；悬浮面板不显示意图标签（它没有 `INTENT_LABELS`），只影响说明文案位置，已在“未验证”里记为一致性差异。管理员/学工处原有异动回答不变。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/pages/AssistantPage.tsx`、`web/e2e/demo.spec.ts`、`.github/workflows/ci.yml`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`python -m unittest discover -s tests` **42 passed**（含“待办判定与台账规则一致”“辅导员只在本人范围拿到编号清单”“管理员审批中条数正确”三条）；重建 `campus-demo-api` 后浏览器实测：新用例首跑失败暴露两处真实差异——悬浮面板的类名是 `fa-message/fa-action/fa-note` 而非独立页的 `ai-*`，且 `.fa-action` 实际文本是“打开学籍异动 →”（带箭头）；按真实 DOM 修正后 `npx tsc --noEmit` 通过、Playwright E2E **20 passed / 1.1m**。
+- **未验证**：本次改动的远端 CI；悬浮面板缺少意图标签是否与独立页统一（记为待评估的一致性差异）；把待办做成结构化卡片的必要性。
+- **回退**：删除 `pending` 分支与 `pending_check_rows` 调用即回到只有聚合异动的回答；无数据与接口变更。
+- **授权**：B 类（演示环境业务能力与测试），不读写正式数据、不外发。
+
+## D-051 “休学有多少人”被答成异动条数：人数口径与台账口径必须分家
+
+- **状态**：Verified in CI（远端 run 40081624186、commit `d0d9e88`：8 个 job 全部 success，含演示栈 E2E）
+- **Decision owner**：AI
+- **问题与证据**：悬浮助手与 AI 问数页的推荐问题“全校休学和退学各有多少人？”拿到的回答是 `intent=change_count`、“学籍异动记录共 96 条；退学 7 条，休学 9 条”，而演示数据里休学 **8 人**、退学 **6 人**（`metrics.status_counts`），台账里休学 **11 条**、退学 **7 条**（`metrics.change_type_counts`）。根因是 `staff_answer` 的异动分支用 `("异动","休学","退学","转专业","变化")` 做触发词，状态词与异动词混在同一组，抢在人数分支之前；“有哪些学生退学了”同样被吞成异动汇总。旧单测 `test_change_type_counts` 直接断言这条推荐问题返回 `change_count`，把错误口径固化成了绿色结果。
+- **决定**：
+  1. 异动分支只在问题真的指向台账时触发：新增 `wants_change_rows`（异动/台账/审批/核对/变化/记录/条），把裸状态词从触发列表里删掉；状态人数分支上移到异动分支之前，命中状态词且不含台账信号时按 `base_students` 的当前学籍状态计数（保留学院筛选，学院+状态仍按学院口径）。
+  2. 回答文案显式标注口径：“按学生当前学籍状态统计（演示数据），不是异动条数”，避免管理员把两个数当成同一件事；去掉与学院筛选冲突的“全校范围”括注。
+  3. 异动汇总补一句 `orphan_changes`（演示数据 2 条学号未匹配），解释 AI 说的 96 条与工作台 KPI 98 条之间的差额，与 `/changes` 页面已有的提示保持同一口径。
+  4. 改掉那条固化错误的断言，而不是绕过它：新用例从 `metrics.status_counts` 与台账行数分别取真值，先断言两个口径的数值确实不同（否则断言没保护任何东西），再断言回答给出的是人数、不含台账条数；另补“学院+状态仍按学院筛选”“异动条数仍走 change_count”“异动汇总披露未匹配条数”三条。
+- **备选方案**：把推荐问题改成“休学和退学各有多少条异动”以迁就现有分支（改文案掩盖口径缺陷，且真实用户照样会问“多少人”，不采用）；同时返回人数和条数两段（一句话塞两个数，管理员反而要自己判断哪个是答案，收益不如显式标注口径，暂不采用）。
+- **影响与兼容性**：只改服务端规则问答的分支判定与文案，接口契约、意图枚举、前端代码路径都不变；`/assistant` 与悬浮面板同时受益。副作用面：`哪些` 进入计数触发词，之前落到 `unknown` 的“有哪些学生休学了”现在给人数的同时保留报表引导（`名单/报表/导出` 仍在更早的 report 分支）。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/e2e/demo.spec.ts`、`.github/workflows/ci.yml`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`python -m unittest discover -s tests` **45 passed**；重建 `campus-demo-api` 后 `npx tsc --noEmit` 通过、Playwright E2E **21 passed / 1.1m**（新用例点推荐问题，断言气泡含“休学 N 人/退学 N 人/不是异动条数”，且不含“学籍异动记录”）；服务端直调核对六个问法的意图：人数、学院+状态、条数、异动汇总、待办、审批中都落在正确分支。
+- **未验证**：本次改动的远端 CI；`跟读/预科/保留学籍` 等其余状态词的同义问法（只验证了休学、退学）；LLM/Dify 接入后同类口径是否仍由服务端兜底。
+- **回退**：把状态人数分支移回 `count_words` 之后、恢复异动分支的裸状态词触发即可回到旧行为；无数据结构与接口变更。
+- **授权**：B 类（演示环境业务口径与测试），不读写正式数据、不外发。
+
+## D-052 学生问“我学籍状态/班级/辅导员”被课表分支吞掉：补本人档案问答意图
+
+- **状态**：Verified in CI（远端 run 40082094591、commit `b22e655`：8 个 job 全部 success，含演示栈 E2E）
+- **Decision owner**：AI
+- **问题与证据**：`schedule_answer` 只有课表分支。用有排课的学生（SK-2026-000002，信息安全技术应用2601班）直调服务端：
+  - “我的学籍状态是什么？”“我是哪个班的？”“我的辅导员是谁？”“我什么时候入学？”“我的专业是什么？” → 全部落到课表分支，回答 `schedule_day`“今天没有课。”；
+  - 演示账号 SK-2026-000001（信息安全2601，排课数据为空）问同样问题时 → `no_data`“当前演示课表里没有你的排课数据”。也就是说学生侧任何非课表问题都会得到一句与问题无关的课表答复。
+  - 这些字段其实都在服务端已按 UID 收敛的本人载荷里（`scoped_payload` 的 `students[0]`），且 `/portal` 页面已经把它们展示给学生本人（UID、学院、专业、学籍状态、班级、辅导员）。
+- **决定**：
+  1. 在 `schedule_answer` 的敏感词判定之后、空课表判定之前插入 `profile` 意图：命中 学籍状态/班级/专业/学院/年级/入学/辅导员 时按本人档案回答，`scope.label` 用“仅本人档案”，并带 `action` 跳 `/portal`。放在空课表判定之前，保证排课缺失时档案问题照样能答。
+  2. 课表优先：问题里出现 有课/上课/教室/节/星期/周/几点/今天/明天/下午 等信号时不走 `profile`，“我们班明天有课吗”仍按课表回答。
+  3. 不扩权：回答只取 /portal 已展示的字段，不返回学号、证件号、联系方式；把 `学号` 加入 `SENSITIVE_PATTERN`，拒答文案改得与现有能力一致（“只回答你自己的课表和本人学籍信息”）。
+  4. 前端同步：悬浮面板学生欢迎语与推荐问题加“我的学籍状态是什么？”（第 5 个胶囊，`.fa-suggestions` 本来就是 `flex-wrap`）；独立问数页 `INTENT_LABELS` 加 `profile: '本人学籍信息'`。
+- **备选方案**：让 LLM/Dify 兜这类问题（当前仍是本地规则模式，接入后口径更不可控，不采用）；只在空课表时才回档案（同一问题在有/无排课时答案不同，仍然是“看数据形状猜意图”，不采用）；把 `/portal` 整页搬进悬浮面板（用户已经在这个页面，重复建设，不采用）。
+- **影响与兼容性**：新增意图值 `profile`；学生拒答文案变化，E2E 与单测的对应断言按新文案收紧（不是放宽：仍断言 `intent=refused`、`courses` 为空、且回答里不出现该生 UID）。管理员/学工处/辅导员回答路径不变。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/components/FloatingAssistant.tsx`、`web/src/pages/AssistantPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`.github/workflows/ci.yml`。
+- **验证（实测）**：`python -m unittest discover -s tests` **48 passed**（新增：四个档案问法在“有排课/无排课”两种载荷下都返回 `profile` 且值与本人记录一致；学号/身份证/他人电话被拒答且不回显 UID；“我们班明天有课吗”仍走课表）；重建 `campus-demo-api` 后 `npx tsc --noEmit` 通过、Playwright E2E **22 passed / 1.2m**（新用例用无排课账号 SK-2026-000001 问“我的学籍状态是什么？”，断言气泡含“学籍状态：”且不含“没有课”，再问“我的学号是多少？”断言拒答文案）。
+- **未验证**：本次改动的远端 CI；学生问“我什么时候开学/这学期几周”这类跨课表+周次的混合问法；`跟读/预科` 等状态在学生侧的表述。
+- **回退**：删除 `profile` 分支并把 `SENSITIVE_PATTERN` 的 `学号` 与拒答文案还原即可；无数据与接口变更。
+- **授权**：B 类（演示环境业务能力与测试），只读虚构演示数据，不外发。
+
+## D-053 悬浮面板看不出“答的是哪个范围”，限流失败只剩 HTTP 码
+
+- **状态**：Verified in CI（远端 run 40083854961、commit `efcd61b`：8 个 job 全部 success，含「本地演示 API 测试」与「演示栈 E2E」）
+- **Decision owner**：AI
+- **问题与证据**：
+  1. 服务端每条回答都带 `scope.label`（全校范围/本班范围/仅本人档案），独立问数页把它渲染成“数据范围”标签，悬浮面板只渲染正文、课程卡片、跳转和提示，把范围丢掉了。D-051/D-052 之后，AI 的可信度恰恰取决于“这个数字是按谁的范围算的”，两个入口同一份数据却给出两种信息量。
+  2. `web/src/api/assistant.ts` 对非 2xx 一律回 `查询失败（HTTP ${status}）`。网关按来源 IP `20r/s` 限流，超限返回的 429 响应体是 nginx 的 HTML、不是本服务的 JSON，用户连续点推荐问题就会看到“查询失败（HTTP 429）”，既不知道是限流也不知道该等多久；503（演示服务并发满）和 403（范围被拒）同样只给状态码。
+- **决定**：
+  1. 悬浮气泡内补 `.fa-scope` 胶囊（`数据范围 · {scope.label}`），沿用面板已有的 mono 小字号体系，与 `.fa-note` 同一层级但用边框胶囊区分“口径”与“提醒”；面板底部本来就有“服务端按登录身份校验数据范围”的固定说明，胶囊说的是**这一条回答**的范围，两者不重复。
+  2. `askAssistant` 按状态码给可行动文案：429 → “问数请求过于频繁，请稍候十几秒再问一次。”；503 → “演示服务并发已满，请稍后重试。”；403 优先用服务端 JSON 的 `error`，否则回落到“当前账号没有使用该问数范围的权限。”；其余仍带状态码，便于排查。失败气泡自带“重试”按钮，文案与重试动作配套。
+- **备选方案**：把范围并进正文（正文已有“全校范围：”前缀，但 `out_of_scope`、`pending` 等意图没有，逐条补文案会漏，不如统一渲染）；在前端按角色猜范围（等于把服务端权限口径复制一份到浏览器，正是 D 系列一直在消除的重复实现，不采用）；限流改由前端节流（治不了 503 和其他客户端，也不如把真实原因说清楚，不采用）。
+- **影响与兼容性**：纯前端渲染与错误文案，接口契约、服务端逻辑、意图枚举不变；没有 `scope.label` 的回答（如 `unknown`）不渲染胶囊，不会出现空标签。旧 E2E 断言不受影响，新增 3 条胶囊断言（辅导员“本班范围”、管理员待办“全校范围”、学生档案“仅本人档案”）。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`web/src/api/assistant.ts`、`web/src/styles.css`、`web/e2e/demo.spec.ts`。
+- **验证（实测）**：`npx tsc --noEmit` 通过；重建 `campus-web-demo` 后 Playwright E2E **22 passed / 1.2m**。真实浏览器（Edge 通道）量测胶囊几何：1440×900 桌面 `114×19px`、气泡右边界 1365 内、面板 392 宽；390×844 移动端 `114×19px`、面板 370 宽、胶囊 left 37 未越界；两种视口 `.fa-messages` 横向溢出均为 0，字号 10px、单行不换行（19px < 2×16.15px 行高）。429/503/403 三条新文案**未做真实限流回放**（需要打满网关速率），只验证了分支代码与既有失败气泡渲染路径。
+- **未验证**：本次改动的远端 CI；429/503 文案的真实触发（未压测复现限流）；iOS Safari / Android 真机下的胶囊换行。
+- **回退**：删除 `.fa-scope` 渲染与样式、把 `askAssistant` 的状态码分支合并回单条 `查询失败（HTTP …）` 即可；无接口与数据变更。
+- **授权**：B 类（演示环境前端体验），不读写正式数据、不外发。
+
+## D-054 悬浮助手不自动滚到最新回答：多轮追问后答案落在可视区外
+
+- **状态**：Verified in CI（远端 run 40083854961、commit `efcd61b`：8 个 job 全部 success，「演示栈 E2E」含本用例）
+- **Decision owner**：AI
+- **问题与证据**：为 D-053 做浏览器量测时发现，管理员在 `/students` 连问两问后，`.fa-scope` 出现在 `top=680`，而消息区可视底边在它之上——即最新回答的尾部（口径胶囊、跳转按钮、提示行）落在折叠线下。查 `FloatingAssistant.tsx` 全文没有任何 `scroll` 相关代码，`.fa-panel` 是 `max-height: min(620px, 100vh-120px)`、`.fa-messages` 是 `overflow-y: auto`，也就是说面板一旦长满就只靠用户自己滚。第 3～5 问量测里最新一条胶囊仍在 `top=615..634` 处不可见，历史胶囊反而留在视野里——正好是反的。独立问数页有滚动逻辑，悬浮面板是后加的，漏了这一步。
+- **决定**：给 `.fa-messages` 挂 ref，在 `messages`/`pending` 变化后把容器滚到底，但只在用户本来就贴着底部时滚（`scrollHeight - scrollTop - clientHeight < 160`）。这样新回答一定可见，而用户往上翻历史记录时不会被强行拽回底部。用即时滚动、不加平滑动画，保持面板动效克制。
+- **备选方案**：给最新消息调用 `scrollIntoView()`（会把整个面板一起滚，且用户在看历史时同样被拽走）；只在回答正文变化时滚、忽略 `pending`（“正在按你的身份查询…”这条气泡本身就会被挡住）；把面板改成不定高自动撑开（小屏会顶掉整页业务内容，D-035 之后面板尺寸是有意约束的）。
+- **影响与兼容性**：只影响悬浮面板滚动行为，接口与数据结构不变；单轮问答、课表卡片、跳转按钮的既有用例全部保持通过。移动端 390px 下面板 370×476，同样受益。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`.github/workflows/ci.yml`。
+- **验证（实测）**：`npx tsc --noEmit` 通过；重建容器后浏览器量测 5 轮问答，最新胶囊每轮都在可视区内（`top=615..634`、`visible=true`），1440×900 与 390×844 均无横向溢出，判定 `NO-LAYOUT-PROBLEMS`；Playwright E2E **23 passed / 1.2m**，新增用例在 1280×560 视口连问两问，先断言消息区确实溢出（`scrollHeight - clientHeight > 40`）再断言最新胶囊未越折叠线、容器贴底（`gapToBottom ≤ 1`）。**负向验证**：把滚动阈值临时改成永不触发后重建，该用例失败（`1 failed`），恢复阈值后重建又通过（`1 passed`），说明断言真的在保护这个行为，不是空过。
+- **未验证**：键盘 Tab 焦点落在历史消息上时是否会被滚动打断（未做键盘遍历）；iOS Safari / Android 真机惯性滚动下的表现。
+- **回退**：删掉 ref 与该 `useEffect` 即回到旧行为；无接口与数据变更。
+- **授权**：B 类（演示环境前端体验与测试），不读写正式数据、不外发。
+
+## D-055 悬浮助手不管在哪个页面都问同一批问题；两条问法被服务端答成人数
+
+- **状态**：Verified in CI（远端 run 40085524218 / 40085524186 / 40085524175，commit `a6596c7`：CI、运维脚本、AI 评审三条工作流全部 completed success）；本地实测 50 单测 / 24 E2E / tsc 通过
+- **Decision owner**：AI
+- **问题与证据**：悬浮面板的推荐问题对所有员工角色写死同一组 4 条（`STAFF_SUGGESTIONS`），在 `/changes`、`/reports`、`/import` 上看到的是同一串与本页无关的提问，AI 与业务页面仍是“两张皮”。为了确定哪些问法真的能答，用一次性脚本把 19 条候选问法分别喂给辅导员与管理员两种身份的 `staff_answer`（不落库、不起服务、跑完即删），实测结果里两条是错的：`收件箱里有哪些资料？` 因为命中触发词“哪些”而返回 `intent=count`，回答“全校共有 5581 名学生”——问的是资料库收件箱，答的是学籍人数；`留级和复学各多少人？` 同样落到 `count`，把两类只存在于异动台账的记录答成全全校人数。同时 `PAGE_LABELS`（悬浮面板）与 `AppLayout` 的 `TITLE`（页头）是两份各自维护的路由→名称映射，同一页面在两侧叫法不一致（`/` 一处“角色首页”一处“总览”，`/counselor` 一处“辅导员台”一处“辅导员工作台”）。
+- **决定**：服务端两处口径收敛——人数分支加 `about_students` 前置条件，只有问法真的指向学生（学生/人数/学籍/在读/全校/学院/班/名）才回 `count`，否则宁落回 `unknown` 的引导；台账专有类型（留级/复学/转专业等）在问“多少人”但没有学籍状态可对应时改走 `change_count`，并在回答里明说“这两类不是当前学籍状态，只能按异动台账条数回答”。前端把推荐问题按路由分成 `PAGE_SUGGESTIONS`（异动/报表/流水线/导入/学生信息各一组），且只保留单测里已锁定意图的问法；页面名称统一成单一来源 `web/src/pageTitles.ts`，侧边栏页头与悬浮面板共用。
+- **备选方案**：把 `page` 传给服务端让它按页面改写答案——否掉，服务端答案口径必须只由身份、数据范围和问法决定，页面只进审计，否则同一问题在不同页面给出不同数字会更难核对；为凑齐每页三条而写“导入批次怎么提交？”这类服务端答不了的问法——否掉，实测这类问法落 `unknown`，展示出来等于承诺一个不存在的业务；在前端复制一份意图判断只为挑推荐问题——否掉，前后端重复实现同一业务逻辑是既有决策要避免的。
+- **影响与兼容性**：`count` 与 `change_count` 的适用问法范围收窄，其余意图与接口契约不变；`/demo-api/assistant/query` 请求体不变（`page` 仍只写审计与 `context`）。悬浮面板多出的“当前页面 · X”文案与侧边栏页头用词一致，不再有第二套叫法。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/pageTitles.ts`、`web/src/components/AppLayout.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`.github/workflows/ci.yml`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests` → **50 passed**（新增两条：`test_question_about_other_objects_is_not_answered_with_headcount`、`test_ledger_only_types_answered_as_rows_not_headcount`）；`npx tsc --noEmit` 通过；重建 `demo-api` 与 `web` 镜像后 Playwright E2E **24 passed / 1.3m**，新增用例断言 `/changes` 面板头显示“当前页面 · 学籍异动”且三条推荐分别是待核对/异动汇总/台账条数，经侧边栏链接跳到 `/reports` 后面板不关闭、上下文变为“当前页面 · 报表中心”、推荐首条变为“有哪些报表可以下载？”，点该推荐能拿到真实回答（含口径胶囊与跳转按钮）且上一轮对话未被清空。该用例首轮实跑就失败过（`waiting for getByRole('button', { name: '打开 AI 助手' })` 超时），据此纠正为“SPA 内跳转保持面板开启与历史”的真实行为，不是先写死再迁就实现。
+- **未验证**：本次改动的远端 CI；其余角色（学工处）在各页面的推荐问法是否同样贴身（只在管理员下实测）；学生身份的推荐问题仍是课表一组，未按 `/portal` 单独拆分。
+- **回退**：删去 `about_students` 前置条件与 `change_count` 分支的 `not statuses` 条件、恢复 `PAGE_LABELS`/`TITLE` 两份映射即回到旧行为；无接口与数据变更。
+- **授权**：B 类（演示环境业务能力与测试），不读写正式数据、不外发。
+
+## D-056 “今天数据有什么问题？”落回兜底回答：意图触发不能只认字面词
+
+- **状态**：Verified in CI（远端 run 40085524218 / 40085524186 / 40085524175，commit `a6596c7`：CI、运维脚本、AI 评审三条工作流全部 completed success）；本地实测 51 单测 / 25 E2E，重建 demo-api 前后各跑一遍做负向验证
+- **Decision owner**：AI
+- **问题与证据**：D-055 的问法探针里，`今天数据有什么问题？` 在辅导员与管理员两种身份下都返回 `intent=unknown`，回答是“我暂时只理解人数统计、学籍状态……”。原因不是没有这个能力，而是 `staff_answer` 的质量分支只认 `数据质量/缺失/异常/同名/数据标记` 五个字面词，用户最自然的“数据 + 问题”说法一条都不沾。同一能力的推荐问题（`数据质量怎么样？`）能答，说明差距完全在触发词，而不是数据或权限。
+- **决定**：质量分支补一条组合触发：问法同时含“数据”与“问题”即按 `quality` 回答。仍然只有辅导员等无全校质量统计的身份会拿到“当前角色没有全校数据质量统计范围”的说明，不编数字。
+- **备选方案**：把 `问题`、`今天` 单独加进词表——否掉，`问题` 单字会抢掉“异动核对有什么问题”这类台账问法；给推荐问题固定成能被识别的几条、由 UI 引导用户不要自由输入——否掉，等于把规则匹配的字面依赖暴露成用户约束；先上 LLM 意图分类——否掉，本阶段演示助手刻意保持无模型的确定性回答，口径要可复现。
+- **影响与兼容性**：只扩大 `quality` 的命中范围，其余分支顺序与既有问法不变（“全校学生总数是多少？”“异动台账里休学和退学各有多少条？”“人工智能学院有多少学生？”仍分别落 `count`/`change_count`/`count`，`/students` 页推荐口径不变）；不返回身份证、电话或原始学号。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`.github/workflows/ci.yml`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests` → **51 passed**，新增 `test_natural_phrasing_of_quality_question_still_answers_quality` 覆盖三种问法 × 管理员（含重复学号明细）与辅导员（只给范围说明）两种身份；`docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api` 后 Playwright E2E **25 passed / 1.4m**，新增用例在 `/pipeline` 直接输入自由文本“今天数据有什么问题？”，断言气泡含“重复学号”、口径胶囊为“全校范围”、跳转按钮为“查看数据工作台”。**负向验证**：该用例在重建容器前先跑过一次，结果 `1 failed`（仍是 `unknown` 兜底回答），重建后 `25 passed`——证明它测的是服务端真实行为，不是空断言。
+- **未验证**：本次改动的远端 CI；`quality` 命中范围扩大后，是否在真实用户语料里抢掉别的意图（当前只按 19 条候选问法与既有用例回归，无更大规模真实提问日志）；含“数据”“问题”但语义无关的长句（如“异动数据有哪些问题”）按质量口径回答是否算合理解读。
+- **回退**：删掉组合触发条件即回到旧字面词表；无接口、权限与数据变更。
+- **授权**：B 类（演示环境业务能力与测试），不读写正式数据、不外发。
+
+## D-057 台账被写坏后会被当成空表覆盖：已有异动记录会静默丢失
+
+- **状态**：Verified in CI（远端 run 40087236504（CI）/ 40087236590（运维脚本）/ 40087236534（AI 评审），commit `d293953`：三条工作流全部 completed success）；本地实测 56 单测 / 25 E2E / 端到端脚本 8 项断言全过
+- **Decision owner**：AI
+- **问题与证据**：来源是一次只读代码审计（`【示例】代码审查员`）给出的两条高危结论，逐条复核后确认。`load_ledger()`（原 `demo-api/app.py:97-109`）把 `OSError`、`json.JSONDecodeError` 和结构不合法一律吞成 `{"changes": [], "checked": {}}`，也就是**读不出来的台账等于没有台账**；而三条写链路（`_create_change`、`_import_changes`、`_check_change`）都是 `with STATE_LOCK: state = load_ledger()` → 改 → `save_ledger(state)`，于是任何一次登记都会把残缺文件当成空表重写，原有异动记录永久消失且没有任何提示。实测复现路径存在：`scripts/demo/reset-ledger.ps1` 在 `campus-demo-api` 运行中直接 `Remove-Item` 台账（原第 21 行），而 `save_ledger` 用 `os.replace` 落地，删除与写入并发即可能留下半个 JSON；`restore-ledger.ps1:43-46` 反而先停容器，说明这份脚本本身就不一致。第二条独立缺陷：`save_ledger`（原 `app.py:112-117`）没有异常处理，磁盘写失败时 `OSError` 会一路冒到 `ThreadingHTTPServer`，`BaseHTTPRequestHandler` 直接掐断连接，前端只会看到 fetch 失败而不是可理解的错误。**同批审计里另一条“高危”被否掉**：它称容器内 healthcheck 因 Docker Desktop 注入的 `HTTP_PROXY=127.0.0.1:8080` 而失败；本机 `docker inspect` 显示 `campus-demo-api` 与 `campus-web-demo` 均为 `healthy`，且容器环境里同时注入了 `NO_PROXY=localhost,127.0.0.1`，`127.0.0.1:8000/healthz` 根本不走代理，因此未做任何“修复”。
+- **决定**：把“没有台账”和“台账读不出来”分成两种事实。`load_ledger()` 只在 `FileNotFoundError` 时返回空台账；读取失败、非法 JSON、结构不是 `{changes: [], checked: {}}` 三种情况先尽力把原件复制成 `state/ledger.corrupt-<时间戳-微秒>.json`（`0o600`，复制自身失败只记 stderr，不掩盖原错误），再抛 `LedgerUnavailable`。三条写链路统一在 `do_POST` 外层收口：`LedgerUnavailable` → **503** 且错误文案直接给出恢复入口（`scripts/demo/restore-ledger.ps1`），`OSError` → **JSON 500** 并说明本次操作未生效。展示链路（`/data` 与 `/assistant/query` 共用的 `scoped_payload`）改用 `read_ledger_for_display()`，损坏时退回基础演示数据并记一条 stderr，避免一台机器上的坏文件把整站变成 500。`reset-ledger.ps1` 改成与 restore 一致：运行中先停容器、删除前把当前台账备份到 `state/backups/ledger-before-reset-<时间戳>.json`、结束后再启容器。
+- **备选方案**：读侧也一律 503——否掉，演示栈里一个坏台账不该让全部业务页不可用，而且基础数据仍是真数据；`load_ledger` 里顺手“修复”坏文件（补 `checked`、丢掉无法解析的尾部）继续写——否掉，这正是丢数据的成因；把台账换成 SQLite——否掉，超出当前演示阶段，且并发/审计问题应留给正式环境的数据库 API 方案（既有边界已写在 `docs/LOCAL-DEMO.md`）；只在文档里提醒操作者别手删文件——否掉，不可验证的约定防不住真实竞态。
+- **影响与兼容性**：`/changes`、`/changes/import`、`/changes/check` 新增 503/500 两种可预期响应（此前是静默成功或连接被掐断），请求体、成功响应与权限判定不变；台账损坏时 `state/` 目录会多出隔离副本（演示目录，`backup-ledger.ps1` 与 `restore-ledger.ps1` 均不受影响）；前端异动页与悬浮助手会原样显示中文错误文案。写成功路径仍依赖 `os.replace` 的原子性，本次未引入新的一致性假设。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`scripts/demo/reset-ledger.ps1`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests` → **56 passed**，新增 `LedgerIntegrityTest` 5 条（缺文件读成空表、合法台账原样回读、截断文件抛错且**原字节不变**并留下隔离副本、结构不合法不被静默清空、损坏时展示链路退回基础数据）；`docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api` 重建后跑 Playwright E2E **25 passed / 1.3m**，其中辅导员发起/核对/CSV 导入三条覆盖了台账正常写入链路未被这次改动破坏。**真实 HTTP 端到端验证**（一次性脚本走 8083 演示栈，登录后按序断言，跑完清理容器内 `state/`）：健康台账下 `POST /demo-api/changes` 返回 201；随后把 `ledger.json` 写成截断 JSON（内含可识别的 `YD-MARKER-LOSS` 编号）→ 再次创建返回 **503** 且文案含 `restore-ledger`；创建后文件字节与损坏时完全一致、标记仍在（即旧版会丢的那条记录没被覆盖掉），隔离副本 1 份；`GET /demo-api/data` 仍 **200** 并给出 96 条基础异动；`POST /demo-api/assistant/query` 问“全校有多少学生？”仍 200 且答“5581 名学生，其中在籍 5507 人”（与演示数据基线一致）；删掉损坏文件与隔离副本后再创建恢复为 201。8 项断言全部通过并打印 `ALL LEDGER GUARD CHECKS PASSED`。**运维脚本实测**（同样跑真容器，不只看语法）：先 `Parser`/`[scriptblock]::Create` 确认 `reset-ledger.ps1` 可解析，再写入一条含 `YD-BEFORE-RESET` 的台账、执行 `reset-ledger.ps1 -Force`，结果备份落到 `state/backups/ledger-before-reset-*.json`（内容仍是那行记录）、`ledger.json` 已删除、`demo-api` 自动回到 `running healthy`。这一轮实测暴露了脚本自身的两个问题并已修掉：提示串里写了转义的反引号导致打印出字面量 `$safety` 而不是备份路径；重启容器后没有像 `restore-ledger.ps1` 那样等健康检查，调用方可能紧接着访问到 `starting` 状态。测试产生的两个 `YD-BEFORE-RESET*` 备份已删除，`demo-api/state/` 本身在 `.gitignore` 内，不会入库。
+- **未验证**：磁盘真实写满/只读导致的 `OSError → 500` 分支未做实物注入（仅在代码路径上收口，`save_ledger` 仍保留原子写）；（台账降级是否要做用户可见提示这一遗留项已由 D-060 实现并验证）；并发下多个隔离副本同名覆盖（已用微秒时间戳规避，未做高压实测）。
+- **回退**：`load_ledger` 恢复 `except (OSError, json.JSONDecodeError): return 空表`、`scoped_payload` 换回 `load_ledger`、去掉 `do_POST` 的 try/except、`reset-ledger.ps1` 去掉停容器与备份即可回到旧行为；隔离副本是新增文件，删除不影响台账本身。
+- **授权**：B 类（演示环境数据完整性与运维脚本），仅在隔离演示栈内制造与清理虚构台账，不读写正式数据、不外发、不涉密钥。
+
+## D-058 辅导员带生范围跟着可自改的昵称走：改个昵称就能看到别人的学生
+
+- **状态**：Verified in CI（commit `f746ed7`：60 单测通过 + 旧口径越界实测复现 + 重建 `demo-api` 后 Playwright E2E **25 passed / 1.3m**；远端 CI run 40087997164、运维脚本 40087997190、AI 评审 40087997173 均 success）
+- **Decision owner**：AI
+- **问题与证据**：`counselor_keys()` 与 `scoped_payload()` 的辅导员分支都用 `user["nickName"] or user["userName"]` 去匹配学生表里的 `counselor` 字段，而演示数据把带生辅导员写成中文姓名（26 个不同姓名，戴雅琴 270 人、郑丹丹 330 人），也就是说**权限判定实际依赖昵称**。昵称是可以本人自改的：网关 `ruoyi-modules/ruoyi-system/.../SysProfileController.java:61-77` 的 `PUT /system/user/profile` 强制取当前 userId、但照抄提交的 `nickName`（只有 `@Size(max=30)` 约束），且该路径经 `web/nginx-common.conf:19-27` 的 `/gw/` 对浏览器开放。因此 counselor01 把昵称改成“郑丹丹”就能拿到别人的带生范围。用真实数据跑一次性探针复现（不落库、不起服务）：旧口径下 `{"userName": "counselor01", "nickName": "郑丹丹"}` 解析出 **330 人且正好等于郑丹丹的集合，越界 60 人**；新口径解析出 **270 人、与戴雅琴集合完全相等、越界 0 人**。这条结论来自一次只读代码审计（`【示例】代码审查员`），我先用探针确认它不是理论风险才动手。
+- **决定**：带生范围只认不可自改的 `userName`。新增 `COUNSELOR_LABELS = {"counselor01": "戴雅琴"}` 这层服务端映射，由 `counselor_labels(user)` 统一解析，`counselor_keys()` 与 `scoped_payload()` 都改用它（顺带去掉两处各自算一遍昵称的重复实现）；映射里没有的辅导员账号得到**空范围**而不是退回昵称匹配，即默认拒绝。
+- **备选方案**：把演示数据的 `counselor` 字段改成 userName、然后彻底删掉映射——否掉，`demo-api/data/demo-data.json` 是多处共用的基础数据集，改它牵动四件套、报表与别的 Agent 正在进行的工作，超出本次必要范围；在网关侧禁掉本人改昵称——否掉，改认证/权限策略属需授权动作（A 类），我只在记录里说明这是正式环境更彻底的方案；只把这个风险写进文档不改代码——否掉，数据范围隔离是目标里列明的硬要求，且 60 人的越界已被实测复现。
+- **影响与兼容性**：`counselor01` 的可见范围仍是文档承诺的 10 个班 / 270 人，接口与响应结构不变；昵称退回纯显示用途，改昵称不再影响任何权限；演示环境目前只有 `counselor01` 一个辅导员账号，新增辅导员账号必须同时补 `COUNSELOR_LABELS`（漏补的后果是看到空列表，属于安全侧失败）。正式环境必须由数据库里的师生绑定关系决定，这层映射只是演示等价物，已在注释与文档写明。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests` → **60 passed**（较上轮 +4），新增 `CounselorScopeIdentityTest`：改昵称不扩范围、未映射账号既无 uid 也无班级、映射与 `scripts/demo/seed-demo-accounts.sql` 的种子昵称逐条对齐（防漂移）、辅导员 payload 里只出现本人学生与本人班级。**负向证据**：上面那段“旧口径 330 人 / 新口径 270 人”的对照探针就是在改动前后各算一次得到的，说明新测试断言的是真实行为而不是空断言。
+- **未验证**：真实 HTTP 链路上“用 counselor01 令牌 PUT 昵称后再取 `/demo-api/data`”的端到端复现未执行——要做需改动网关库里的演示账号昵称，属共享演示基础设施的写操作，留作可选验证项；除 counselor01 外没有第二个辅导员账号，空范围分支只在单测里成立。
+- **回退**：把 `counselor_labels()` 换回 `nickName or userName` 即恢复旧行为，`COUNSELOR_LABELS` 与新增单测一并删除；不涉及数据、接口或配置变更。
+- **同批审计里被逐条复核后否掉的三条**（记下来免得以后重复排查）：① “chunked POST 会被误报 400 / 线程挂住”——实测无此路径：`_read_json` 拿不到 `Content-Length` 时按 0 处理直接回 400，而 `protocol_version` 是 stdlib 默认 HTTP/1.0，响应后 socket 关闭不会卡；`Content-Length` 大于实发字节时 `timeout = 10` 会触发 `TimeoutError` 并由 stdlib 关掉连接，最坏占用一个槽位 ≤10 秒；且现有前端全部用 `JSON.stringify` 发体、nginx 保持默认请求缓冲，够不着这条路。② “`state["checked"]` 无上限增长”——前提不成立：`_check_change` 对不存在的编号先 404，键只能来自 96 条基础异动与上限 500 的本地台账，重复核对是覆盖写，量级约 ≤596；孤儿键要手改台账才会出现，`merge_ledger` 也已按可见编号过滤，剩下的只是文件体积。③ “问数审计的整文件重写不原子”——确实不原子（追加后读全量再 `write_text`），但该文件只存审计元数据、不含问题原文、服务端也没有读取方，进程恰好被杀最多丢掉部分审计行，不会损坏业务数据；把它当合规证据前再改成 tmp+`os.replace` 即可。
+- **授权**：B 类（演示环境权限判定与测试），不改网关代码、不改认证策略、不读写正式数据；“在网关侧禁止自改昵称”或“改基础数据集把带生字段换成 userName”这两条更彻底的方案属 A 类，需另行批准。
+
+---
+
+## D-059 `.gitignore` 的 `data/` 把入库的演示数据集一起盖掉了
+
+- **状态**：Implemented（2026-10-24 本地实测：62 单测通过 + 负向证据「去掉放行行必然红」）
+- **Decision owner**：AI
+- **问题与证据**：`.gitignore:7` 的 `data/` 本意是挡住可能含个人信息的真实导出，但它匹配任意层级的 `data` 目录，而仓库里唯一真实存在的 `data` 目录恰好是要入库的演示数据集 `demo-api/data/`（`demo-data.json`、`four-sheet.xlsx`）。`git check-ignore --no-index -v` 实测两个已入库文件都命中该规则。已入库文件改内容仍然可见（实测 `git status` 报 ` M demo-api/data/demo-data.json`），所以问题不在日常改动，而在新增：实测在 `demo-api/data/` 放一个新文件，`git status --porcelain` 完全不出现——用脚本重新生成的新学期数据会静默漏提交，本地跑得好、别人 clone 下来或 CI 里才发现缺文件（`test_four_sheet_file_is_present` 只能证明已有文件在，不能证明新文件进来了）。
+- **决定**：保留 `data/` 这张宽网（它对 `data/`、`import-api/data/` 这类真实导出目录仍有价值），只给演示数据集开一条明确的白名单 `!demo-api/data/` + `!demo-api/data/*`，并在 `.gitignore` 里写清为什么要两行（只放行目录不放行内容，git 不会重新进入被排除的目录）。
+- **备选方案**：把 `data/` 收窄成 `/data/` 之类的具体路径——否掉，收窄等于放弃对未来新增真实导出目录的默认保护，方向反了；把演示数据集从 `data/` 改名到 `fixtures/`——否掉，`demo-api/data/` 被 `DATA_PATH`、`FOUR_SHEET_PATH`、Dockerfile 拷贝、多处文档引用，改名是纯 churn 且会碰到别的 Agent 正在改的文件；只在文档里写一句"提交数据集请加 -f"——否掉，把静默失败转嫁成人工记忆，正是本次要消除的东西。
+- **影响与兼容性**：不影响运行时行为与任何接口；`git add` 现在能正常发现 `demo-api/data/` 下的新数据文件；真实导出路径的忽略状态逐项复测未变（`data/real-students.csv`、`import-api/data/real-students.csv`、`demo-api/state/ledger.json` 仍命中忽略）。
+- **涉及文件**：`.gitignore`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。顺带把测试里重复的 `Path(__file__).resolve().parents[2]` 收敛成 `REPO_ROOT`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s demo-api/tests -p 'test_*.py'` → **62 passed**（较上轮 +2），新增 `DatasetTrackingTest`：已入库的 `demo-data.json` 与一个尚未入库的新数据集路径都必须不被忽略；三条真实导出/台账路径必须仍被忽略。**负向证据**：临时删掉两行 `!demo-api/data*` 后重跑，`test_demo_dataset_is_not_hidden_by_the_data_rule` 报 `AssertionError: True is not false`，恢复后 `Ran 2 tests ... OK`，证明断言的是真实 git 行为而非空断言。
+- **未验证**：远端 CI（本条记录时尚未运行）；非 git 工作区（如解压的源码包）下该测试会 `SkipTest`，这种环境里没有忽略规则可校验，属预期跳过而非通过；`.gitignore` 改动对已有 `.git` 之外的工具（如某些打包脚本按 ignore 规则收集文件）的连带影响未逐一排查。
+- **回退**：删除 `.gitignore` 中新增的两行放行与注释，并删除 `DatasetTrackingTest`；`REPO_ROOT` 可保留，不影响行为。
+- **授权**：B 类（仓库配置与测试），不改数据、不改部署、不读写正式环境。
+
+---
+
+## D-060 台账降级不能只在 stderr：缺数必须让用户看见，否则会被当成「没发生异动」
+
+- **状态**：Verified in CI（提交 `0c6eea7`：远端 run 40089262785 的「本地演示 API 测试」「演示栈 E2E」「前端类型检查与构建」等 10 项 check-run 全部 success，AI 评审 40089262784 success；本地 63 单测通过 + 真实 HTTP 链路复现降级警告 + Playwright E2E 26 passed）
+- **Decision owner**：AI
+- **问题与证据**：D-057 把「损坏台账不阻断展示」做成退回基础演示数据，但降级事实只落在 stderr。演示栈的日志不会常驻在用户眼前，于是 `GET /demo-api/data` 与 AI 问数给出的都是「看起来完全正常」的 96 条异动，而台账里新增的记录已经不计入了——这正是目标里点名的失败模式：「不把 AI 返回内容看起来合理等同于数据真实」。D-057 自己也把这条列为留给产品判断的未验证项，本轮按产品负责人身份直接判定：可见提示必须做。
+- **决定**：`read_ledger_for_display()` 从「返回 dict」改成「返回 `(state, warning)`」，降级原因随响应一起下发；`scoped_payload()` 的三个分支统一把 `meta.ledger_warning` 写进 payload（只在真的降级时出现，正常时字段不存在，不制造常驻警告）。链路两处收口：① `/assistant/query` 把警告拼进回答的 `note`，所以悬浮助手与独立问数页都会把「台账未计入」说出来；② 前端在 `AppLayout` 的 `<Content>` 顶部渲染 antd `<Alert type="warning" showIcon>`，标题「数据可能不完整」、正文用服务端原文，一处改动覆盖全部业务页而不必逐页加提示。
+- **备选方案**：在每个业务页各自加提示——否掉，六七个页面重复同一条状态且必然漏页，属目标里反对的重复建设；用 toast/`message.warning` 弹一次——否掉，几秒后消失，用户回头核对数字时已经没有上下文；把容器判成不健康——否掉，D-057 已论证不能让单机坏文件把整站判死，改成不健康会让负载均衡直接摘掉本来可用的服务；让 AI 改口说「不知道」——否掉，基础演示数据本身是真的，拒绝回答反而降低可用性，正确做法是给真数据配上缺数声明。
+- **影响与兼容性**：`meta` 增加一个可选字段，既有字段与响应结构不变，前端 `types.ts` 用 `ledger_warning?: string` 承接；健康台账下页面与之前完全一致（新增 E2E 的后半段就是断言此时没有任何 alert）。提示文案直接暴露内部错误原因（含「不是合法 JSON」这类实现描述），演示环境可接受，正式环境若担心措辞应由服务端换成面向业务的表述，字段协议不变。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/components/AppLayout.tsx`、`web/src/demo/types.ts`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：单测 **63 passed**（较上轮 +1）：`test_display_path_degrades_instead_of_failing` 改为断言警告文案并检查 `payload["meta"]` 带 `ledger_warning`，新增 `test_healthy_ledger_carries_no_warning` 反向锁住「正常时不该出现警告」。**真实 HTTP 链路**（在跑着的演示栈里用 admin 令牌实测，非拦截）：健康台账 `ledger_warning=None`；`docker exec` 把 `state/ledger.json` 写成 `{{{` 后，`/demo-api/data` 的 `meta.ledger_warning` = 「学籍异动台账文件不是合法 JSON，本次仅展示基础演示数据，台账里的异动记录未计入」，助手回答的 `note` 同一段文字跟在原有口径说明之后；删掉坏文件后警告消失、容器仍 `healthy`。**浏览器**：新增 E2E「台账降级时全站提示数据可能不完整」，用 `page.route` 改写 `/demo-api/data` 响应，断言 `getByRole('alert')` 同时含「数据可能不完整」与服务端原文，再解除拦截重新导航断言 alert 数量为 0。
+- **未验证**：远端 CI（记录时尚未运行）；E2E 里用响应拦截而非真实损坏文件，因为 CI 的台账在容器命名卷内、宿主机无权写（`resetLedger()` 的既有注释已说明），所以浏览器侧只覆盖了「服务端下发即显示」这条契约，后端契约由上面的真实 HTTP 步骤单独证明；`changes` 为空的辅导员/学生视图在降级时的提示措辞未逐一截图核对；提示文案含实现细节是否符合对外交付口径，需业务负责人确认。
+- **回退**：`read_ledger_for_display()` 改回只返回 dict、`scoped_payload` 去掉 `meta` 拼装、`_assistant_query` 删除拼 `note` 的三行、`AppLayout` 去掉 Alert 与 `useDemoData` 引用并恢复 `<Content>` 原样，同时删除新增单测与 E2E 用例；无数据与配置变更。
+- **授权**：B 类（演示环境前端与服务端提示链路、虚构数据测试）。损坏文件只在本地演示容器内产生并已即时清理；未触碰正式环境、真实数据或认证配置。
+
+## D-061 总览与工作台读的是两套数据：先把口径写进页面，再用测试锁住「不许被读成同步失败」
+
+- **状态**：Verified in CI（提交 `a1b89c4`：远端 10 项 check-run 全部 completed success，含「演示栈 E2E」check-run 120861741450；本地实测 Playwright E2E **27 passed / 1.4m**）
+- **Decision owner**：AI（产品负责人身份）
+- **问题与证据**：同一个演示栈里并存两套互不相干的数据源——总览页（`HomePage`）的四个指标来自 Java 网关库（`web/src/api/types.ts` 的 `changes_total`/`students_active`，与「学生信息」「数据导入」写入的是同一套库），而数据工作台、学籍异动页与 AI 问数读的是 `demo-api` 的本地演示数据集加容器内台账文件。本轮直接读取两个页面渲染出来的 KPI 数字（不是复用上一轮 HTTP 数值）确认两者不同：异动与学生两组数字各自都不相等，且异动类型词表也不一致（网关侧为英文码、`demo-api` 侧为中文类型）。同时 `HomePage` 的引导文案此前写的是「统一入库」，等于主动把两套口径讲成一套；文档里也没有任何地方说明这个分裂。用户从总览跳到工作台会看到数字对不上，最自然的读法是「同步坏了」，这是可交付性问题而不是显示瑕疵。
+- **决定**：本轮做**诚实披露 + 回归哨兵**，不做数据统一。① `HomePage` 引导语改为「学生信息与导入批次经网关入库，异动台账另有本地演示数据集（见下方口径说明）」；② 在指标区下方新增 `.hv-source` 段落，明确写出本页数字来自网关库、工作台与异动台账读的是 `demo-api` 数据集、两套彼此独立、条数不一致属预期不是同步失败；③ 新增 E2E「总览与工作台各自标明数据源」，按卡片结构（`.hv-metrics .hv-metric` / `.wb-kpis .wb-kpi`）读取异动与学生两组 KPI，断言都是真实数字（>0，不是 `—` 占位）、且两两不相等，并在剥掉千分位后再比较。将来若真把两套数据接到同一来源，这条会立刻变红，提示把口径说明删掉——这是本条测试的主要价值。
+- **备选方案**：把两侧数字硬调成一致或只在一处显示——否掉，等于用更精致的假数据掩盖分裂，直接违反「不把模拟数据成功等同于真实业务已验收」；逐页加「数据来源」角标——否掉，六七个页面重复同一条状态且必然漏页，属重复建设，一处页面级说明已足够回答「为什么对不上」；现在就做数据统一（把台账迁进网关库或让 `demo-api` 读业务库）——否掉，需要写业务库、加迁移，属正式数据写入与迁移范畴，需业务负责人与数据所有者批准，本轮只做技术侧可独立完成的部分；把总览数字改成 `demo-api` 的——否掉，总览与导入页必须反映真实入库结果，改读演示集会让导入功能看起来没生效。
+- **影响与兼容性**：纯文案与样式新增，无接口与数据结构变更；`.hv-source` 放在指标 `section` 之后独立成段（此前误插在网格内会让第五个子元素落到第二行首列）。演示语义不变，正式环境若统一为单一数据源应删掉本段说明。
+- **涉及文件**：`web/src/pages/HomePage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：Playwright E2E 全量 **27 passed（1.4m）**，其中新增两条为 D-060 的台账降级提示与本条数据源哨兵。本条测试在编写过程中先以 `getByText('学籍异动')` 取数失败（超时）——侧栏导航项同名且在后 DOM 里没有兄弟 `div`，改为按卡片类名定位并通过；这也证明断言读的是真实渲染节点而不是空文本。
+- **未验证**：远端 CI（记录时尚未推送）；网关库与 `demo-api` 两套数据是否**应该**长期并存属业务判断，需学工处/数据所有者决定（本轮只做披露，未改任何数据来源）；提示文案对非技术用户是否够直白未做用户验证；异动类型词表不一致仅在代码与数据层核实，未逐条比对两套词表映射。
+- **回退**：还原 `HomePage.tsx` 的引导语并删除 `.hv-source` 段、删 `styles.css` 里的 `.hv-source` 规则、删该 E2E 用例即可，无数据与配置变更。
+- **授权**：B 类（演示环境前端文案与测试，全部使用虚构数据）。未写业务库、未做迁移、未访问真实数据。
+
+## D-062 问数审计文件比台账更好读：追加写跟了 umask，权限收到 0600
+
+- **状态**：Verified in CI（提交 `41ff105`：远端 10 项 check-run completed success，含「本地演示 API 测试」；Linux 上两条 0600 断言真正执行）；2026-10-24 演示镜像内 POSIX 实跑通过，本机 Windows 跳过该 2 条断言
+- **Decision owner**：AI
+- **问题与证据**：在跑着的演示容器里 `ls -l /app/state` 实测：`assistant-audit.jsonl` 是 `-rw-r--r--`（0644），同目录的 `ledger.json` 与隔离副本是 `-rw-------`（0600），`STATE_DIR` 本身按 0700 创建。原因在 `record_assistant_audit()` 用 `open(path, "a")` 追加写，新建文件跟 umask；同一镜像里跑 `umask` 得 `0022`、纯追加写出来的文件是 `0o644`，与线上看到的一致。审计里记着每次问数的操作人姓名、角色、可见范围、所在页面与问题长度——目标里点名要防的「日志安全」「学生个人信息保护」，可读性反而低于台账，属实现与意图不一致。
+- **决定**：追加写之后、按 `ASSISTANT_LOG_KEEP` 截断重写之前显式 `os.chmod(..., 0o600)`。截断走的是同一个 inode（`write_text` 以 `w` 打开已存在文件不改权限），所以一次收紧即长期有效；新增两条 POSIX 单测分别锁住「首次写入后权限为 0600」和「连续写入+轮转后仍是 0600 且条数正确」。测试用 `skipUnless(os.name == "posix")`：Windows 的权限位是模拟的，在那儿断言等于验不出名堂，宁可标记为只在 Linux 生效，也不放宽成「看起来通过」。
+- **备选方案**：在 compose 里改 umask——否掉，只治这一个文件，且把意图藏进部署配置，换个宿主照样跑偏；给整个 `state/` 目录递归 chmod——否掉，超出本次需要修复的范围；把审计改成不落文件直接进数据库——否掉，DB 版台账与审计本来就是需要授权的正式化事项（见 D-057 系列），演示环境不应擅自引入。
+- **影响与兼容性**：仅权限位变化，文件内容、字段与既有读取路径不变；已在 0644 的历史文件会被下一次问数顺带收紧。服务本身仍以同一用户读写，行为无变化。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：本机（Windows）`python -m unittest discover -s demo-api/tests`：**65 tests, OK (skipped=2)**，两条 skip 就是新增的权限断言。用演示栈同一镜像起一次性容器挂载 `demo-api/` 实跑：**Ran 63 tests**，新增两条权限用例在无 skip 的情况下通过（该环境下 `DatasetTrackingTest` 因容器内无 git 而整类跳过，另有一条既有用例因我只挂了 `demo-api/` 子目录、仓库根的 `scripts/demo/seed-demo-accounts.sql` 不在视图内而报 `FileNotFoundError`，属演练环境限制，不是产品缺陷；完整仓库的 CI 与本机都不受此影响）。负证据：同一镜像里 `umask=0022`，纯追加写文件为 `0o644`。
+- **未验证**：远端 CI（本轮记录时尚未推送）；Windows 宿主上直接跑 demo-api 时的权限位无法验证（系统语义不同）；正式环境把审计落库、按角色收敛日志可读性属需授权事项，本轮未做。
+- **回退**：删除两处 `os.chmod` 与新增测试类即可，无数据与配置变更；已收紧的历史审计文件权限不会自动回到 0644（对演示数据无影响）。
+- **授权**：B 类（演示容器内虚构数据的日志权限）。未触碰正式环境、真实数据与认证配置。
+
+## D-063 Esc 会把背后的 AI 对话连带收掉；跨周课程定位仍会给出假「已定位」
+
+- **状态**：Esc 修复 Implemented（未自动化、未浏览器验证）；跨周定位 未修复（本轮只记录证据与方案）
+- **Decision owner**：AI
+- **问题与证据**（两项均由只读审计代理逐行核对，行号已复核）：
+  1. `web/src/components/FloatingAssistant.tsx:75-82` 在 `window` 上监听 `keydown`，任何 Esc 都执行 `setOpen(false)`；而 `StudentsPage.tsx:363`、`WorkbenchPage.tsx:501`、`ChangesPage.tsx:449` 的抽屉靠 antd 默认「Esc 关抽屉」。结果是用户在抽屉上按 Esc 关掉抽屉时，背后正在进行的对话被一起收起，重开还要重新问。
+  2. 课表「定位到课程」只对当前周有效：`StudentSchedulePage.tsx:48-51` 的网格只渲染 `weekMatches(row.weeks, currentWeek)`，而 `FloatingAssistant.tsx:116` 传的 `detail` 只有 `weekday` + `period`，丢掉了服务端已经给出的 `date`/周次（`app.py:262`）。问「下周有哪些课」时，`StudentSchedulePage.tsx:60-71` 照样 `setFocusCell`，高亮的是本周同格里的另一门课或占位格——比不高亮更糟，等于宣称「AI 帮你定位到了」。
+- **本轮已做**：`FloatingAssistant.tsx` 的 Esc 处理改为先看是否有更上层浮层（`.ant-drawer-open, .ant-modal-wrap`），有则交还给浮层、不收对话；`tsc --noEmit` 通过，既有 27 条 E2E 全绿。**未做**：跨周定位的修复——正确的判据是「高亮格子必须真的是那门课」，需要把课程名/周次随事件一起传（`AssistantCourse` → `FocusCell`），再在页面侧比对；我第一版用「格子文本为空 ⇒ 视为没定位」的启发式，被 E2E 直接推翻：演示课表每个格子都有占位文本，`document.querySelectorAll('[data-weekday][data-period]')` 里找不到空格子（`Received: null`），于是该启发式连同其用例一并撤销，不留半对的判断和永远不会红的测试。
+- **下一轮怎么做**（按此实施即可，不必重新调研）：`FloatingAssistant.tsx:116` 传 `{ weekday, period, course: 课程名 }`（`AssistantCourse` 已含课程名与 `date`，`api/assistant.ts:9`），`StudentSchedulePage.tsx:18-21` 的 `FocusCell` 加 `course?: string`，`applyFocus` 里只有当命中的格子 `textContent` 含该课程名时才 `setFocusCell`，否则 `message.info('该课程不在当前第 N 周，未做定位')`；E2E 断言「高亮存在 ⇒ 该格文本含课程名」，并补一条 `/students` 抽屉 Esc 用例（先确认打开抽屉的实际触发控件：行内按钮而非整行，本轮 `page.locator('table tbody tr').first().click()` 未能打开抽屉，60s 超时，用例已撤）。
+- **影响与兼容性**：Esc 改动只在有浮层时不改行为，无浮层时与原先一致；跨周定位修复未实施，当前行为不变。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`（已改）、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **未验证**：Esc 修复没有自动化用例、也没做浏览器人工验证（抽屉触发控件待确认），因此不记为已验收；`a1b89c4` 的「演示栈 E2E」「AI 评审」与 `41ff105`（D-062）的远端 CI 结果本轮未复核；跨周定位仅记录证据未修复。
+- **回退**：还原 `FloatingAssistant.tsx` 的 `onKey` 为 `if (event.key === 'Escape') setOpen(false);` 即可。
+- **授权**：B 类（演示前端交互，未触碰正式环境与真实数据）。
+
+## D-064 请求体拖到超时会直接掐连接：0 字节响应比 408 更难排查
+
+- **状态**：Verified in CI（提交 `d541985`：远端 run 40092141380（CI）/ 40092141357（AI 评审）success，10 项 check-run 全绿）；本地 67 单测通过，去掉修复后新用例以 `TimeoutError` 失败
+- **Decision owner**：AI
+- **问题与证据**：`demo-api/app.py` 的 `_read_json()` 原先只把 `json.loads` 包在 `try` 里，`self.rfile.read(length)` 在外面。服务端 `timeout = 10`，因此客户端声明 `Content-Length` 却只发半截请求体时抛的是 `TimeoutError`（`OSError` 子类），沿 `handle_one_request` 冒泡后连接被直接关闭。审计代理在真实服务上实测：`bytes_received=0, elapsed=10.0s`，无状态码、无 JSON 错误体；`POST /assistant/query`、`/changes`、`/changes/import` 全部受影响。前端 `askAssistant` 拿到的是 fetch 层网络异常，只能显示「查询失败，请重试」，运维侧也无法从响应区分是网关、超时还是数据问题。
+- **决定**：把 `read` 单独包进 `except (OSError, ValueError)`，回 `408 {"error": "请求体读取超时或不完整，请重试"}` 并打服务端日志；解析失败仍走原来的 400，两类失败不再混在一起。补 2 条单测：`TimeoutError` → 408 且文案含「重试」；只发半截 JSON（未超时）→ 仍是 400。
+- **备选方案**：把 `timeout` 调大或改成读循环带总预算——否掉，超时值属部署参数（演示容器与 compose 一致），调大只会把失败推迟，且客户端仍拿不到可判读的状态；直接返回 400——否掉，与「格式非法」混淆，排查时会被引到错误方向；只在 `do_POST` 外层包 try——否掉，`_read_json` 被三个入口共用，收口在读取处一次改对，三处同时受益。
+- **影响与兼容性**：只新增一个此前不存在的状态码路径，既有 400/401/403/413/503 行为与响应结构不变；前端无需改动，现有错误分支会显示更准确的文案。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：本机（Windows）`python -m unittest discover -s demo-api/tests`：**67 tests / OK (skipped=2)**（2 条 skip 仍是 D-062 的 POSIX 权限断言）。负证据：`git stash push -- demo-api/app.py` 去掉修复后重跑该类，`Ran 2 tests` 且 `FAILED (errors=1)`，异常正是 `TimeoutError: timed out`，说明新用例真的在盯这条路径。
+- **未验证**：远端 CI（本轮记录时尚未推送）；`handle_one_request` 更外层的未捕获异常（如 `_identify` 阶段的意外错误）仍会表现为连接被关而非结构化错误——本轮只收口请求体读取；慢速请求体拖满并发槽导致 `/healthz` 一并 503 的风险（审计项 S2）**未修**，因为把槽位判断从 `Server.process_request` 挪进 `handle()` 需要先窥探请求行（`rfile.peek` 会在恶意空闲连接上阻塞），风险大于收益，留待单独一轮处理。
+- **回退**：删除该 `try/except` 与新增测试类即可，无数据与配置变更。
+- **授权**：B 类（演示服务错误处理与单测）。未触碰正式环境、真实数据与认证配置。
+
+
+## D-065 班级数被花名册写法放大：170 行班名只对应 135 个班，学生把自己的班读成两个
+
+- **状态**：Verified in CI（提交 `94b6770`：远端 10 项 check-run 全部 completed success，含「本地演示 API 测试」「演示栈 E2E」「前端类型检查与构建」「AI 评审」）；本地实测 **72 单测通过（skipped=2）**，只回退 `app.py` 时新用例 3 条失败、`AssertionError: 1 != 2`
+- **Decision owner**：AI
+- **问题与证据**：读 `demo-api/data/demo-data.json` 实测：`class_summary` 170 行只对应 **135 个 `class_code`**，其中 35 个班各占两行（全称「信息安全技术应用2601班」44 人 + 简称「信息安全2601」1 人），因为班级汇总按 `class_name` 分组而花名册里同一班存在两种写法。`scope_metrics()` 把 `total_classes` 和 `roster_class_names` 都设成行数（`demo-api/app.py` 原 737-739 行），于是学生 scoped payload 实测 `total_classes=2 / roster_class_names=2`——前 400 名学生里 136 人（34%）看到的「班级数」大于自己真实的班级数；全校口径下 `metrics.total_classes` 是 135 而 `roster_class_names` 是 170，两个数被同一个字段名族混在一起，工作台 KPI「班级数」随时会从 135 跳成 170。先按 §十 复核过是否越权：`class_short` 跨 `class_code` 的数量实测为 **0**，排课表里 `class_short → class_name` 也是 1:1，所以这不是数据泄露而是计数错误，优先级按「关键业务缺陷」处理。
+- **决定**：在 `scope_metrics()` 里引入 `class_identity()`：优先用 `class_code` 作为班级本体标识，`class_code` 缺失时退回辅导员页已经在用的同一条归一化规则（去空白、去结尾「班」），保证前后端只有一套口径。`total_classes` 改成按 `class_identity` 去重计数，`roster_class_names` 继续按行数计（它本来表示「花名册里有几种写法」，`WorkbenchPage.tsx` 的提示文案「花名册 N 个班名」正是这个意思）。**不动 `class_summary` 行本身**：辅导员页 `CounselorPage.tsx:44-58` 依赖逐行 `class_name`/`class_short` 生成匹配键，合并行会让 40 名写法为简称的学生从名单里消失——把可见缺陷修成不可见丢人，不能接受。
+- **备选方案**：在加载时按 `class_code` 合并 `class_summary`——否掉，理由同上，且会让「两种写法」这一真实数据质量问题从页面上消失，正是目标里禁止的「把返回看起来合理等同于数据真实」；改数据构建脚本把花名册写法归一——否掉，构建脚本不在本轮演示链路里，且真实数据源确实存在两种写法，归一属于数据治理决策，需要业务负责人定口径；前端各自再数一遍——否掉，前后端重复实现同一条业务口径，正是 §4.4 要点名的问题。
+- **影响与兼容性**：响应字段名与结构不变，只改 `total_classes` 的取值口径；学生自助页「我的班级」不再显示成 2 个班，工作台/辅导员范围内的班级数与全校 135 的口径一致。`class_summary` 数组长度仍是 170，所以任何按下标或长度渲染的既有页面行为不变。
+- **涉及文件**：`demo-api/app.py`（新增 `class_identity()`、`scope_metrics()` 计数口径）、`demo-api/tests/test_app.py`（新增 `ClassScopeCountTest` 5 条）、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：**72 tests OK (skipped=2)**。新用例覆盖：两行同 `class_code` → `total_classes=1 / roster_class_names=2`；不同 `class_code` → 仍分别计数；无 `class_code` 时按归一化班名合并；**并锁住前提**——当前演示数据里确实存在同码多行（`test_shipped_fixture_actually_contains_split_class_names`），否则前面的合成断言可能空转；最后用真实 fixture 走 `scoped_payload()`，断言该学生拿到 2 行班级但 `total_classes==1`。负向证据：`git show HEAD:demo-api/app.py` 临时覆盖修复后重跑，`Ran 5 tests ... FAILED (failures=3)`，报错正是 `AssertionError: 1 != 2`，恢复后 5 条全绿。
+- **未验证**：远端 CI（记录时尚未运行）；浏览器端 KPI 数字变化未截图核对——本地 Docker Desktop 引擎当前返回 `500 Internal Server Error`，演示栈 8083 不可达，无法重建容器跑 Playwright，因此「学生自助页不再显示 2 个班」只有单测与 payload 层面的证据；数据构建脚本为何产出两种写法、正式环境该用哪个班级主键属数据治理问题，需业务负责人确认。
+- **回退**：`scope_metrics()` 的两行计数改回 `len(classes)`，删除 `class_identity()` 与 `ClassScopeCountTest`；无数据与配置变更。
+- **授权**：B 类（演示环境服务端计数逻辑与虚构数据单测）。只读探针跑在临时脚本里、未写入仓库，未触碰正式环境、真实数据或认证配置。
+
+
+## D-066 健康检查与业务共用并发槽是真的，但「32 个慢请求就能摘掉服务」这条要先降级再修
+
+- **状态**：未修复（机制已实测；严重性按新证据下调；修复需要 HTTP 层测试与可用的演示栈，本轮不具备条件）
+- **Decision owner**：AI
+- **问题与证据**：`Server.process_request()`（`demo-api/app.py` 1206-1229 行）在解析请求路径**之前**就抢 `BoundedSemaphore(MAX_CONCURRENT_REQUESTS)`，而 `/healthz` 是在 Handler 里分发的，所以健康检查和业务抢同一批槽。本轮用 `MAX_CONCURRENT_REQUESTS=1` 直接起 `app.Server` 实测：占住唯一槽后 `GET /healthz` 返回 **503**（`{"error": "服务繁忙，请稍后重试"}`），释放后立刻回到 **200**；容器 HEALTHCHECK 读的就是这个码，因此「满槽 → 判不健康 → 负载均衡摘掉本来可用的服务」这条链路成立。但同一次实测也推翻了原先记录的触发门槛：**未认证的慢请求不占槽**——用声明 `Content-Length: 4096` 却只发 1 个字节的 POST 打 `/assistant/query`，服务端在**读请求体之前**就做 token 校验，立刻回 401 并释放槽（`/healthz` 同时 0.00s 返回 200）。也就是说外部匿名慢客户端并不能把槽耗尽，只有**已登录身份的持续慢流量**才行，演示环境里是十几个教职工账号。
+- **决定**：本轮**不改并发结构**，只把机制、真实触发条件和后果写进日志，并把「先补 `/assistant/query` 等端点的 HTTP 层测试，再改 `process_request`」列为前置条件。理由：安全修法要先在 `process_request` 里窥探请求行、再把已读字节回灌给 Handler 的 `rfile`（`socket.makefile` 之后无法回退已 `recv` 的字节），这是 socket 层改动；而项目当前**没有任何 HTTP 层测试**（Q5），演示栈又因 Docker Desktop 引擎 500 不可用（见「环境与阻塞」），在没有回归网的情况下动它，风险大于收益。
+- **备选方案**：把槽改到 Handler 内按需申请、`/healthz` 豁免——否掉，这样连接线程数不再受控，slowloris 反而能无限起线程，用一个可用性风险换另一个；单独开一个健康检查端口——否掉，要同时改 compose、HEALTHCHECK、CI 和 nginx 转发，演示环境用不上这个复杂度；把 `MAX_CONCURRENT_REQUESTS` 调大——否掉，只是推迟满槽，且掩盖真实容量问题。
+- **影响与兼容性**：本轮无代码变更，行为不变。已确认为既有限制：满槽时 `/healthz` 与业务一起 503。若后续正式环境要接入负载均衡，这条必须先修，且修法应包含「请求行窥探 + rfile 回灌 + HTTP 层回归测试」三件套。
+- **涉及文件**：仅 `docs/DECISION-LOG.md`（本条）。
+- **验证（实测）**：机制测试与门槛测试都在本机用真实 socket 起 `app.Server` 完成（`MAX_CONCURRENT_REQUESTS=1`、`STATE_DIR` 指向临时目录、不写演示台账），观测值即上文状态码与耗时；脚本是一次性探针，未入库。
+- **未验证**：满槽是否真能由**已登录**用户的并发流量稳定触发（需要网关发 token，本地 Docker 引擎当前返回 `500 Internal Server Error`，`curl http://127.0.0.1:8083/demo-api/healthz` 得 `000`）；容器 HEALTHCHECK 的实际翻牌次数与 restart 行为未观察。
+- **回退**：无代码变更，删除本条即可。
+- **授权**：B 类（本地隔离探针、虚构数据、临时状态目录）。未触碰正式环境、认证配置或真实数据。
+
+## 环境与阻塞（2026-10-24 本轮）
+
+- Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样取不到服务端信息，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本地无法重建 `demo-api` 容器，也无法跑 Playwright。受影响且**仍未验证**的事项：D-063 悬浮助手 Esc 焦点守卫（无自动化覆盖）、D-071 跨周定位的新提示（逻辑已改为「当前周确有该课才高亮，否则明说未定位」，但页面表现没看过）、D-065 学生页 KPI 的截图核对、D-072 锁改动在高并发下的尾延迟。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`，或整体 `powershell -File scripts/demo/verify-local-demo.ps1`。
+- 远端 CI 历史记录（2026-10-24 13:17 UTC，已被下一条取代）：分支头 `c786abe`（纯文档）的一轮 checks 多数仍 pending，已见「脚本语法与孤儿清理自检」「后端语法与导入检查」「Compose 组合校验」pass。上一个代码头 `b0e603f`（D-072）可见「本地演示 API 测试」「前端类型检查与构建」「后端接口与校验测试」「AI 助手原型测试」「AI 评审」pass，「演示栈 E2E」当时仍 pending；远端日志没取到用例条数，所以不引用远端具体数字。任何一次 CI 绿都不等于生产验收。
+- 远端 CI 最新实测（2026-10-24 13:56 UTC，run 40099942110）：分支头 `5277fcd`（D-073/D-074/D-075）10 项 checks 全部 pass，日志实读两处数字——「本地演示 API 测试」`Ran 95 tests in 2.612s` OK、「演示栈 E2E」`Running 28 tests` → `28 passed (1.7m)`。这仍不等于 D-071 的跨周定位提示被覆盖（既无自动化也无肉眼），也不等于任何人看过悬浮面板新版式的样子；CI 绿不等于生产验收。
+- 本地测试基线：`demo-api` **95 tests OK (skipped=2)**（D-073 +3、D-074 +1），整轮连跑 10 次一致；`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；Playwright 用例增至 **28 条**，本地只做到「显式 `tsc` 单文件通过 + `playwright test --list` 能收集」，真跑证据来自上面那条远端日志。
+- CI 步骤名里写死的用例条数（曾写「25 条」）已去掉：数字与实际早已不符，改由日志里的 `Running N tests` 为准。
+- PR #58 当前状态（2026-10-24 13:41 UTC 实测，分支头 `1d567c2`）：`OPEN`、`MERGEABLE`、`mergeStateStatus=CLEAN`、`reviewDecision` 为空（无人提交审查）。合并仍需业务负责人批准，本轮不自行合并。- 历史 CI 记录：`94b6770`（D-065）当时 10 项 check-run 全部 completed success（含「演示栈 E2E」），D-065 据此升级为 Verified in CI；那条 E2E 绿只证明当时的镜像与用例，不代表本轮 D-071 的前端改动已被 E2E 覆盖。
+
+
+## D-067 问数端点第一次有了 HTTP 层回归，同时暴露出「缺 token 时客户端读到 0 字节」
+
+- **状态**：测试 Implemented（7 条通过）；其中「缺 token 必须拿到 401」这条按已知缺陷登记为 expectedFailure，缺陷未修复
+- **Decision owner**：AI
+- **问题与证据**：`/assistant/query` 此前只有函数级单测，路由分发、请求体上限、非法 JSON、身份缺失这些只能在真 HTTP 上暴露的行为没有覆盖（审计里的 Q5）。本轮新增 `demo-api/tests/test_http_api.py`：用 `app.Server` 在临时端口起真实服务（`STATE_DIR` 指向临时目录，不碰演示台账），只把网关身份那一跳换成桩，其余链路走真实 socket。7 条通过：学生问「明天有什么课」返回的课程必须都在其本人 scoped payload 的课表里（服务端按身份收敛数据范围，不是靠前端传参）；缺 token 走真实 `_identify` 的 404 路径先于身份；超过 `MAX_BODY_BYTES` 的请求被 413 拒掉而不是塞给解析器；半截 JSON 回 400；敏感问题回 `refused` 且回答里不含联系方式字段；空闲槽位下 `/healthz` 200；`HttpHealthSlotTest` 把 D-066 的既有行为钉住——占满并发槽后 `/healthz` 变 503、释放后回 200。第 8 条暴露新缺陷：客户端不带 `Authorization` 时，服务端 `log_message` 已经记到 `POST /assistant/query 401`，但 `http.client` 读到的是 `RemoteDisconnected`（0 字节）。这是 D-064 修过的同类症状（那次是请求体拖到超时），前端因此只能显示「未知错误」而不是「未登录」。
+- **已试过的修法与为何没用**：按 `do_POST` 里 503 分支已有的注释思路，在 `_identify` 的四条拒绝路径改为 `_reject()`——写响应前先把 `Content-Length` 声明的请求体读掉。实测仍然 0 字节，说明这个 case 的成因不是「未读数据触发 RST」，因此该改动整体回退，`demo-api/app.py` 未带入任何未验证的修改。
+- **决定**：先把 HTTP 层覆盖落地（它本身已经钉住数据范围收敛和 413/400/404/503 契约），把未定位的 0 字节缺陷以 `expectedFailure` + 具体异常名登记在测试里，而不是删掉断言或改成宽松断言。下一轮先定位再修：方向是 `_send()` 是否在 `wfile` 缓冲未 flush 时就进入 `finish()`、以及 `protocol_version="HTTP/1.0"` 与 `Connection: close` 在缺 header 分支上的差异（其余 401/404 分支同样走 `_json`，唯独这条 0 字节，差异应在进入 `_identify` 之前的分支顺序上）。
+- **影响与兼容性**：只新增测试文件；`demo-api/app.py` 与 `docs/LOCAL-DEMO.md` 记录的行为均不变，演示环境与其他调用方不受影响。
+- **涉及文件**：`demo-api/tests/test_http_api.py`（新增 8 条 HTTP 层用例）、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **80 tests, OK (skipped=2, expected failures=1)**（本轮 72 → 80）。失败的那条在修复后会变成 XPASS 提醒，不会被静默吞掉。
+- **未验证**：远端 CI（记录时尚未运行）；CI 的 Linux 环境可能不重现 0 字节（`expectedFailure` 在 Linux 上会变成 XPASS，届时应把这条改回硬断言并修根因）；0 字节缺陷的真实成因尚未定位；`/healthz` 满槽是否会被真实业务流量触发仍见 D-066。
+- **回退**：删除 `demo-api/tests/test_http_api.py` 与本条记录即可，无代码与配置变更。
+- **授权**：B 类（本地临时端口真实服务、虚构数据、临时状态目录）。探针与临时目录已清理，未触碰正式环境、认证配置或真实数据。
+
+
+## D-068 「缺 token 客户端读到 0 字节」：原始 socket 单独复测拿到完整 401，但写进测试仍拿不到
+
+> **已被 D-070 定位并修复（2026-10-24，提交 `96e66d9`）**：矛盾的两半都查清了——测试自己的桩绑成了 TestCase 方法，外加一个真实的「早退错误未排空请求体 → RST 吞掉响应」缺陷。下面这段保留为当时的实测记录，不再代表当前状态。
+
+- **状态**：未修复、未定性（该用例继续保持 `expectedFailure`，本轮没有把任何未验证的改法带进仓库）
+- **Decision owner**：AI
+- **新增证据（与 D-067 相反方向）**：远端 Linux 的「本地演示 API 测试」日志同样写 `expected failure`（run 40094219979 / job 120872991810），所以这不是 Windows 现象。但我在一次性脚本里用原生 socket 向同一 `Server`/`Handler` 发同一条无 `Authorization` 的 POST（带 `Content-Length` 的完整请求体），立即读、延时 0.4s 读、显式 `Connection: close` 三种时序都收到 206 字节的 `HTTP/1.0 401 Unauthorized` + JSON 响应体，与服务端 `log_message` 记到的 401 一致——也就是说**服务端确实写了完整响应**。
+- **矛盾点（本轮未解）**：把这个原始 socket 写法搬进 `tests/test_http_api.py` 后，缺 token 与坏 token 两条断言仍然读到 0 字节，而同一 helper 发的未知路径请求能正常读到 404。加 0.3s 启动等待也无效。因此「一次性脚本能收到 401」与「测试里收不到」之间的差异还没定位，可疑方向是两者运行环境的差别（脚本在 import 前用环境变量设定 `PORT`/`STATE_DIR`/`MAX_CONCURRENT_REQUESTS` 并用固定端口，测试是 import 后改 `STATE_DIR` 且用临时端口，且同一进程内其他用例会替换 `Handler._identify`）。
+- **决定**：不为了变绿而删断言、也不把这条契约从测试里摘掉；用例保持 `expectedFailure`（它会在真正修好后变成 XPASS 提醒），本轮把 `app.py` 与测试文件都保持在已推送的状态，只记录证据与矛盾点。定性前不动 `_identify` 的响应写法，避免按错误结论改认证链路。
+- **备选方案**：把断言换成「服务端日志里有 401」——否掉，那只证明服务端写了，证明不了客户端能读到，而客户端可读性正是这条用例要护的东西；直接改 `_send`/`finish` 强制 flush 后再关连接——否掉，机制未定位就改响应收尾路径，影响所有端点且无 HTTP 层回归可兜。
+- **影响与兼容性**：本轮无代码变更，线上行为与已推送状态一致。已知限制：身份校验失败的 POST 路径上，客户端可能读不到状态码（同 D-064 症状类别，影响前端错误提示的可读性，不影响数据范围与鉴权结果——服务端仍然拒绝，不会放行）。
+- **涉及文件**：仅 `docs/DECISION-LOG.md`（本条）。
+- **验证（实测）**：一次性原始 socket 探针三次都收到完整 401（探针未入库）；测试内改写的两次运行结果均为 `Ran 81 tests ... FAILED (failures=2)`，两次失败正是缺 token 与坏 token 两条，404 那条同 helper 通过。
+- **未验证**：0 字节与探针可读到响应之间的差异成因；浏览器 `fetch` 在同一场景的实际表现（演示栈不可达）。
+- **回退**：删除本条即可，无代码变更。
+- **授权**：B 类（本地临时端口、虚构数据、临时状态目录，探针未入库）。
+
+
+## D-069 审计里那条「unicode 数字能过日期校验」经复测不成立：两道校验已经合力挡下
+
+- **状态**：Verified in CI（提交 `c646b17`：远端 10 项 check-run 全部 completed success，含「本地演示 API 测试」「演示栈 E2E」「AI 评审」；本地 **85 单测通过（skipped=2, expected failures=1）**，删掉 `strptime` 那道校验后 5 条新用例里 3 条变红）
+- **相邻提交说明**：`1e780de` 的「AI 评审」是 **cancelled**（被后一次推送顶掉），不是 success；该提交本身只改文档，其余 9 项 check-run success。分支头 `c646b17` 的「AI 评审」为 success。
+- **Decision owner**：AI
+- **问题与证据**：早前只读审计把 S4 记成「`DATE_PATTERN` 的字符类接受全角/阿拉伯-印度数字，异常日期可能漏进台账」。本轮实测 `validate_change()`（`demo-api/app.py` 692-715 行）：`２０２６-１０-２４` 与 `٢٠٢٦-١٠-٢٤` 过正则后被 `datetime.strptime` 拒掉，返回 **400 / 「异动日期不是有效日期」**；`2026-10-32`、`2026-02-30` 同样 400；`2026-1-4` 在格式那一关就返回 400 /「异动日期格式应为 YYYY-MM-DD」；合法日期返回 0。也就是说正则与 strptime 是**两道分工明确的校验**，不存在漏洞，我之前的判断是只看正则、没跑完整函数造成的误判。
+- **决定**：不改 `DATE_PATTERN`（收紧成 ASCII 数字只会把「日期无效」的提示变成「格式不对」，语义更差），改为补 5 条回归用例把两道校验的分工钉住。顺带说明中途一次误判：第一次探针把请求体写成 `student_uid` 而校验读的是 `uid`，四条用例全返回「缺少学生 UID」，看起来像「已拦住」但其实没走到日期分支——结论只认按真实字段名跑通的那一次。
+- **影响与兼容性**：无生产代码变更，行为不变；新增用例只加约束。
+- **涉及文件**：`demo-api/tests/test_app.py`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **85 tests OK (skipped=2, expected failures=1)**（80 → 85）；`test_fullwidth_digits_are_rejected_as_invalid_date` 若把 `strptime` 那一步删掉即变红（校验消息会从「不是有效日期」退成放行或格式提示），不是空断言。
+- **未验证**：远端 CI 结果；`app.py` 里若有人日后只留正则、删掉 strptime，这条用例在 CI 会先响。
+- **回退**：删除 `DateValidationTest` 与本条记录，无代码与配置变更。
+- **授权**：B 类（虚构数据、只读校验函数测试，不落台账）。
+
+## D-070 「缺 token 客户端读到 0 字节」查到底：一半是测试自己的桩绑错，一半是真实的 RST 丢响应
+
+- **日期**：2026-10-24
+- **状态**：Fixed locally（提交 `96e66d9`，分支 `feat/local-demo-workbench`，PR #58）；远端 CI 见下一条推送后的 check-run，本地不代替远端
+- **推翻的旧结论**：D-068 记的「矛盾点还没定位」和 D-067 里那条 `expectedFailure`。
+- **问题与证据（两段，各自独立成立）**
+  1. **测试自身缺陷**：`setUp` 用 `demo.Handler._identify = self._identify` 复原原函数，而 `cls._identify` 存的就是那个函数对象——通过实例访问会绑成 TestCase 的方法，于是 handler 线程里的 `self` 是测试实例，`self.headers` 直接 `AttributeError: 'HttpAssistantTest' object has no attribute 'headers'`，连接被就地关掉，客户端读到 0 字节。服务端日志里那条 401 属于别的请求。这就是 D-068 里「独立脚本能拿到完整 401、写进测试就拿不到」的全部原因。
+  2. **真实服务端缺陷**：`_identify` / `do_POST` 在读请求体之前就要回 401、403、404，socket 带着未读数据关闭时内核回 RST 而不是 FIN；客户端在这之后才把请求体补写完，RST 会把它这边**已经收到**的响应一起丢弃。独立探针（不打桩、真实 Handler、同一端口）实测：「先发请求头、停 50ms 再发请求体」修复前 4/4 `ConnectionAbortedError，已收到 0 字节`，修复后 4/4 拿到完整 `HTTP/1.0 401`（206 字节）；`curl` 3/3、`http.client` 8/8 前后都是 401 —— 因为这两种写法把请求头和请求体合并成一次写。**结论**：缺陷只在「延迟写请求体」的客户端上暴露，而浏览器 `fetch` 完全可能这样发，所以用户侧表现是「AI 面板报网络错误」而不是「未登录」。
+- **修法与取舍**：新增 `Handler._reject(status, message)`，早退错误前先 `_drain_body()` 再 `_json`；`_drain_body` 只在 `0 < Content-Length <= MAX_BODY_BYTES` 时读，且 `_body_consumed`（在 `_read_json` 的 `finally` 里置位）为真就跳过——否则会对同一个长度二次 read，一直堵到 `timeout = 10` 才返回，把所有正常 POST 拖慢 10 秒。`_identify` 的 4 条错误分支、`do_POST` 的 404/403 改走 `_reject`；`_read_json` 内部（400/408，请求体已读过）保持 `_json`。
+- **明确不修的一处**：413 分支仍然不排空请求体。把超限的体读干净等于放弃 `MAX_BODY_BYTES` 这个上限本身（超大上传的拒绝成本会变成先收完），所以这里宁可让超限客户端看到连接被重置。已在 `_drain_body` 注释里写明。
+- **测试**：撤销 `expectedFailure` 改成硬断言，并新增 `test_deferred_request_body_does_not_lose_the_401`（裸 socket 先头后体）和 `test_role_denied_post_keeps_the_response`（403 也必须送达）。另外把「故意把连接搞坏」的两条（413、裸 socket）拆进 `HttpAbusiveClientTest`（独立 Server 实例）：同进程混跑时 Winsock 会把下一个用例打成 `WinError 10053`，这是测试隔离问题，不是产品行为，断言一条没减。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **87 tests OK (skipped=2)**，连跑三次一致（85 → 87，expected failures 1 → 0）；裸 socket 探针修复前后对照如上。`test_deferred_request_body_does_not_lose_the_401` 在去掉 `_drain_body` 时会变红，不是空断言。
+- **未验证**：远端 CI；Docker 演示栈、Playwright 27 条 E2E、真实浏览器 `fetch` 的延迟写体行为（Docker Desktop Linux 引擎本轮仍返回 500，8083 起不来）。
+- **回退**：`git revert 96e66d9`（`app.py` 与测试文件同时回到 `expectedFailure` 版本）。
+- **授权**：B 类（本地虚构数据、只读契约测试，不落台账、不碰生产）。
+
+## D-071 悬浮助手的「在课表中定位」跨周会落空：定位前先确认这一格里真有那门课
+
+- **日期**：2026-10-24
+- **状态**：Implemented locally；浏览器与 E2E **未验证**（Docker 演示栈仍不可用）
+- **问题与证据**：`FloatingAssistant.focusCourse` 只把 `{weekday, period}` 传给课表页（[FloatingAssistant.tsx:119-129](file:///Z:/AI%E5%B7%A5%E5%85%B7/Qoder%20CN/.qoder-versions/0.4.11/campus-data-demo/web/src/components/FloatingAssistant.tsx)），而课表页只渲染 `weekMatches(row.weeks, currentWeek)` 命中的排课（[StudentSchedulePage.tsx:46-49](file:///Z:/AI%E5%B7%A5%E5%85%B7/Qoder%20CN/.qoder-versions/0.4.11/campus-data-demo/web/src/pages/StudentSchedulePage.tsx)）。学生问「下周上什么课」时，助手返回的课程可能属于别的周次：点卡片后 `applyFocus` 仍然无条件 `setFocusCell` 并 `scrollIntoView`，落点要么是一空格子要么根本没有该课，用户看到的效果和「定位成功」无从区分。这违反第一阶段要求「数据不可用/查不到必须明确说明，不得伪造结果」。
+- **修法**：事件 `detail` 与路由 `state` 都带上 `course`；`applyFocus` 先在 `weekSchedule` 里确认「该 weekday + 该节次 + 确有这门课」在当前周可见，才高亮并滚动；不可见则不改高亮，改为在页头下方 `Alert type="info"` 明说「『某课』不在当前第 N 周的周五 5-6节，页面未做定位」。`useCallback` 依赖补上 `weekSchedule`、`currentWeek`，避免用旧闭包判断。
+- **备选与取舍**：本可以再加一个周次切换器让用户跳过去，但演示数据里 `current_week` 由 `metrics.schedule_meta` 给定、页面并无按周浏览的既有交互，加切换器属于扩需求；先做「不假装成功」这一步，把能力边界说清楚。
+- **验证（实测）**：`web` 下 `npm run build`（= `tsc --noEmit && vite build`）通过，产物正常生成。
+- **未验证**：真实浏览器里点击卡片的高亮与提示文案、移动端布局、Playwright 27 条 E2E —— Docker Desktop Linux 引擎仍返回 500，演示栈起不来，本轮无法验证，不得当作已验收。
+- **回退**：`git revert` 本次提交即可，事件多出的 `course` 字段是可选的，旧调用路径不受影响。
+- **授权**：B 类（仅前端展示逻辑，虚构数据，无副作用）。
+
+## D-072 S3 台账锁不再覆盖 socket 写入；顺带查出 STATE_PATH 在导入期绑定导致的测试串写
+
+- **日期**：2026-10-24
+- **状态**：Fixed locally + 单测层远端 pass（分支头 `b0e603f` 的 check-run「本地演示 API 测试」为 pass；run 40097296729 的日志这次没取到条数，所以不引用远端具体数字）；同一 run 的前端类型检查与构建、后端接口与校验测试、AI 评审均 pass；「演示栈 E2E」当时仍 pending，Docker 引擎仍 500，因此 E2E、真实浏览器与并发尾延迟均未验证
+- **问题 1（S3，真实稳定性缺陷）**：`_check_change` 把 404、403 写在 `with STATE_LOCK:` 里，`_create_change` 把 409 写在锁里。`Handler` 的 `timeout = 10` 意味着一个不再收数据的客户端可以把 `wfile.write` 卡到 10 秒；这期间全局锁不放手，别人的建单、导入、核销以及 `scoped_payload()` 的台账读全部串行等待。演示栈并发槽有 32 个，但一把锁把并发优势抹平了。
+- **修法**：两个 handler 都改成「锁内只读台账 + 落账，结果装进 `response`，`self._json()` 与日志都挪到 `with` 之外」。响应状态码与 body 一字未改，只调整了写出时机；越权仍然是 403、不存在仍然是 404、超限仍然是 409，权限判断依旧在锁内读到的最新台账上做。
+- **问题 2（写这条时发现的新缺陷，测试隔离）**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入时就绑定了路径（app.py:29-31），所以测试里只换 `demo.STATE_DIR` 并不会换台账文件。第一版 `test_ledger_lock.py` 就这样把 6 条虚构测试行写进了仓库真实的 `demo-api/state/ledger.json`（本地运行时状态，已被 gitignore，不影响远端）。核对内容后确认这 6 行 `created_by=xgb01 / reason=演示测试` 全是本轮测试写入、没有夹带别人的数据，才还原成空台账；新测试现在同时替换并在 `tearDown` 还原 `STATE_DIR`、`STATE_PATH`、`ASSISTANT_LOG_PATH`，跑完两轮后 `state/ledger.json` 仍是 0 条，隔离成立。
+- **后续（D-073）**：这条债在本轮还掉了。理由换了——新增一条锁/路径回归时，「只换 STATE_DIR」是测试作者的默认预期，留着导入期绑定就等于在每个新用例里埋一次串写；改动面（9 处读写 + 3 个测试文件的 patch）经全量回归验证，见 D-073。
+- **为什么不顺手把路径改成调用期解析**：现有 `test_app.py`、`test_http_api.py` 直接 patch `ASSISTANT_LOG_PATH` 这个名字，改成函数解析要一并动这些用例，收益只是「少写三行 setUp」，而容器里 `STATE_DIR` 是导入前就注入的环境变量，产品行为没有缺陷。先记为可维护性债，等有真实需求（运行期切状态目录）再一并改。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **91 tests OK (skipped=2)**，连跑两次一致（87 → 91）；新回归 `demo-api/tests/test_ledger_lock.py` 断言「调用 `Handler._json` 的那一刻 `STATE_LOCK.locked()` 为假」，并用一段等价脚本证明探针有牙：锁内调用采样 `True`、锁外采样 `False`（`[True, False]`），所以修复前这类断言必然变红，不是空断言。
+- **未验证**：远端 CI（本条推送后回填）；并发压测下 409/403 的真实尾延迟；Docker 演示栈与 Playwright E2E（引擎仍返回 500）。
+- **回退**：`git revert` 本次提交，`test_ledger_lock.py` 随之一并删除。
+- **授权**：B 类（本地虚构数据与本地状态文件；清理动作只针对本轮测试自己写入的行，且已先核对无他人数据）。
+
+
+## D-073 台账与审计路径改在调用时解析：只换 STATE_DIR 就必须换掉全部状态文件
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（`585a3cd`；远端 run 40099942110 的「本地演示 API 测试」日志实读 `Ran 95 tests in 2.612s` + OK，check-run 120889841755）
+- **问题**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入期就把路径拼死了。测试隔离状态最自然的写法是只换 `demo.STATE_DIR`，而这个写法**静默无效**：读写仍然落在仓库真实的 `demo-api/state/` 里。D-072 的第一版锁测试就是这样把虚构异动写进了本地台账，我当时用「setUp 里同时替换三个名字」绕过去，把坑留在了原地。
+- **决定**：删掉两个模块常量，改成 `state_path()` / `assistant_log_path()` 在每次读写时按当前 `STATE_DIR` 解析（app.py:99-107）。产品行为不变：容器里 `STATE_DIR` 依旧是启动时注入的环境变量，解析结果与过去逐字节一致。测试侧只保留一处 `demo.STATE_DIR = 临时目录`，`test_app.py`/`test_http_api.py`/`test_ledger_lock.py` 里那 6 处手工同步 `STATE_PATH`/`ASSISTANT_LOG_PATH` 的补丁全部删掉。
+- **为什么不留在测试侧**：`quarantine_ledger()` 用 `STATE_PATH.with_name()` 派生隔离副本，导入期绑定下损坏备份也会跑到真实目录里，排障的人按临时目录找不到；这类「换个目录不生效」的债会在每条新测试上重新踩一次。
+- **验证（实测）**：新增 `demo-api/tests/test_state_dir_isolation.py`（3 条：台账读写、审计写入、损坏隔离副本都必须落在当前 `STATE_DIR` 内；`tearDown` 再断言真实 `state/` 目录的内容指纹前后一致）。
+  - 探针命中分支：把 `state_path`/`assistant_log_path` 包一层计数后跑该文件，调用次数 6 / 2，非空断言。
+  - 可证伪：在同一进程里把两个函数退回「导入期算好的固定路径」，该文件立刻 `FAILED (failures=4)`，报的就是「台账没写进当前 STATE_DIR」和「本次测试改动了真实 state/ 目录」。
+  - 整轮 `python -m unittest discover -s tests -p 'test_*.py'` → **94 tests OK (skipped=2)**（91 → 94），且真实 `state/` 目录 sha1 指纹在整轮前后完全相同（`{'changed': []}`）。
+- **本轮自己造成的污染与处置**：上面那次「退回导入期绑定」的变异探针把 `BG-DIR-1` 虚构记录写进了本地 `demo-api/state/ledger.json`（39 → 113 字节）并生成了一个隔离副本。核对内容确认全是探针写入后，用 `save_ledger(empty_ledger())` 由应用自己的写路径还原成空台账（39 字节），删掉探针生成的那个副本；目录里另有两个更早运行留下的 3 字节 `{{{` 副本**未动**（不是本轮产生的，删除别人的产物不在这次授权范围内）。`demo-api/state/` 被 gitignore 命中（`git status --ignored` 显示 `!!`），远端与 PR 不含这些文件。
+- **未验证**：容器内（`STATE_DIR` 由 compose 注入的真实挂载路径）行为——本机 Docker 引擎仍返回 500，只验到远端 CI 的 Linux 单测层。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`demo-api/tests/test_http_api.py`、`demo-api/tests/test_ledger_lock.py`、`demo-api/tests/test_state_dir_isolation.py`（新增）。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 585a3cd`（含其测试文件），历史行为逐字节还原。
+- **授权**：B 类（本地代码与本地虚构状态文件；未触碰正式数据、认证或外部服务）。
+
+
+## D-074 413 也会被 RST 吞掉：排空改成「有上限、有短超时」，并把两条契约拆开钉
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（`4965452`；远端同一 run 的「本地演示 API 测试」`Ran 95 tests` OK，两条超限用例在 Linux 上同样成立——含「连打三次必须拿到 413」那条，说明排空在 Linux 也没被 RST 吞掉）
+- **问题**：D-070 让早退错误先排空请求体再回响应，但对 `Content-Length > MAX_BODY_BYTES` 明确选择**不排空**，理由是「读干净等于放弃了这个上限本身」。代价当时没量化，这轮量化了：整轮测试 10 次里 **4 次**红，红的是 `test_body_over_limit_is_rejected_not_parsed`，异常 `ConnectionAbortedError [WinError 10053]`——客户端把 64KB+ 的请求体发完了，字节还躺在接收缓冲区里，服务端带着未读数据关闭就是 RST，把**已经送达**的 413 一起丢弃。前端用户看到的仍是「网络错误」，而不是「请求体过大」。单独跑那条用例 10 次全绿，所以它是整轮上下文里的时序问题，不是新代码写坏了。
+- **先证伪自己的猜测**：怀疑是排空超时太短，把 `DRAIN_TIMEOUT_SECONDS` 从 1.0 调到 10.0 做 A/B，各 4 轮整轮——两边都还是同一用例红 1 次，超时假设不成立。真正的差异在测试自己：那份 body 用 `json.dumps` 默认 `ensure_ascii=True`，中文被转义成 6 字节/字，长度 393,292 字节，**超过**新的排空上限 `DRAIN_MAX_BYTES = 4 × MAX_BODY_BYTES = 262,144`，按设计就不排空。
+- **修法**：`_drain_body()` 分块读（8KB/次）到声明长度为止，上限 `DRAIN_MAX_BYTES`、超时 1 秒（到点放弃，慢速客户端不能占着 32 个并发槽之一不放），结束后把 socket 超时还原成 `Handler.timeout`；`_read_json` 的 413 分支从 `_json` 改走 `_reject`。于是「刚超限」这个真实触发区间（64KB～256KB）能稳定送达，比它更大的请求体仍然只拒绝、不替攻击者吞数据。
+- **测试**：契约按大小拆成两条，都不减断言。
+  - `test_over_limit_body_still_delivers_the_413`：请求体落在排空窗口内，裸 socket 分两次写，连打 3 次，必须每次都拿到 413 且关闭是 FIN。修复后 10/10 轮全绿；把 `_drain_body` 置空（= 修复前行为）后 6/6 轮全红。
+  - `test_body_far_over_limit_is_never_parsed`：请求体用**合法且会被答出来**的巨大 JSON（「明天有什么课」+ padding，1.5MB），断言问数审计行数不变（真的没被解析），响应若能读到必须是 413，连接被 RST 中止是本用例被明确接受的失败方式。把 `MAX_BODY_BYTES` 上限取消（变异）后该用例变红，证明「行数不变」不是空断言。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **95 tests OK (skipped=2)**，整轮连跑 **10/10 全绿**（修复前同一条命令是 6/10）。排空调用探针记录到 8 次调用、`Content-Length` 分别为 393292 / 34 / 196654×3 / 30 / 17，说明拒绝路径确实走到了排空。`demo-api/state/` 指纹在探针前后不变。
+- **仍未验证**：容器内（Linux）与真实 nginx `client_max_body_size 1m` 前后的 413 表现（引擎 500）；浏览器 fetch 发超限请求时的具体报错文案。远端 CI 待回填。
+- **影响**：超限请求的拒绝语义、状态码、错误文案都没变；变的是「拒绝的送达性」——从尽力而为（实测 60%）变成窗口内保证。多花的成本是有界排空最多 256KB 读 + 最多 1 秒。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_http_api.py`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 4965452`，413 恢复为不排空直接回复（那条时序红会重新出现，实测约 4/10）。
+- **授权**：B 类（本地代码、临时端口真实服务、虚构请求体）。
+
+## D-075 悬浮面板不再丢弃服务端的 `as_of` 与追问：同一份回答，两个界面口径一致
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（`5277fcd`；远端「演示栈 E2E」check-run 120889842005 日志实读 `Running 28 tests using 1 worker` → `28 passed (1.7m)`，含本轮新增那条；「前端类型检查与构建」pass。本地 Docker 引擎仍 500，所以真跑证据只有远端这一份）
+- **问题**：`/demo-api/assistant/query` 的响应里 `as_of`（这批数据的取值时刻）和 `suggestions`（针对这次回答的下一步问法）都有值，完整问数页 `AssistantPage.tsx` 早就在用（第 69-70、140-142 行），悬浮面板却两个都丢掉：范围行只有「数据范围 · X」，追问条永远是按页面写死的 5 条。于是同一句「明天有什么课」，在问数页能看到数据截止时刻、能顺着回答追问，在悬浮面板里看不到也点不到——「AI 能力与业务页面割裂」剩的就是这一公里。
+- **决定**：面板只做问数页已经验证过的两件事，不新增视觉语言。
+  - `replyMeta()` 把范围与截止时间拼进已有的 `.fa-scope` 药丸：`数据范围 · 仅本人课表 · 截至 2026-10-24 21:36`。`as_of` 原值是带时区的完整 ISO，在 392px 宽的面板里会折行，所以格式化到分；问数页仍显示原值，本次不动它。
+  - 追问条优先用 `reply.suggestions`（服务端针对这次回答给的），没有才退回按页面的静态列表。`.fa-suggestions` 是 `flex-wrap: wrap`（styles.css:3420），条数 4～5 不会溢出。
+  - **`intent` 仍不进面板**：`INTENT_LABELS` 是内部口径名（`change_count`/`out_of_scope`），面向学生和老师的悬浮入口不需要读它，问数页保留即可。这是范围决定，不是遗漏。
+- **验证（实测）**：`npm run build`（`tsc --noEmit && vite build`）通过；`replyMeta`/`formatAsOf` 用真实响应值在 node 里跑过四种输入：带范围+ISO → `数据范围 · 仅本人档案 · 截至 2026-10-24 21:36`；空 scope → 空串（不渲染药丸）；`as_of` 不是 ISO → 原样回落；`reply` 缺失（欢迎语）→ 空串。
+- **新增 E2E**：`web/e2e/demo.spec.ts:167`「悬浮面板把服务端的截止时间与追问一起交给用户，不再只显示数据范围」——期望值不写死演示数据，而是从 `page.waitForResponse` 拿到的本次响应里取 `answer`/`as_of`/`suggestions[0]` 再断言 DOM，所以「面板重新丢掉这两项」必然变红，而账号当周有没有排课都不影响它跑。静态检查做到：显式 `npx tsc --noEmit ... e2e/demo.spec.ts` 通过（`e2e/` 不在 `web/tsconfig.json` 的 `include` 里，`npm run build` 原本根本不看用例）、`npx playwright test --list` 收集到 **28 tests**。
+- **未验证**：真实浏览器里药丸换行与追问条的观感——E2E 断的是文本内容，不是版式（远端已跑通 28 条，但没人眼看过）；D-071 跨周定位提示仍无自动化覆盖——它的判据依赖具体周次与格子内容，本轮没有可复现的跨周样例，盲写容易做成永真断言，所以没补。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert` 本次提交（连同那条 E2E），面板恢复为只显示数据范围 + 静态追问。
+- **授权**：B 类（仅前端展示逻辑与本地测试，虚构数据，无副作用、不出网）。
+
+
+## D-076 数据工作台开场问法补回被 E2E 点击的那一条：PAGE_SUGGESTIONS 是被测契约，改前必须对两侧用例
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（修复提交 `969c69b`；远端 run 40102964982 全部 8 个 job pass，其中「演示栈 E2E」check-run 120898706013 日志实读 `28 passed (1.2m)`，与回归前的 28 条总数一致；「前端类型检查与构建」pass）
+- **问题与证据**：`c14b0ca` 给 `/workbench` 与 `/counselor` 配了专用开场问法列表（D-075 的延伸：让服务端 recommendations 之外的兜底也贴合页面）。但 `/workbench` 新列表漏掉了「人工智能学院有多少学生？」——这条此前由 `STAFF_SUGGESTIONS` 兜底提供，且被 E2E 依赖：`web/e2e/demo.spec.ts:352`（学工处登录落在 /workbench，点击该按钮后断言「名学生」）。改动一推送，「演示栈 E2E」job（run 40102440888，job 120897177532）超时失败：`waiting for getByRole('dialog', { name: 'AI 助手' }).getByRole('button', { name: '人工智能学院有多少学生？' })`，17 passed / 1 failed / 10 did not run（fail-fast 吞掉后续）。demo-api 单测（test_app.py:350、387）和 E2E 都锁这条问法，删掉兜底按钮却没人先查测试面。
+- **根因**：PAGE_SUGGESTIONS 不只是产品文案，它是 E2E 与单测共同依赖的契约。c14b0ca 改动时只对照了产品意图，没有 grep 两侧测试对建议按钮的点击位置。
+- **先证伪自己的猜测**：失败后先怀疑是服务端把该问法判为 out_of_scope——查 demo-api/app.py:551 服务端 suggestions 列表含该问法、test_app.py:350 有 count 意图单测、387 有 staff 身份用例，服务端支持完整，问题收敛为纯前端按钮缺失。再 grep 全部 E2E 建议按钮点击（spec.ts 77 / 220 / 247-248 / 238-239 / 352 行），确认只有 /workbench 一处受影响，其余点击落在未改动页面。
+- **修法**：`969c69b`，把「人工智能学院有多少学生？」补回 `/workbench` 列表首位（它也是该页最典型的问数入口）。单文件单行，1 insertion / 1 deletion。
+- **测试（实测）**：本地 `npm run build`（tsc --noEmit && vite build）12.18s 通过；远端 run 40102964982「演示栈 E2E」`28 passed (1.2m)`，其余 7 个 job（后端接口与校验测试、本地演示 API 测试、AI 助手原型测试等）全部 pass。
+- **两条旧待办的证伪结论**（此前一直挂在该文件待办池，本轮核实后销账）：
+  - 「PAGE_TITLES 只覆盖 5/10 路由」**不成立**：实读 FloatingAssistant 的 PAGE_TITLES 覆盖全部 11 条路由（含 /login 的空场景），无需修改。
+  - 「≤640px 下 FAB 与面板重叠」**不成立**：panel `bottom: 74px` 高于按钮占位（14–62px），样式上不重叠；真机观感仍未验证（见下）。
+- **未验证**：新开场问法列表在真实浏览器里的观感与点按体验——Docker Desktop Linux 引擎仍返回 500，本地演示栈起不来；本轮验证只有远端 CI 的无头 Chromium 证据，无人眼看过版式。
+- **流程教训**：今后任何改 PAGE_SUGGESTIONS / STAFF_SUGGESTIONS 的提交，前置检查 = `grep -n "getByRole('button', { name:" web/e2e/demo.spec.ts` + demo-api/tests 里对应问法的用例，两侧都确认后才动。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 969c69b`（会把 E2E 重新变红，不可单独回退）。
+- **授权**：B 类（仅前端展示文案与虚构数据，无副作用、不出网）。
+
+## D-077 跨周课程定位补上 E2E：不可见的格子明说「未定位」，可见的格子必须真高亮
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（测试提交 `22f8968`；远端 run 40103998682 全部 8 个 job pass，其中「演示栈 E2E」job 120901777237 日志实读 `Running 29 tests using 1 worker` → `29 passed (1.6m)`，新用例在第 9 位：`✓ 9 e2e/demo.spec.ts:188:3 › 跨周课程定位：当前周不可见时明说未定位，可见时真正高亮 (3.2s)`）
+- **问题**：D-071 实现了跨周定位提示（点课程卡片后若目标 (weekday, period, course) 不在当前周课表可见，弹「不在当前第 N 周的周X P节，页面未做定位」），但一直没有自动化覆盖。D-075 时评估过盲写风险：判据依赖具体周次与格子内容，写不好就是永真断言，于是搁置。本轮补齐。
+- **先证伪自己的猜测**：最初假设「点任意下周课程卡片都会出提示」——读 `applyFocus`（StudentSchedulePage.tsx:62-85）发现可见性按 (weekday, period, course) 键判断，第 8 周同格同课存在时会正常高亮而非提示。用 Python 探针（`sys.path.insert(0,'.')` + `import app as demo`，身份 dict 按 test_app.py:38-43 构造）逐一核对 14 门下周课：**唯一**不可见的是「周三 5-6节 高等数学(一)」，同课程名在「周二 1-2节」可见——天然构成对照对，测试据此设计：absent → 提示；visible → `is-focus` 且无提示。探测输出需 `python -X utf8` 规避 GBK 乱码。
+- **修法**：不改产品代码（D-071 的实现经核对是对的），只补 E2E：`web/e2e/demo.spec.ts:188`「跨周课程定位：当前周不可见时明说未定位，可见时真正高亮」。锚点基于静态演示数据（`demo-data.json:460` 的 `current_week: 8` 不随日期漂移），课程名与周次允许写死；但 `courses.length > 0` 的前置断言给了明确失败信息（锚点漂移时先查 demo-data.json），不是盲等。
+- **测试（实测）**：本地 `npx playwright test --list` 收集 29 tests；远端 run 40103998682「演示栈 E2E」`29 passed (1.6m)`，其余 7 个 job（网关构建、前端类型检查与构建、后端接口与校验测试、本地演示 API 测试等）全部 pass。可证伪性：提示断言写死「周三 5-6节」「第 8 周」，回归实现（去掉 setFocusNotice 或改可见性判断）必红；高亮断言 `toHaveClass(/is-focus/)` 锁定 td 的真实 DOM 状态，不是文本近似。
+- **未验证**：真实浏览器里提示 Alert 的观感与 5 秒自动清除的时序体验——E2E 断的是文本与 class 存在性，不是动画与版式；本地 Docker 引擎仍 500，无本地人眼证据。
+- **涉及文件**：`web/e2e/demo.spec.ts`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 22f8968`（纯测试提交，回退后 D-071 功能仍在，只是失去回归保护）。
+- **授权**：B 类（仅测试代码与虚构演示数据，无副作用、不出网）。
+
+## D-078 学生助手「他人课表」指称守卫：跨学生问题曾被误答成本人课表
+
+- 日期：2026-10-24
+- 状态：Verified locally（97 单测通过，待 CI 复核）
+- 问题与证据：安全面探测发现 `schedule_answer` 对「张三的课表是什么」「我室友明天有什么课」「隔壁班的同学今天有什么课」三个跨学生问题全部返回 `schedule_day` intent，并按学生本人的课表回答（「今天没有课」）。这类误导性回答既可能让学生误以为查到了他人课表，也可能把他人问题误当成自己的安排（比如室友真的有课而自己没课时，回答「今天没有课」是错的）。现有 `SENSITIVE_PATTERN` 只覆盖「别人|其他学生」，不覆盖室友/同学/隔壁/人名等常见指称。
+- 备选方案：(a) 不处理——课表数据本来就是按登录学生 scope 过滤的，不泄露数据，但回答内容误导，属于正确性/可信度缺陷；(b) 把室友/同学/隔壁/同桌并入 SENSITIVE_PATTERN——措辞是「学号、证件号…不在这里提供」，与「查别人课表」的语境不符；(c) 独立 `mentions_other_student` 守卫+定制拒绝话术——明确说明只能查本人课表，并给出正确问法引导。
+- 选择：方案 (c)。`OTHER_STUDENT_PATTERN` 匹配显式指称（室友/同学/隔壁/同桌）与「X的课表/课程表」中 X 不属于时间/本人归属词（我/今天/明天/周一/本周/我们班等）的模式；命中即返回 `refused` intent、空 courses、引导问法。只对「课表/课程表」做 X 的 归属判断，不扩展到「X的课」，避免把「高等数学(一)的课」这类课程名误判为他人指称。守卫放在 SENSITIVE_PATTERN 之后、profile/课表分支之前。
+- 影响：学生侧 UX——跨学生问题从误导性回答变为明确拒绝+正确引导；不泄露任何数据（原本也不泄露），提升回答可信度；无接口契约变化，前端 FloatingAssistant 无需改动。
+- 风险与回退：启发式存在漏判（如生僻指称）——漏判时行为退回修复前，不会更糟；误判风险由 TIME_OWNER_WORDS 白名单（含 我/我们班/本周/周一 等）约束，且新增反例测试锁定。回退 `git revert <本提交>`。
+- 修改文件：demo-api/app.py（OTHER_STUDENT_PATTERN/mentions_other_student + schedule_answer 守卫分支）、demo-api/tests/test_app.py（他人指称必须拒绝、本人问法不被误拦两个用例）。
+- 测试：本地 `python -m unittest discover -s tests -p "test_*.py"` → Ran 97 tests, OK (skipped=2)，含 2 个新用例；探测复跑确认 3 个跨学生问题全部 `refused`、8 个本人课表/档案问法全部不受影响。
+- 未验证：真实浏览器中悬浮助手对这三问的观感（依赖本地 Docker 恢复）；CI 复核结果见本条目提交对应的 run。
+- 授权要求：B 类（纯演示代码与测试，无正式环境操作）。
+
+## D-079 学生助手花名册姓名守卫（收口 D-078 漏判）
+
+- 日期：2026-10-24　分支：`feat/local-demo-workbench`（PR #58）
+- 问题与证据：D-078 的 `OTHER_STUDENT_PATTERN` 只匹配纯汉字（`([\u4e00-\u9fa5]{2,4})的(?:课表|课程表)`），而演示数据的学生姓名是脱敏格式、含 `*`（如 `朱**`）。探测（修复前）：`朱**的课表` 与 `朱**今天有没有课？` 均返回 `schedule_day`，被按本人课表误答为「今天没有课」，而非拒绝。
+- 方案取舍：a) 扩宽正则以容纳 `*` —— 会引入更宽的误拦面且仍依赖措辞；b) 用花名册字面匹配兜底 —— 与数据同源、精确、并按姓名排除本人。选择 b：`STUDENT_NAMES`（从 DATA students 去重提取）+ `mentions_roster_student(question, student)`，并入 schedule_answer 现有 refused 分支，复用同一拒绝话术与 intent=refused 审计。
+- 风险与回退：问题中若恰好包含与某学生姓名同形的课程名/教师名等片段，会被误拦为 refused；姓名含 `*` 使普通词组同形概率极低，接受该风险。回退：`git revert` 本提交。
+- 测试：新增 `test_roster_student_names_are_refused_even_without_keewei`（真实花名册姓名两种问法 intent=refused、courses=[]、本人姓名不误拦）；修复前探测已证明两个问法均被误答。本地 `python -X utf8 -m unittest discover -s tests`：98 tests OK (skipped=2)。
+- 未验证：浏览器端拒绝话术观感（本地 Docker Desktop 仍 500，待恢复后由演示栈 E2E/人工验证；远端 CI 的 E2E job 覆盖服务端行为）。
+
+## D-080 无 Docker 本地演示运行入口（stub 网关 + 静态代理）：Docker 引擎 500 期间的替代验证栈及其边界
+
+- 日期：2026-10-24　分支：`feat/local-demo-workbench`（PR #58）
+- 问题与证据：Docker Desktop Linux 引擎持续返回 500（多轮确认，非本会话引入），本地无法按 `docker compose` 启动演示栈，D-075～D-079 的浏览器观感验证一直缺本地入口。新建 `scripts/demo/local-demo-node.py`：单进程三层——①静态入口（服务 `web/dist`，SPA 路由回退 index.html，`/gw/*` 反代到 stub 网关）；②stub 网关（只实现 RuoYi 契约 `POST /auth/login` 与 `GET /system/user/getInfo`，演示账号与 Docker 栈一致）；③以子进程启动 demo-api（`DEMO_API_PORT`）。端口经 `DEMO_ENTRY_PORT/DEMO_GW_PORT/DEMO_API_PORT` 覆盖（本轮实测 8093/9280/9281，避开 Docker backend 占用的 8083/9180/9181）。修复过两个自身缺陷：main() 此前从未 `gateway.serve_forever()`（网关 404，补 daemon 线程 + finally `gateway.shutdown()`）；`EntryHandler` 未绕过系统代理导致本机请求走 proxy（补 `NO_PROXY_OPENER`）。文件头 docstring 明示：它不是真实网关，缺少登录锁定、租户、clientid 校验、JWT 签名等行为，经此栈验证的结论不能替代 Docker 演示栈或 CI 的 E2E 结果。
+- E2E 结果（stub 环境，`DEMO_BASE_URL=http://127.0.0.1:8093`，channel msedge，serial）：三次合并后 29 条用例全部执行过——25 passed，4 failed。4 个失败全部溯源到同一 stub 边界：前端对 `/gw/internal/proxy/*` 的调用（imports 导入预检、stats/overview、meta/filters、students）依赖真实 Java 网关内部签名链路代理到 Java 后端，stub 网关对其返回 404 而非 200/401。定位过程：Playwright 诊断脚本遍历 9 条路由抓到 3 个确切 404 URL（`/gw/internal/proxy/stats/overview`、`/meta/filters`、`/students?...`），与 `web/src/api/home.ts:6`、`web/src/api/students.ts:18/22/26` 的调用点吻合；grep 确认 demo-api/app.py 只有 `/data`、`/four-sheet` 等端点、无这些业务端点。4 个失败用例：「管理员导入预检」「管理员页面无控制台错误或横向溢出」「业务请求遇到 401 同样清理会话」（stub 返回 404 而非 401，401 清会话路径不触发，页面停在 /students）「总览与工作台各自标明数据源」（stats/overview 404 → KPI 为 0，断言 >0 失败）。
+- 方案取舍：a) 为 demo-api 补 stats/overview、meta/filters、students 端点让 4 条用例变绿——拒绝：与真实 Java 后端契约分叉，构成重复业务实现，且属于虚构后端能力；b) 在 stub 网关伪造这些代理响应——同样伪造契约，拒绝；c) 记为 stub 环境边界，用 `--grep-invert` 补跑其余用例，4 条失败等待 Docker 恢复或远端 CI 验证——选择 c。远端 CI run 40103998682（D-077 提交时）已证明 Docker 栈上 29 条全过，4 条失败是环境边界而非回归。
+- 影响：Docker 引擎 500 期间恢复本地浏览器级验证能力（Playwright E2E 25/29 通过，覆盖悬浮助手追问滚动、台账降级提示、失效 token 清会话、角色权限、辅导员台账/导入/导出、跨周定位等核心路径）；首页/、/students、导入预检与 401 清会话四条路径在本栈降级，文档与日志均已标注。
+- 测试（实测）：健康检查 entry 200 / gw-login 401（空 body）/ api healthz 200；E2E 三段合并 25 passed / 4 failed（均为 stub 边界）；停栈后 netstat 复核 8093/9280/9281 全部释放；E2E 前后对 demo-api/state 台账与审计文件做了备份/恢复，历史 `ledger.corrupt-20261024-*.json` 保持原样未动。
+- 未验证：学生页 KPI 展示（D-065，students 端点 404 页面降级）、并发尾延迟（D-072）、导入预检与 401 清会话的真实链路——均需 Docker 演示栈或远端 CI；本栈结论一律不得表述为 CI/生产验证结果。
+- 涉及文件：`scripts/demo/local-demo-node.py`（新增）、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- 回退：删除 `scripts/demo/local-demo-node.py` 即完全回退，不影响任何现有路径。
+- 授权：B 类（仅本地脚本与文档，虚构数据，不出网、无副作用）。
+
+## D-082 AI 评审脚本失败路径优化：连接阶段超时与 429 退避
+
+- 日期：2026-10-24　分支：`feat/local-demo-workbench`（PR #58）
+- 问题与证据：2026-10-24 重跑 AI 评审（run 40109339936），job 显示 success 但日志揭示 LLM 上游不可用的完整失败链——探测请求 `curl: (28) Connection timed out after 30002 milliseconds`，正式请求 `Connection timed out after 300002 milliseconds`，重试后 `HTTP 429`。三个问题：①脚本只有 `--max-time` 总超时，上游地址路由不通时，TCP 连接阶段就把 30s/300s 全部耗光，而连接失败本可在秒级判死；②429 后固定 `sleep 5` 立即重试，实测 2s 后再次 429（限流窗口通常在秒级以上）；③整体表现为一次评审失败耗时约 5.5 分钟，占掉 15 分钟 job 预算的三分之一。
+- 备选方案：a) 缩短 `--max-time`——拒绝：生成阶段确实需要长超时（流式输出大 diff 评审结论可达数分钟），一刀切会误伤慢模型；b) 加 `--connect-timeout` 把「连不上」与「生成慢」分开约束——选择；c) 429 换成指数退避——对最多 2 次尝试的脚本过度设计，固定 20s 足够跨过秒级限流窗口。
+- 选择：新增 `LLM_CONNECT_TIMEOUT`（默认 15s，入参校验循环统一回退默认）；probe_once 的 curl 用 `--connect-timeout min(10, tmo)`；正式请求用 `min(LLM_CONNECT_TIMEOUT, CUR_TIMEOUT)`（CUR_TIMEOUT 可能被剩余预算压小，connect-timeout 不应超过总超时）；重试 sleep 改为「429 → 20s，其他 → 5s」。成功路径行为不变：连接建立后 connect-timeout 即失效，生成阶段仍可用满 `--max-time`。
+- 本地验证边界（诚实记录）：尝试用黑洞 IP（10.255.255.1 / 192.0.2.1）在本机复现 connect 阶段挂起失败——本机代理环境下两者均 5-8s 快速返回 `curl: (52) Empty reply`，无法本地复现挂起。修复依据改为：curl 文档语义（`--connect-timeout` 仅约束连接阶段）+ CI 日志的 30002/300002ms 实测证据。端到端验证方式：推送后 PR 自动触发的真实评审 run——若上游仍不通，失败应在约 1 分钟内出现（探测 10s 判死 + 正式请求 15s 判死 ×2 + 退避），并正常发布失败说明；若上游恢复则直接获得真实评审结论。
+- 涉及文件：`.github/scripts/ai-review.sh`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- 回退：`git revert` 本提交，恢复为仅 `--max-time` 的原行为。
+- 授权：B 类（仅 CI 脚本与文档，无正式环境操作；LLM 上游 Secrets 更换仍为授权项，本条不涉及）。
+- **验证结果（run 40111346746，提交 7859d04，实测）**：job 从 5.5 分钟缩到 46 秒，fail-open 留痕正常（comment=6380756155 原地更新）。但失败模式与此前不同——上游本次**可达**（首个探测成功返回 769 字节思维链，未触发连接超时），真正的瓶颈是**限流**：探测 5 个开关全部 429（挨个试完，白烧 5 次配额），正式请求 429 → 退避 20s 重试 → 仍 429。据此追加一条修复：候选开关循环中一旦撞 429 立即 break（限流时瓶颈是配额不是开关字段），探测从最多 6 次请求降到最多 2 次，把剩余配额留给正式请求。上游限流策略本身（每日配额还是每分钟窗口）无法从外部判断，更换 `AI_BASE_URL`/`AI_MODEL` 或升级配额仍需授权。
+- **验证结果二（run 40111610585，提交 9ef1b54，实测）**：探测止损生效——第一个开关即 429 立即停止（仅 2 次探测请求）；正式请求成功拿到配额并连上上游，300s 内流式收到 26271 字节 `reasoning_content`、0 字节正文，随后按「只思考不输出」路径发布精确失败说明并更新既有 comment。至此脚本侧可自主优化的路径全部闭环，确诊根因为：该 `AI_MODEL` 是推理模型且其网关不接受已知的 5 种关思考开关（且限流使自动探测无法逐个验证）。剩余修复均为仓库配置变更，属授权项：①设置仓库 Variable `AI_EXTRA_BODY`（用该网关实际支持的字段）；②更换 Secret `AI_MODEL` 为非推理模型。失败说明已把这两条排查方向写清楚，接手人无需从零排查。

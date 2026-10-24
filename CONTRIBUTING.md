@@ -186,8 +186,14 @@ gh variable set AI_EXTRA_BODY --repo 123asdtte/campus-data-ai --body '{"reasonin
 配置错了网关会返回 400，评审照样失败但会留痕；不确定就用非推理模型。
 
 其他可调项（同样是 Variables）：`LLM_TIMEOUT`（单次上限，默认 300 秒）、`LLM_RETRY`（额外重试次数，默认 1）、
-`PROBE_TIMEOUT`（单次探测上限，默认 30 秒）、`LLM_BUDGET`（探测+请求+重试的总预算，默认 780 秒）。
+`PROBE_TIMEOUT`（单次探测上限，默认 30 秒）、`LLM_BUDGET`（探测+请求+重试的总预算，默认 720 秒）、
+`LLM_CONNECT_TIMEOUT`（连接阶段上限，默认 15 秒；上游地址连不通时秒级判死，不占用生成超时）、
+`DIFF_LIMIT`（送审 diff 上限，默认 61440 字节）。
 总预算是为了保证 job 被 kill 之前一定能把失败说明发出去——被 kill 的话，PR 上会一点痕迹都没有。
+
+另外两点实测行为，排查时可用：探测一旦撞上 429 限流会立即中止（继续换开关只会烧掉正式请求的配额）；
+正式请求若在超时内只收到 `reasoning_content` 而正文为空，失败说明会明确写「推理模型的思考阶段吃掉了全部时间」，
+此时该换非推理模型或配 `AI_EXTRA_BODY`，而不是查网络。
 
 ### 实际发给模型的内容
 

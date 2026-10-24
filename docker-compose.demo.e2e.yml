@@ -1,0 +1,10 @@
+# E2E 覆盖文件：演示台账改用容器命名卷。
+# 默认的宿主机绑定目录在 CI 中由容器以 root 写入，runner 用户无法删除；
+# 命名卷随 `down -v` 一起回收，每次运行都是干净台账。
+services:
+  demo-api:
+    volumes:
+      - demo_state:/app/state
+
+volumes:
+  demo_state:

@@ -15,6 +15,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/gw/, ''),
       },
+      // 本地开发经 Docker demo 入口代理到 demo-api；需先启动 8083 演示栈
+      '/demo-api': {
+        target: process.env.DEMO_BASE_URL ?? 'http://127.0.0.1:8083',
+        changeOrigin: true,
+      },
     },
   },
   build: {

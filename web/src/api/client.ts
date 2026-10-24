@@ -8,7 +8,7 @@
  * - 不在此文件中存放任何凭据或密钥。
  */
 
-import { GW_BASE, GW_CLIENT_ID, getToken } from './auth';
+import { GW_BASE, GW_CLIENT_ID, getToken, notifySessionExpired } from './auth';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -77,6 +77,10 @@ export async function requestGateway<T>(
     }
 
     if (!response.ok) {
+      if (response.status === 401) {
+        notifySessionExpired(token ?? undefined);
+        throw new ApiError('登录状态已失效，请重新登录', 401);
+      }
       // FastAPI 直传的 4xx/5xx 错误体形如 {detail: "..."}
       const detail =
         payload && typeof payload === 'object' && typeof (payload as { detail?: string }).detail === 'string'
@@ -87,6 +91,10 @@ export async function requestGateway<T>(
     if (payload && typeof payload === 'object' && typeof (payload as { code?: number }).code === 'number') {
       const wrapped = payload as { code: number; msg?: string };
       if (wrapped.code !== 200) {
+        if (wrapped.code === 401) {
+          notifySessionExpired(token ?? undefined);
+          throw new ApiError('登录状态已失效，请重新登录', 401);
+        }
         throw new ApiError(wrapped.msg || `网关返回 ${wrapped.code}`, wrapped.code);
       }
       // RuoYi 成功响应统一包在 data 里；如果存在 data 则返回 data

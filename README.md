@@ -7,6 +7,9 @@
 > **本仓库当前只有一套在跑的系统**：React 前端 + FastAPI + PostgreSQL（见 §2）。
 > RuoYi-Vue-Plus 相关的一切内容都位于**仓库之外的隔离 POC 目录**，是迁移方案的验证环境，**不是**生产系统的一部分。
 
+> **本地演示版**：见 [docs/LOCAL-DEMO.md](docs/LOCAL-DEMO.md)。使用虚构数据、独立容器 `127.0.0.1:8083`，不改动现有 `8082` 前端。
+> **上线状态**：生产环境尚未部署；阻塞项、授权要求与回退方式见 [PRODUCTION-READINESS-REPORT.md](PRODUCTION-READINESS-REPORT.md)。
+
 ---
 
 ## 1. 项目要解决什么
@@ -261,7 +264,8 @@ docker compose -p campus-web -f docker-compose.web.yml logs -f
 | 安全·开启态 | `test_internal_auth.py`、`test_route_matrix.py` | 缺头/篡改/过期/重放/权限/范围、11×5 矩阵 | PostgreSQL |
 | Java 网关 | `gateway/` | `mvn -B -DskipTests -pl ruoyi-admin -am package` | JDK 21 + Maven |
 
-**CI 实查（2026-10-22）**：关闭态 collected 213（**130 passed / 82 skipped / 1 xfailed**）；开启态 collected 88（**88 passed**）。
+**隔离库实查（2026-10-24）**：关闭态 **195 passed / 102 skipped / 1 xfailed**；认证开启态 **120 passed**。
+数字来自 `scripts/dev/test-import-api.py` 与隔离库 `127.0.0.1:5433/campus_test`。
 
 ```bash
 cd import-api
@@ -272,8 +276,19 @@ CAMPUS_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/campus_test \
   python -m pytest                    # 额外跑真库集成用例
 ```
 
+本地一键跑完整链路（初始化/校验 001、003、004、006，再跑关闭态与安全开启态）：
+
+```bash
+python scripts/dev/test-import-api.py
+```
+
+脚本只接受库名包含 `test` 的目标，拒绝指向主库 `campus`。
+
 真库用例会 **TRUNCATE 业务表**，只能指向独立测试库；CI 用 `postgres:16.15-alpine` service
 并先执行 `python scripts/init-test-db.py` 建结构。**禁止把该变量指向主库 `campus`。**
+
+AI POC 测试（`ai-assistant/tests`）会执行 `DELETE FROM ai.students`，同样禁止指向共享库。
+默认不会连接 55435 的本地 POC 库；请用 `AI_DB_PORT` 指向隔离测试库（CI 为 5432），或在确认目标库数据可丢弃后显式设置 `AI_TEST_ALLOW_LIVE=1`。
 
 本轮尚未覆盖（仍是空白，不是「已验证」）：
 
