@@ -29,7 +29,7 @@ Write-Host "[demo] compositing demo stack on ${Bind}:${Port} ..."
 & docker @composeArgs up -d --build
 if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed' }
 
-$url = "http://127.0.0.1:$Port"
+$url = if ($Bind -in @('0.0.0.0', '::', '[::]')) { "http://127.0.0.1:$Port" } else { "http://${Bind}:$Port" }
 $code = ''
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 1
@@ -40,6 +40,9 @@ if ($code -ne '200') { throw "web health check failed: HTTP $code" }
 
 Write-Host ''
 Write-Host "Local demo: $url" -ForegroundColor Cyan
+if ($Bind -ne '127.0.0.1') {
+    Write-Host "Listening on ${Bind}:${Port}; confirm security group / IP allowlist before sharing." -ForegroundColor Yellow
+}
 Write-Host 'Login: admin / admin123' -ForegroundColor Cyan
 Write-Host 'Existing 8082 frontend is untouched.'
 if (-not $NoBrowser) { Start-Process $url }
