@@ -1626,3 +1626,21 @@
 - **回退**：`git revert` 本次提交（连同那条 E2E），面板恢复为只显示数据范围 + 静态追问。
 - **授权**：B 类（仅前端展示逻辑与本地测试，虚构数据，无副作用、不出网）。
 
+
+## D-076 数据工作台开场问法补回被 E2E 点击的那一条：PAGE_SUGGESTIONS 是被测契约，改前必须对两侧用例
+
+- **日期**：2026-10-24
+- **状态**：Verified in CI（修复提交 `969c69b`；远端 run 40102964982 全部 8 个 job pass，其中「演示栈 E2E」check-run 120898706013 日志实读 `28 passed (1.2m)`，与回归前的 28 条总数一致；「前端类型检查与构建」pass）
+- **问题与证据**：`c14b0ca` 给 `/workbench` 与 `/counselor` 配了专用开场问法列表（D-075 的延伸：让服务端 recommendations 之外的兜底也贴合页面）。但 `/workbench` 新列表漏掉了「人工智能学院有多少学生？」——这条此前由 `STAFF_SUGGESTIONS` 兜底提供，且被 E2E 依赖：`web/e2e/demo.spec.ts:352`（学工处登录落在 /workbench，点击该按钮后断言「名学生」）。改动一推送，「演示栈 E2E」job（run 40102440888，job 120897177532）超时失败：`waiting for getByRole('dialog', { name: 'AI 助手' }).getByRole('button', { name: '人工智能学院有多少学生？' })`，17 passed / 1 failed / 10 did not run（fail-fast 吞掉后续）。demo-api 单测（test_app.py:350、387）和 E2E 都锁这条问法，删掉兜底按钮却没人先查测试面。
+- **根因**：PAGE_SUGGESTIONS 不只是产品文案，它是 E2E 与单测共同依赖的契约。c14b0ca 改动时只对照了产品意图，没有 grep 两侧测试对建议按钮的点击位置。
+- **先证伪自己的猜测**：失败后先怀疑是服务端把该问法判为 out_of_scope——查 demo-api/app.py:551 服务端 suggestions 列表含该问法、test_app.py:350 有 count 意图单测、387 有 staff 身份用例，服务端支持完整，问题收敛为纯前端按钮缺失。再 grep 全部 E2E 建议按钮点击（spec.ts 77 / 220 / 247-248 / 238-239 / 352 行），确认只有 /workbench 一处受影响，其余点击落在未改动页面。
+- **修法**：`969c69b`，把「人工智能学院有多少学生？」补回 `/workbench` 列表首位（它也是该页最典型的问数入口）。单文件单行，1 insertion / 1 deletion。
+- **测试（实测）**：本地 `npm run build`（tsc --noEmit && vite build）12.18s 通过；远端 run 40102964982「演示栈 E2E」`28 passed (1.2m)`，其余 7 个 job（后端接口与校验测试、本地演示 API 测试、AI 助手原型测试等）全部 pass。
+- **两条旧待办的证伪结论**（此前一直挂在该文件待办池，本轮核实后销账）：
+  - 「PAGE_TITLES 只覆盖 5/10 路由」**不成立**：实读 FloatingAssistant 的 PAGE_TITLES 覆盖全部 11 条路由（含 /login 的空场景），无需修改。
+  - 「≤640px 下 FAB 与面板重叠」**不成立**：panel `bottom: 74px` 高于按钮占位（14–62px），样式上不重叠；真机观感仍未验证（见下）。
+- **未验证**：新开场问法列表在真实浏览器里的观感与点按体验——Docker Desktop Linux 引擎仍返回 500，本地演示栈起不来；本轮验证只有远端 CI 的无头 Chromium 证据，无人眼看过版式。
+- **流程教训**：今后任何改 PAGE_SUGGESTIONS / STAFF_SUGGESTIONS 的提交，前置检查 = `grep -n "getByRole('button', { name:" web/e2e/demo.spec.ts` + demo-api/tests 里对应问法的用例，两侧都确认后才动。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **回退**：`git revert 969c69b`（会把 E2E 重新变红，不可单独回退）。
+- **授权**：B 类（仅前端展示文案与虚构数据，无副作用、不出网）。
