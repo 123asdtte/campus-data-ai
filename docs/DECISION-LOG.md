@@ -1479,3 +1479,18 @@
 
 - Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样失败，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本轮所有前端改动的浏览器验证、以及 `demo-api` 容器重建都无法在本地完成；受影响项：D-063 Esc 行为（未自动化）、跨周课程定位（未修复）、D-065 的学生页 KPI 截图核对。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`。
 - 远端 CI 本轮实测：`94b6770`（D-065）10 项 check-run 全部 completed success（含「演示栈 E2E」），已据此把 D-065 升级为 Verified in CI；`da9aa07`（仅本文档改动）的结果待下一轮确认。
+
+
+## D-067 问数端点第一次有了 HTTP 层回归，同时暴露出「缺 token 时客户端读到 0 字节」
+
+- **状态**：测试 Implemented（7 条通过）；其中「缺 token 必须拿到 401」这条按已知缺陷登记为 expectedFailure，缺陷未修复
+- **Decision owner**：AI
+- **问题与证据**：`/assistant/query` 此前只有函数级单测，路由分发、请求体上限、非法 JSON、身份缺失这些只能在真 HTTP 上暴露的行为没有覆盖（审计里的 Q5）。本轮新增 `demo-api/tests/test_http_api.py`：用 `app.Server` 在临时端口起真实服务（`STATE_DIR` 指向临时目录，不碰演示台账），只把网关身份那一跳换成桩，其余链路走真实 socket。7 条通过：学生问「明天有什么课」返回的课程必须都在其本人 scoped payload 的课表里（服务端按身份收敛数据范围，不是靠前端传参）；缺 token 走真实 `_identify` 的 404 路径先于身份；超过 `MAX_BODY_BYTES` 的请求被 413 拒掉而不是塞给解析器；半截 JSON 回 400；敏感问题回 `refused` 且回答里不含联系方式字段；空闲槽位下 `/healthz` 200；`HttpHealthSlotTest` 把 D-066 的既有行为钉住——占满并发槽后 `/healthz` 变 503、释放后回 200。第 8 条暴露新缺陷：客户端不带 `Authorization` 时，服务端 `log_message` 已经记到 `POST /assistant/query 401`，但 `http.client` 读到的是 `RemoteDisconnected`（0 字节）。这是 D-064 修过的同类症状（那次是请求体拖到超时），前端因此只能显示「未知错误」而不是「未登录」。
+- **已试过的修法与为何没用**：按 `do_POST` 里 503 分支已有的注释思路，在 `_identify` 的四条拒绝路径改为 `_reject()`——写响应前先把 `Content-Length` 声明的请求体读掉。实测仍然 0 字节，说明这个 case 的成因不是「未读数据触发 RST」，因此该改动整体回退，`demo-api/app.py` 未带入任何未验证的修改。
+- **决定**：先把 HTTP 层覆盖落地（它本身已经钉住数据范围收敛和 413/400/404/503 契约），把未定位的 0 字节缺陷以 `expectedFailure` + 具体异常名登记在测试里，而不是删掉断言或改成宽松断言。下一轮先定位再修：方向是 `_send()` 是否在 `wfile` 缓冲未 flush 时就进入 `finish()`、以及 `protocol_version="HTTP/1.0"` 与 `Connection: close` 在缺 header 分支上的差异（其余 401/404 分支同样走 `_json`，唯独这条 0 字节，差异应在进入 `_identify` 之前的分支顺序上）。
+- **影响与兼容性**：只新增测试文件；`demo-api/app.py` 与 `docs/LOCAL-DEMO.md` 记录的行为均不变，演示环境与其他调用方不受影响。
+- **涉及文件**：`demo-api/tests/test_http_api.py`（新增 8 条 HTTP 层用例）、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **80 tests, OK (skipped=2, expected failures=1)**（本轮 72 → 80）。失败的那条在修复后会变成 XPASS 提醒，不会被静默吞掉。
+- **未验证**：远端 CI（记录时尚未运行）；CI 的 Linux 环境可能不重现 0 字节（`expectedFailure` 在 Linux 上会变成 XPASS，届时应把这条改回硬断言并修根因）；0 字节缺陷的真实成因尚未定位；`/healthz` 满槽是否会被真实业务流量触发仍见 D-066。
+- **回退**：删除 `demo-api/tests/test_http_api.py` 与本条记录即可，无代码与配置变更。
+- **授权**：B 类（本地临时端口真实服务、虚构数据、临时状态目录）。探针与临时目录已清理，未触碰正式环境、认证配置或真实数据。
