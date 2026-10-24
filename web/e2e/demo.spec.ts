@@ -123,6 +123,18 @@ test.describe('本地演示关键路径', () => {
     expect(download.suggestedFilename()).toMatch(/带班名单_.*\.csv$/);
   });
 
+  test('辅导员无权下载全校四件套', async ({ page }) => {
+    await login(page, 'counselor01', 'Demo@2026');
+    const status = await page.evaluate(async () => {
+      const token = window.localStorage.getItem('campus.gateway.token');
+      const response = await fetch('/demo-api/four-sheet', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.status;
+    });
+    expect(status).toBe(403);
+  });
+
   test('学工处可见全校数据，但无管理员专属页面', async ({ page }) => {
     await login(page, 'xgb01', 'Demo@2026');
     await expect(page).toHaveURL(/\/workbench/);
