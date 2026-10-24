@@ -152,11 +152,10 @@
   background: transparent;
 }
 
-.login-brand-mark img {
+.login-brand-mark .school-crest {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+  width: 72px;
+  height: auto;
 }
 
 .login-brand-name {
@@ -968,6 +967,10 @@
   .login-brand-mark {
     width: 52px;
     height: 46px;
+  }
+
+  .login-brand-mark .school-crest {
+    width: 52px;
   }
 
   .login-brand-name b {

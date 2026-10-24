@@ -1,5 +1,5 @@
-import schoolLogo from '../assets/school-logo.png';
 import LoginGateArt from './LoginGateArt';
+import SchoolCrest from './SchoolCrest';
 
 export default function LoginBrandPanel() {
   return (
@@ -8,7 +8,7 @@ export default function LoginBrandPanel() {
       <LoginGateArt />
       <div className="login-brand-logo">
         <span className="login-brand-mark">
-          <img src={schoolLogo} alt="" aria-hidden="true" />
+          <SchoolCrest />
         </span>
         <span className="login-brand-name">
           <b>郴州思科职业学院</b>

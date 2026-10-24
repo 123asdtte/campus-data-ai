@@ -97,9 +97,10 @@ body {
   display: grid;
   place-items: center;
   flex: none;
+  color: var(--ink);
 }
 
-.app-brand-logo {
+.app-brand-mark .school-crest {
   display: block;
   width: 32px;
   height: auto;

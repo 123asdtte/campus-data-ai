@@ -3,7 +3,7 @@ import { AppstoreOutlined, CalendarOutlined, CloudUploadOutlined, DatabaseOutlin
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
 import { useSession } from '../session/SessionContext';
-import schoolLogo from '../assets/school-logo.png';
+import SchoolCrest from './SchoolCrest';
 
 const { Sider, Content } = Layout;
 
@@ -78,7 +78,7 @@ export default function AppLayout() {
       <Sider width={232} className="app-sider" theme="light">
         <div className="app-brand">
           <span className="app-brand-mark">
-            <img className="app-brand-logo" src={schoolLogo} alt="" aria-hidden="true" />
+            <SchoolCrest />
           </span>
           <div className="app-brand-text">
             <div className="app-brand-title">郴州思科职业学院</div>
