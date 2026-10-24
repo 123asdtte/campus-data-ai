@@ -155,6 +155,20 @@ test.describe('本地演示关键路径', () => {
     await expect(panel.getByText(/人工智能学院共有/)).toHaveCount(0);
   });
 
+  test('悬浮助手可回答异动待办，并给出台账跳转', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/changes');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('还有哪些异动没核对？');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('条异动已批但平台未核对', { timeout: 15000 });
+    await expect(bubble.locator('.fa-action')).toContainText('打开学籍异动');
+    await expect(bubble.locator('.fa-note')).toContainText('不返回身份证');
+    await page.keyboard.press('Escape');
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);

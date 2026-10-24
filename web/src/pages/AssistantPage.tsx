@@ -34,6 +34,7 @@ const INTENT_LABELS: Record<string, string> = {
   quality: '数据质量 · 聚合口径',
   report: '报表引导',
   changes: '学籍异动 · 聚合口径',
+  pending: '异动待办',
   change_count: '异动统计',
   count: '人数统计',
   refused: '超出可回答范围',

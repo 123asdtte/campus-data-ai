@@ -154,6 +154,15 @@ def merge_ledger(user: dict, roles: set[str], state: dict) -> tuple[list[dict], 
     return all_changes, checked
 
 
+def pending_check_rows(changes: list[dict], checked: list[str]) -> list[dict]:
+    """已批但平台还没核对的异动。这个衔接口径只在这里定义一次，供助手与台账共用。"""
+    done = set(checked or [])
+    return [
+        change for change in changes
+        if "已批" in (change.get("status") or "") and change.get("change_no") not in done
+    ]
+
+
 COLLEGE_ALIASES = {
     "计算机": "人工智能学院",
     "人工智能": "人工智能学院",
@@ -507,6 +516,31 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "answer": f"可以到报表中心使用「{template}」模板：选择字段与范围后导出。导出只含 UID 和脱敏字段，并记录操作人与时间。",
             "scope": {"label": scope_label},
             "action": {"label": "打开报表中心" if not is_counselor else "打开辅导员台", "to": report_target},
+        }
+
+    if any(word in q for word in ("待核对", "没核对", "未核对", "待处理", "未处理", "审批中", "待审批", "核对进度")):
+        if any(word in q for word in ("审批中", "待审批")):
+            rows = [change for change in changes if "审批中" in (change.get("status") or "")]
+            label = "条异动仍在审批中"
+            hint = "审批通过后才会进入平台核对。"
+        else:
+            rows = pending_check_rows(changes, payload.get("platform_checked") or [])
+            label = "条异动已批但平台未核对"
+            hint = "在台账里按异动编号搜索即可定位并点“核对”。"
+        preview = "、".join(
+            f"{change.get('change_no')}（{change.get('type')} {change.get('date') or '未填日期'}）"
+            for change in rows[:5]
+        )
+        return {
+            **base,
+            "intent": "pending",
+            "answer": (
+                f"{scope_label}有 {len(rows)} {label}"
+                + (f"：{preview}" + ("，其余略。" if len(rows) > 5 else "。") if rows else "。")
+                + hint
+            ),
+            "scope": {"label": scope_label},
+            "action": {"label": "打开学籍异动", "to": change_target},
         }
 
     count_words = any(word in q for word in ("多少", "人数", "几个", "几名", "统计"))

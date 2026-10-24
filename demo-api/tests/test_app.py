@@ -444,3 +444,33 @@ class AssistantAuditTest(unittest.TestCase):
         lines = demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), demo.ASSISTANT_LOG_KEEP)
         self.assertEqual(json.loads(lines[-1])["actor"], f"u{demo.ASSISTANT_LOG_KEEP + 39}")
+
+
+class LedgerPendingAnswerTest(unittest.TestCase):
+    """助手要能回答“哪些异动还没我核对完”，口径与台账共用同一个判定函数。"""
+
+    def test_pending_helper_matches_ledger_rule(self):
+        changes = [
+            {"change_no": "A1", "status": "已批", "type": "休学", "date": "2026-03-02"},
+            {"change_no": "A2", "status": "审批中", "type": "退学"},
+            {"change_no": "A3", "status": "已批", "type": "转专业"},
+        ]
+        self.assertEqual([c["change_no"] for c in demo.pending_check_rows(changes, ["A1"])], ["A3"])
+        self.assertEqual(len(demo.pending_check_rows(changes, ["A1", "A3"])), 0)
+
+    def test_counselor_gets_pending_list_within_scope(self):
+        payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        expected = demo.pending_check_rows(payload["changes"], payload.get("platform_checked") or [])
+        reply = demo.staff_answer("还有哪些异动没核对？", payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "pending")
+        self.assertIn(f"有 {len(expected)} 条异动已批但平台未核对", reply["answer"])
+        for row in expected[:5]:
+            self.assertIn(row["change_no"], reply["answer"])
+        self.assertEqual(reply["action"]["to"], "/changes")
+
+    def test_approving_branch_counts_review_in_progress(self):
+        payload = demo.scoped_payload(staff_user(), STAFF)
+        expected = [c for c in payload["changes"] if "审批中" in (c.get("status") or "")]
+        reply = demo.staff_answer("审批中的异动有多少？", payload, STAFF)
+        self.assertEqual(reply["intent"], "pending")
+        self.assertIn(f"有 {len(expected)} 条异动仍在审批中", reply["answer"])
