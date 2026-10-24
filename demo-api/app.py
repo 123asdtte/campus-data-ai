@@ -493,6 +493,21 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "action": {"label": "打开报表中心" if not is_counselor else "打开辅导员台", "to": report_target},
         }
 
+    count_words = any(word in q for word in ("多少", "人数", "几个", "几名", "统计"))
+    change_types = [name for name in CHANGE_TYPES if name in q]
+    if change_types and count_words:
+        parts = [
+            f"{name} {sum(1 for change in changes if change.get('type') == name)} 条"
+            for name in change_types
+        ]
+        return {
+            **base,
+            "intent": "change_count",
+            "answer": f"{scope_label}学籍异动记录共 {len(changes)} 条；{'，'.join(parts)}。统计范围为演示台账。",
+            "scope": {"label": scope_label},
+            "action": {"label": "打开学籍异动", "to": change_target},
+        }
+
     if any(word in q for word in ("异动", "休学", "退学", "转专业", "变化")):
         type_counts = metrics.get("change_type_counts") or []
         top = "、".join(f"{item.get('name')} {item.get('count')}" for item in type_counts[:3])

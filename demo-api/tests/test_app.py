@@ -240,6 +240,15 @@ class AssistantQueryTest(unittest.TestCase):
         self.assertEqual(reply["courses"], [])
         self.assertIn("只能查询本人课表", reply["answer"])
 
+    def test_change_type_counts(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        reply = demo.staff_answer("全校休学和退学各有多少人？", staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "change_count")
+        self.assertIn(str(len(staff_payload["changes"])), reply["answer"])
+        for name in ("休学", "退学"):
+            expected = sum(1 for change in staff_payload["changes"] if change.get("type") == name)
+            self.assertIn(f"{name} {expected} 条", reply["answer"])
+
     def test_staff_scope_and_counselor_scope(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)
         staff_reply = demo.staff_answer("人工智能学院有多少学生？", staff_payload, STAFF)
