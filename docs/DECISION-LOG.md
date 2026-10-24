@@ -1112,7 +1112,7 @@
 
 ## D-044 独立 AI 问数页改用服务端问答，去除重复的浏览器规则引擎
 
-- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待本次运行确认）
+- **状态**：Verified in CI（本地 34 单测 / 17 E2E；远端 run 40078483720、commit 784396a 下 8 个 job 全部 success，含「演示栈 E2E」）
 - **Decision owner**：AI
 - **问题与证据**：D-042 已把课表问答搬到服务端，但 `/assistant` 仍保留自己的一套浏览器规则引擎（`COLLEGE_ALIASES` / `findCollege` / `findStatuses` / `buildAnswer` 共 140 行），为了算几个数字把整份 `/demo-api/data` 全量拉到前端；同一入口在同一路由上还叠了悬浮助手，出现两个 AI 面板、两套口径。
 - **决定**：
@@ -1124,13 +1124,13 @@
 - **影响与兼容性**：问答口径以服务端为准，前后端不再分叉；管理员问数页少一次约 3 MB 的全量数据请求；`/assistant` 的输入框可访问名保持“输入问题”，既有可访问性用例不受影响。
 - **涉及文件**：`web/src/pages/AssistantPage.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/src/styles.css`、`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/e2e/demo.spec.ts`。
 - **验证（实测）**：demo-api **34 passed**；`npx tsc --noEmit` 通过；Playwright E2E **17 passed / 1.0m**（新增用例断言 `/assistant` 无悬浮入口、点击建议问题命中 `/demo-api/assistant/query` 且返回 200、气泡含“人工智能学院 / 人数统计 / 全校范围演示数据”）。
-- **未验证**：本次提交后的远端 CI；Dify/LLM 接入；真实课表与真实业务库。
+- **未验证**：Dify/LLM 接入；真实课表与真实业务库。
 - **回退**：恢复 `AssistantPage` 的本地 `buildAnswer` 与 `useDemoData`，并把悬浮入口在 `/assistant` 重新渲染即可；无数据结构变更。
 - **授权**：B 类（演示环境功能与测试），不涉及正式数据或外部服务。
 
 ## D-045 移动端内容列塌陷修复 + 并发用例去时序化
 
-- **状态**：Implemented（2026-10-24 本地实测，远端结果待本次运行确认）
+- **状态**：Verified in CI（远端 run 40078483720、commit 784396a：8 个 job 全部 success，含「网关构建」与「演示栈 E2E」；本地 34 单测 / 17 E2E）
 - **Decision owner**：AI
 - **问题与证据**：
   1. D-042 的移动端外壳只改了 `flex-direction`。真机尺寸实测（390×844）：`.ant-layout` 宽 0、`.app-content` 宽 28、`.wb` 宽 0，即所有业务页在手机上被压成一列 0 宽内容（课表/AI 问数都读不到字）。原因是 AntD 给 `has-sider` 的子 Layout 固定 `flex-basis: auto`，纵向排列后不再撑满交叉轴。之前的 E2E 只断言 `scrollWidth <= 390`，塌陷时 `scrollWidth` 恰好也是 390，所以“绿色”掩盖了缺陷。
@@ -1143,7 +1143,23 @@
 - **影响与兼容性**：仅 `<=900px` 生效，桌面端布局不变；`demo-api` 运行时行为未改，只改测试写法。
 - **涉及文件**：`web/src/styles.css`、`web/e2e/demo.spec.ts`、`demo-api/tests/test_app.py`。
 - **验证（实测）**：demo-api **34 passed**；`npx tsc --noEmit` 通过；Playwright E2E **17 passed / 1.2m**（含新增宽度断言）；390×844 下重新测量内容列与页面容器均已撑满，桌面 1366 无回归。
-- **未验证**：本次提交的远端 CI 结果；iOS Safari/安卓实机（仅 Chromium 引擎测量）。
+- **未验证**：iOS Safari/安卓实机（仅 Chromium 引擎测量）。
 - **回退**：删除该宽度规则与两条断言即回到 D-042 的状态（同时会重新暴露塌陷缺陷）。
 - **授权**：B 类（演示环境与测试），无正式环境影响。
 
+## D-046 移动端表格「能滚」从人工测量升级为回归保护
+
+- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待下次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：D-045 修好内容列塌陷后，390×844 逐路由实测内容列均为 390、无页面级横向溢出，但管理端表格仍比可视区宽：`/workbench` 溢出 777px、`/pipeline` 577、`/reports` 797、`/changes` 837、`/students` 819。复查确认这些表格都落在 `.ant-table-content`（`overflow-x: auto`，如 workbench clientW 323 / scrollW 1100，可滚动）——即列没被吃掉，只是此前没有任何自动化断言守住这一点；若哪天样式或列宽改动把容器改成 `hidden`，列会被静默裁切而 E2E 依旧全绿。
+- **决定**：
+  1. 新增 E2E 用例，对 `/workbench`、`/students`、`/changes` 三条路由断言：溢出时滚动容器 `overflow-x` 必须是 `auto|scroll`，且设置 `scrollLeft` 后真的产生偏移。
+  2. 用例末尾断言“至少一条路由确实溢出并可滚”，避免三条都不溢出时保护退化成空断言。
+  3. 不加纯 CSS 右缘渐隐提示：伪元素无法感知滚动位置，滚到末列仍显示“还有内容”属误导；JS 监听滚动成本大于当前收益（见下）。
+- **备选方案**：CSS 渐隐/滚动条常显（静态提示会在滚到底后继续误导）；把表格改成移动端卡片式重排（改动面覆盖六个业务页，收益不及先把回归网补上）。
+- **影响与兼容性**：只新增测试，不改运行时样式与业务代码；桌面端与既有 17 条用例行为不变。
+- **涉及文件**：`web/e2e/demo.spec.ts`、`.github/workflows/ci.yml`（job 名计数）、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：`npx tsc --noEmit` 通过；Playwright E2E **18 passed / 1.2m**（Chromium/Edge 通道，DEMO_BASE_URL 指向本地演示栈 8083）。负向对照（临时 spec，跑完即删）：对 `/workbench` 注入 `overflow-x: hidden` 后实测 `canScroll=true`、`overflowX="hidden"`、`scrollLeft` 仍可被程序化设为 119.69——说明只有 `overflow-x` 判定能识别裁切，用例保留该断言是必要的，保护不是空转。
+- **未验证**：本次改动的远端 CI 结果（尚未推送运行）；iOS Safari / 安卓实机触摸滑动；`.ant-table-body`（固定表头场景）未单独覆盖，当前演示表格均走 `.ant-table-content`。
+- **回退**：删除该用例与 ci.yml 的计数文案即可，无代码影响。
+- **授权**：B 类（演示环境与测试），不涉及正式数据、迁移或外部服务。

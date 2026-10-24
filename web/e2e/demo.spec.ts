@@ -114,6 +114,37 @@ test.describe('本地演示关键路径', () => {
     await expect(dialog).toHaveCount(0);
   });
 
+  test('移动端数据表格可横向滚动，不会被裁切', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, 'admin', 'admin123');
+    let scrolledRoutes = 0;
+    for (const route of ['/workbench', '/students', '/changes']) {
+      await page.goto(route);
+      const scroller = page.locator('.ant-table-content, .ant-table-body').first();
+      await expect(scroller).toBeVisible();
+      const state = await scroller.evaluate((el) => ({
+        overflowX: getComputedStyle(el).overflowX,
+        canScroll: el.scrollWidth > el.clientWidth + 1,
+        clientWidth: el.clientWidth,
+        scrollWidth: el.scrollWidth,
+      }));
+      expect(
+        state.canScroll ? ['auto', 'scroll'].includes(state.overflowX) : true,
+        `${route} 表格溢出但容器不可滚动（overflow-x:${state.overflowX} ${state.clientWidth}/${state.scrollWidth}）`,
+      ).toBe(true);
+      if (state.canScroll) {
+        const scrolled = await scroller.evaluate((el) => {
+          el.scrollLeft = 120;
+          return el.scrollLeft;
+        });
+        expect(scrolled, `${route} 表格滚动无响应`).toBeGreaterThan(0);
+        scrolledRoutes += 1;
+      }
+    }
+    // 三条路由都不溢出的话，本用例就成了空断言：明确失败，提醒改测别的口径。
+    expect(scrolledRoutes, '演示表格在 390px 下均未溢出，滚动保护已失效').toBeGreaterThan(0);
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);
