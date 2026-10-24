@@ -127,6 +127,12 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 
 # 恢复台账（恢复前自动备份当前台账；demo-api 运行时会短暂停止后自动启动）
 .\scripts\demo\restore-ledger.ps1 -File .\demo-api\state\backups\ledger-20261024-040000.json
+
+# 一键校验（需栈已启动：healthz → 冒烟 → demo-api 单测 → Playwright E2E）
+.\scripts\demo\verify-local-demo.ps1
+
+# 只跑冒烟与单测，跳过 E2E
+.\scripts\demo\verify-local-demo.ps1 -SkipE2E
 ```
 
 脚本会检查网关，移除以 `docker run` 创建的同名旧容器，再用
@@ -187,6 +193,7 @@ python -m unittest discover -s demo-api/tests -v
 - 数据缓存：同一登录身份内页面切换共享一次 `/demo-api/data`（管理员总览→工作台→报表仅 1 次请求）；退出后换学生登录会重新请求，页面只显示本人课表，未复用上一身份数据
 - 异动台账：辅导员发起异动 → 服务端返回 `YD-LOCAL-*` 并进入“待平台核对”；刷新页面记录仍在，`docker compose ... --force-recreate demo-api` 后仍在；平台核对结果同样持久化
 - 台账备份/恢复演练：创建记录 → 备份 → 重置（本地记录 0 条）→ 恢复（记录回归）→ demo-api healthy（2026-10-24）
+- 一键校验：`scripts/demo/verify-local-demo.ps1` 依次执行 healthz、冒烟、25 项单测、10 条 E2E，最终输出 `All local demo checks passed.`（2026-10-24）
 - 异动权限（API 实测）：学生发起/核对 403；辅导员只能登记/核对本人学生（越界 403），学工处可登记他班学生；非法类型/格式日期/无效日历日（如 `2026-02-30`）400
 - 异动导入：带 BOM 的模板 CSV 经前端解析后批量提交，2 条写入并刷新后仍在；重复异动编号自动追加 `-IMPn`；非法类型/越界行按行跳过；单次上限 200 条
 - demo-api 测试：**25 passed**（2026-10-24）——学生/辅导员/全校身份范围、越界写入 403、无效日历日/格式/类型/空原因/不存在学生拒绝、台账按范围过滤、异动编号不重复、三种身份的 payload 范围、并发槽耗尽返回 503 且释放后恢复；数据一致性（UID 唯一、联系方式脱敏、异动/课表引用存在、指标与四件套文件）
