@@ -1059,3 +1059,16 @@
 - **验证（实测）**：本地执行相同 compileall 与 unittest：**25 passed**；YAML 解析通过，jobs 列表包含 `demo-tests`。GitHub Actions 运行结果尚未验证。
 - **回退**：删除 `demo-tests` job；无运行时变更。
 - **授权**：B 类（工程自动化）；推送/开 PR 仍需用户确认。
+
+## D-041 E2E 补齐学工处角色与越权边界
+
+- **状态**：Implemented（2026-10-24 本地实测）
+- **Decision owner**：AI
+- **问题与证据**：E2E 13 条只覆盖学生、辅导员、管理员。学工处在冒烟中只验证“能登录/身份正确”，但“可见全校数据、无管理员专属页面、直访受限路由被送回”没有回归保护；而 `App.tsx` 中 `students`/`import`/`assistant`/`portal` 均为 `superadmin` 专属。
+- **决定**：新增一条 E2E：`xgb01` 登录后落到 `/workbench`、看到 5,581 全校学生；导航不含“AI 问数/学生信息/数据导入”；直访 `/assistant`、`/students` 均被送回 `/workbench`；仍可进入“学籍异动”。
+- **备选方案**：仅在 demo-api 单测中断言角色范围（已存在）——但无法证明前端路由拦截和菜单过滤生效，故补浏览器级用例。
+- **影响与兼容性**：只新增测试，不改业务代码；串行模式下位于辅导员用例之后、管理员用例之前，不影响台账清理逻辑。
+- **涉及文件**：`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：单条用例 5.7s 通过；全量 **14 passed / 46.9s**（2026-10-24）。
+- **回退**：删除该用例。
+- **授权**：B 类（测试补齐）；无需人工授权。

@@ -123,6 +123,24 @@ test.describe('本地演示关键路径', () => {
     expect(download.suggestedFilename()).toMatch(/带班名单_.*\.csv$/);
   });
 
+  test('学工处可见全校数据，但无管理员专属页面', async ({ page }) => {
+    await login(page, 'xgb01', 'Demo@2026');
+    await expect(page).toHaveURL(/\/workbench/);
+    await expect(page.getByRole('heading', { name: '数据工作台' })).toBeVisible();
+    await expect(page.getByText('5,581').first()).toBeVisible();
+    await expect(page.locator('a.app-nav-item', { hasText: 'AI 问数' })).toHaveCount(0);
+    await expect(page.locator('a.app-nav-item', { hasText: '学生信息' })).toHaveCount(0);
+    await expect(page.locator('a.app-nav-item', { hasText: '数据导入' })).toHaveCount(0);
+
+    await page.goto('/assistant');
+    await expect(page).toHaveURL(/\/workbench/);
+    await page.goto('/students');
+    await expect(page).toHaveURL(/\/workbench/);
+
+    await page.locator('a.app-nav-item', { hasText: '学籍异动' }).click();
+    await expect(page.getByRole('heading', { name: '学籍异动' })).toBeVisible();
+  });
+
   test('管理员导入预检：上传 XLSX 后可校验（不提交）', async ({ page }) => {
     await login(page, 'admin', 'admin123');
     await page.locator('a.app-nav-item', { hasText: '数据导入' }).click();
