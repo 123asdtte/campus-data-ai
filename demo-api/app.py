@@ -132,6 +132,10 @@ def validate_change(body: dict, user: dict, roles: set[str]) -> tuple[dict | Non
         return None, 400, "异动类型不在允许范围"
     if not DATE_PATTERN.match(date):
         return None, 400, "异动日期格式应为 YYYY-MM-DD"
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return None, 400, "异动日期不是有效日期"
     if not 1 <= len(reason) <= 200 or len(target) > 200:
         return None, 400, "原因需为 1-200 字，去向不超过 200 字"
     if not any(s.get("uid") == uid for s in (DATA.get("students") or [])):
