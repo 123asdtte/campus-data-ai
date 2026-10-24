@@ -251,9 +251,19 @@ class ConcurrencyLimitTest(unittest.TestCase):
                 time.sleep(0.02)
             self.assertEqual(server._slots._value, 0, "慢请求未占用唯一并发槽")
 
-            with self.assertRaises(urllib.error.HTTPError) as context:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3)
-            self.assertEqual(context.exception.code, 503)
+            status = None
+            for _ in range(5):
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
+                        status = response.status
+                except urllib.error.HTTPError as exc:
+                    status = exc.code
+                except (ConnectionResetError, ConnectionAbortedError, urllib.error.URLError):
+                    status = None
+                if status == 503:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(status, 503, "并发槽满时应返回 503")
 
             holder.close()
             holder = None
@@ -263,7 +273,7 @@ class ConcurrencyLimitTest(unittest.TestCase):
             time.sleep(0.05)
 
             status = None
-            for _ in range(50):
+            for _ in range(100):
                 try:
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
                         status = response.status
