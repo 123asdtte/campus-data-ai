@@ -90,7 +90,7 @@ test.describe('本地演示关键路径', () => {
     const reopened = page.getByRole('dialog', { name: 'AI 助手' });
     await reopened.getByRole('textbox', { name: '向 AI 助手提问' }).fill('我的成绩是多少？');
     await reopened.getByRole('button', { name: '发送问题' }).click();
-    await expect(reopened.getByText(/只能查询本人课表/)).toBeVisible({ timeout: 15000 });
+    await expect(reopened.getByText(/只回答你自己的课表和本人学籍信息/)).toBeVisible({ timeout: 15000 });
   });
 
   test('悬浮助手在移动端不溢出', async ({ page }) => {
@@ -143,6 +143,24 @@ test.describe('本地演示关键路径', () => {
     }
     // 三条路由都不溢出的话，本用例就成了空断言：明确失败，提醒改测别的口径。
     expect(scrolledRoutes, '演示表格在 390px 下均未溢出，滚动保护已失效').toBeGreaterThan(0);
+  });
+
+  test('学生问本人学籍信息时按档案回答，不再被课表空数据吞掉', async ({ page }) => {
+    await login(page, 'SK-2026-000001', 'Demo@2026');
+    await page.goto('/my-schedule');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('我的学籍状态是什么？');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('学籍状态：', { timeout: 15000 });
+    // 这条账号的演示课表是空的：修好后不能再拿“没有课”去回答档案问题
+    await expect(bubble).not.toContainText('没有课');
+    await expect(bubble.locator('.fa-note')).toContainText('学号、证件号');
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('我的学号是多少？');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    await expect(panel.locator('.fa-message.is-assistant').last()).toContainText('只回答你自己的课表和本人学籍信息');
+    await page.keyboard.press('Escape');
   });
 
   test('辅导员问全院人数时，助手说明数据范围而不是给出口径错误的数字', async ({ page }) => {

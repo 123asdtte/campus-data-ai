@@ -31,6 +31,7 @@ const STUDENT_SUGGESTIONS = [
   '今天还剩几节课？',
   '这周五第一节在哪？',
   '下周有哪些课？',
+  '我的学籍状态是什么？',
 ];
 
 const STAFF_SUGGESTIONS = [
@@ -55,7 +56,7 @@ export default function FloatingAssistant() {
   const contextLabel = PAGE_LABELS[pathname] ?? '数据管理';
   const suggestions = isStudent ? STUDENT_SUGGESTIONS : STAFF_SUGGESTIONS;
   const welcome = isStudent
-    ? '我是你的课表助手，只读取你自己的班级课表。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、下周有哪些课。'
+    ? '我是你的课表助手，只读取你自己的班级课表和本人学籍档案。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、我的学籍状态是什么。'
     : '我是数据助手，按当前账号的数据范围统计人数、学籍状态、异动分布和数据质量；不返回身份证、电话或原始学号。';
 
   useEffect(() => {

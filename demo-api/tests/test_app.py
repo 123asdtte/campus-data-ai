@@ -15,6 +15,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -240,7 +241,48 @@ class AssistantQueryTest(unittest.TestCase):
         reply = self.answer("我的成绩和别的同学电话是多少？")
         self.assertEqual(reply["intent"], "refused")
         self.assertEqual(reply["courses"], [])
-        self.assertIn("只能查询本人课表", reply["answer"])
+        self.assertIn("只回答你自己的课表和本人学籍信息", reply["answer"])
+
+    def test_student_profile_question_uses_own_record(self):
+        student = next(
+            item for item in demo.DATA["students"]
+            if item.get("counselor") and item.get("grade")
+        )
+        rows = [row for row in demo.DATA["schedule"] if row.get("class_name") == student["class_name"]]
+        now = datetime.now().astimezone()
+        for question, value in (
+            ("我的学籍状态是什么？", student["status"]),
+            ("我是哪个班的？", student["class_short"] or student["class_name"]),
+            ("我的辅导员是谁？", student["counselor"]),
+            ("我什么时候入学？", student["grade"]),
+        ):
+            # 空课表也要能答档案：以前这类问题会落到课表分支，回一句“今天没有课”
+            for schedule in (rows, []):
+                reply = demo.schedule_answer(question, student, schedule, demo.DATA["metrics"], now)
+                self.assertEqual(reply["intent"], "profile", question)
+                self.assertIn(value, reply["answer"], question)
+                self.assertEqual(reply["scope"]["label"], "仅本人档案")
+                self.assertEqual(reply["courses"], [])
+
+    def test_student_profile_does_not_leak_identifiers(self):
+        student = demo.DATA["students"][0]
+        now = datetime.now().astimezone()
+        for question in ("我的学号是多少？", "我的身份证号？", "别人电话？"):
+            reply = demo.schedule_answer(question, student, [], demo.DATA["metrics"], now)
+            self.assertEqual(reply["intent"], "refused", question)
+            self.assertNotIn(student["uid"], reply["answer"])
+
+    def test_timetable_question_still_wins_over_profile(self):
+        student = next(
+            item for item in demo.DATA["students"]
+            if any(row.get("class_name") == item["class_name"] for row in demo.DATA["schedule"])
+        )
+        rows = [row for row in demo.DATA["schedule"] if row.get("class_name") == student["class_name"]]
+        reply = demo.schedule_answer(
+            "我们班明天有课吗？", student, rows, demo.DATA["metrics"], datetime.now().astimezone()
+        )
+        self.assertNotEqual(reply["intent"], "profile")
+        self.assertIn("演示课表", reply["answer"])
 
     def test_status_question_answers_headcount_not_ledger_rows(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)

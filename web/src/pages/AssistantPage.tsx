@@ -37,6 +37,7 @@ const INTENT_LABELS: Record<string, string> = {
   pending: '异动待办',
   change_count: '异动统计',
   count: '人数统计',
+  profile: '本人学籍信息',
   refused: '超出可回答范围',
   out_of_scope: '超出数据范围',
   unknown: '未识别意图',

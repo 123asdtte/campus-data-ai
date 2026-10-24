@@ -54,7 +54,7 @@ PERIOD_SCOPES = {
     "晚上": {9, 10, 11, 12},
 }
 SENSITIVE_PATTERN = re.compile(
-    r"成绩|分数|其他学生|别人|电话|手机号|身份证|导出|名单|请假|处分|心理|宿舍|家庭"
+    r"成绩|分数|其他学生|别人|电话|手机号|身份证|学号|导出|名单|请假|处分|心理|宿舍|家庭"
 )
 MAX_QUESTION_CHARS = 200
 
@@ -296,8 +296,31 @@ def schedule_answer(
         return {
             **base,
             "intent": "refused",
-            "answer": "学生助手只能查询本人课表，不能查询成绩、其他学生、联系方式，也不能导出名单。",
+            "answer": "学生助手只回答你自己的课表和本人学籍信息；学号、证件号、联系方式、成绩、其他学生信息和名单导出不在这里提供。",
             "scope": {"label": "仅本人课表", "week": current_week},
+        }
+
+    # 本人档案字段在 /portal 页面已经展示，这里只是同一份数据的另一种问法；学号与联系方式不回答。
+    profile_fields = [
+        (("学籍", "在籍", "学籍状态"), "学籍状态", student.get("status")),
+        (("班级", "哪个班", "什么班", "几班"), "班级", student.get("class_short") or student.get("class_name")),
+        (("专业",), "专业", student.get("major")),
+        (("学院",), "学院", student.get("college")),
+        (("年级", "入学", "几级"), "年级", student.get("grade")),
+        (("辅导员", "班主任"), "辅导员", student.get("counselor")),
+    ]
+    timetable_words = ("有课", "上课", "没课", "课表", "教室", "节", "星期", "周", "几点", "明天", "后天", "今天", "下午", "上午")
+    matched = [(label, value) for words, label, value in profile_fields if any(word in question for word in words)]
+    hits = [(label, value) for label, value in matched if value]
+    if hits and not any(word in question for word in timetable_words):
+        detail = "；".join(f"{label}：{value}" for label, value in hits)
+        return {
+            **base,
+            "intent": "profile",
+            "answer": f"你的{detail}。这些来自你本人学籍档案，和自助填报页“我的信息”一致。",
+            "scope": {"label": "仅本人档案"},
+            "note": "学号、证件号、联系方式不在回答里；如需修改信息请走自助填报。",
+            "action": {"label": "打开自助填报", "to": "/portal"},
         }
 
     if not schedule:
@@ -313,9 +336,9 @@ def schedule_answer(
         return {
             **base,
             "intent": "help",
-            "answer": "我是课表助手，只能看到你自己的班级课表。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、下周有哪些课。",
+            "answer": "我是课表助手，只能看到你自己的班级课表和本人学籍档案。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、下周有哪些课、我的学籍状态是什么。",
             "scope": {"label": "仅本人课表", "week": current_week},
-            "suggestions": ["明天下午有什么课？", "今天还剩几节课？", "这周五第一节在哪？", "下周有哪些课？"],
+            "suggestions": ["明天下午有什么课？", "今天还剩几节课？", "这周五第一节在哪？", "下周有哪些课？", "我的学籍状态是什么？"],
         }
 
     scope = resolve_scope(question, now, current_week)
