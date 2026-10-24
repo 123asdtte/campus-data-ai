@@ -213,6 +213,7 @@ python -m unittest discover -s demo-api/tests -v
 - 异动登记与平台核对已写入 `demo-api` 的 JSON 台账（`demo-api/state/ledger.json`，容器外持久化），但仍是**单文件演示存储**：无数据库事务、分页、并发审计与备份；正式版必须落到数据库与审计表。删除该文件即重置台账。
 - 学生自助、报表导出记录目前仍是**前端本地状态 / 浏览器 localStorage**；正式版必须落到后端与审计表。
 - E2E 依赖已启动的 8083 演示栈与本机 Edge/Chromium，尚未接入 CI；测试会清空演示异动台账（仅限演示环境）。
+- CI：`.github/workflows/ci.yml` 已新增 `demo-tests` job（compileall + 25 项 unittest）；本地同命令通过，但分支尚未推送，GitHub Actions 实际运行结果未验证。E2E 仍未接入 CI。
 - 资料库流水线是**用已生成数据模拟**；正式版需要接后端上传/解析/任务队列。
 - 业务页面按桌面 1920 设计；登录页已适配移动端，其余页面尚未专门适配。
 - AI 问数当前是**本地规则版**，不是 Dify/LLM；当前独立的只读 AI POC 不在这套演示入口内。

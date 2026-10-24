@@ -7,6 +7,19 @@ on:
   pull_request:
 
 jobs:
+  demo-tests:
+    name: 本地演示 API 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 语法检查
+        run: python -m compileall -q demo-api/app.py demo-api/tests
+      - name: unittest（身份范围、校验、台账、并发、数据一致性）
+        run: python -m unittest discover -s demo-api/tests -p 'test_*.py' -v
+
   frontend:
     name: 前端类型检查与构建
     runs-on: ubuntu-latest

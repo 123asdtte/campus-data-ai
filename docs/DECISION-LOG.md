@@ -1045,3 +1045,17 @@
 - **验证（实测）**：管理员登录后访问 `/login` 被替换跳转 `/`；Playwright **13 passed / 43.9s**。
 - **回退**：移除登录页的 session 监听 effect；无数据变更。
 - **授权**：B 类（本地演示导航体验）。
+
+---
+
+## D-040 演示 API 单元测试纳入 CI
+
+- **状态**：Implemented / CI run pending（本地验证 2026-10-24；分支未推送，GitHub Actions 未实跑）
+- **Decision owner**：AI
+- **问题与证据**：现有 `.github/workflows/ci.yml` 覆盖前端构建、导入后端、网关、数据库测试与 Compose 校验，但新增的 `demo-api/tests`（25 项身份范围、校验、台账、并发、数据一致性）只在本地执行，PR 无法自动防回归。
+- **决定**：在 `ci.yml` 新增 `demo-tests` job：Python 3.12、`compileall demo-api/app.py demo-api/tests`、`python -m unittest discover -s demo-api/tests -p 'test_*.py' -v`；不启动容器、不依赖数据库。
+- **影响与兼容性**：只增加 CI job；不改变演示服务。工作流 YAML 已用 PyYAML 解析通过。
+- **涉及文件**：`.github/workflows/ci.yml`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：本地执行相同 compileall 与 unittest：**25 passed**；YAML 解析通过，jobs 列表包含 `demo-tests`。GitHub Actions 运行结果尚未验证。
+- **回退**：删除 `demo-tests` job；无运行时变更。
+- **授权**：B 类（工程自动化）；推送/开 PR 仍需用户确认。
