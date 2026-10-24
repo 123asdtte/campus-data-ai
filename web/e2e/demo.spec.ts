@@ -34,6 +34,7 @@ test.describe('本地演示关键路径', () => {
     await login(page, 'SK-2026-000001', 'Demo@2026');
     await expect(page).toHaveURL(/\/my-schedule/);
     await expect(page.getByRole('heading', { name: '我的课表' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: '课表提问' })).toHaveCount(1);
     await expect(page.getByText('SK-2026-000001').first()).toBeVisible();
     await expect(page.getByText('条排课')).toBeVisible();
     await expect(page.getByRole('link', { name: /学生信息/ })).toHaveCount(0);

@@ -300,6 +300,7 @@ export default function StudentSchedulePage() {
           </div>
           <div className="ai-input">
             <Input
+              aria-label="课表提问"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onPressEnter={() => send(input)}

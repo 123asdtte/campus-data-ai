@@ -996,10 +996,10 @@
 
 - **状态**：Verified（本地演示栈，2026-10-24；未合并）
 - **Decision owner**：AI
-- **问题与证据**：自动化巡检发现工作台、报表、异动、辅导员台、学生信息、AI 问数、导入页共 22 个搜索框/下拉/开关/数字输入缺少可访问名称，仅依赖 placeholder 或相邻文本；屏幕阅读器与语音输入难以定位。
+- **问题与证据**：自动化巡检发现工作台、报表、异动、辅导员台、学生信息、AI 问数、导入页共 23 个搜索框/下拉/开关/数字输入/学生提问框缺少可访问名称，仅依赖 placeholder 或相邻文本；屏幕阅读器与语音输入难以定位。
 - **决定**：为应用自有控件补充 `aria-label`（搜索学生、学院、学籍状态、班级、学生类型、异动类型、正式审批状态、显示停用记录、输入问题、批次号等）；不改 Ant Design 内部控件。
 - **影响与兼容性**：仅增加无障碍属性，不改变视觉或交互；E2E 按 role + name 定位，同时验证标签存在。
-- **涉及文件**：`web/src/pages/{Students,Workbench,Reports,Changes,Counselor,Assistant,Import}Page.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
-- **验证（实测）**：登录页与 9 个管理员页均有 1 个 h1/main；22 个控件按 role+name 各命中 1 次；`npm run build` 通过；Playwright **10 passed / 40.0s**。
+- **涉及文件**：`web/src/pages/{Students,Workbench,Reports,Changes,Counselor,Assistant,Import,StudentSchedule}Page.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：登录页与 9 个管理员页均有 1 个 h1/main；23 个控件按 role+name 各命中 1 次；`npm run build` 通过；Playwright **10 passed / 38.1s**。
 - **回退**：移除新增 `aria-label`；无数据变更。
 - **授权**：B 类（本地演示可访问性）。
