@@ -1,6 +1,6 @@
 # 上线准备报告（Production Readiness）
 
-> 日期：2026-10-25（第三次更新）· 基线：main `54674df`（PR #58 已合并）；本分支 `feat/ai-student-locator` 新增 AI 学生检索与定位（PR 待创建）
+> 日期：2026-10-25（第三次更新）· 基线：main `54674df`（PR #58 已合并）；本分支 `feat/ai-student-locator` 新增 AI 学生检索与定位（PR #59，CI 中）
 > 结论：**本地领导演示可用；生产环境尚未部署，当前为 NO-GO。**
 > 2026-10-25 复验：Docker 引擎恢复后，登录页/网关 200，只读冒烟全部 PASS；demo-api 105 tests OK；Playwright 32 passed。
 > 本报告只记录已取得的证据和需要授权的上线事项；不把本地验证等同于生产验收。
