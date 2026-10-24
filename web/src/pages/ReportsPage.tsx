@@ -351,21 +351,25 @@ export default function ReportsPage() {
             <Input
               allowClear
               prefix={<SearchOutlined />}
+              aria-label="搜索学生"
               placeholder="UID / 班级 / 专业 / 辅导员"
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
             />
             <Select
+              aria-label="学院"
               value={college}
               onChange={setCollege}
               options={[{ value: 'all', label: '全部学院' }, ...colleges.map((item) => ({ value: item, label: item }))]}
             />
             <Select
+              aria-label="学籍状态"
               value={status}
               onChange={setStatus}
               options={[{ value: 'all', label: '全部学籍状态' }, ...statuses.map((item) => ({ value: item, label: item }))]}
             />
             <Select
+              aria-label="班级"
               showSearch
               value={className}
               onChange={setClassName}
@@ -373,6 +377,7 @@ export default function ReportsPage() {
               options={[{ value: 'all', label: '全部班级' }, ...classOptions.map((item) => ({ value: item, label: item }))]}
             />
             <Select
+              aria-label="学生类型"
               value={flag}
               onChange={setFlag}
               options={[

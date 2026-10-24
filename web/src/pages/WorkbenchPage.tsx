@@ -351,24 +351,28 @@ export default function WorkbenchPage() {
           <Input
             allowClear
             prefix={<SearchOutlined />}
+            aria-label="搜索学生"
             placeholder="UID / 班级 / 专业 / 辅导员"
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             style={{ width: 240 }}
           />
           <Select
+            aria-label="学院"
             value={college}
             onChange={setCollege}
             style={{ width: 180 }}
             options={[{ value: 'all', label: '全部学院' }, ...colleges.map((item) => ({ value: item, label: item }))]}
           />
           <Select
+            aria-label="学籍状态"
             value={status}
             onChange={setStatus}
             style={{ width: 140 }}
             options={[{ value: 'all', label: '全部状态' }, ...statuses.map((item) => ({ value: item, label: item }))]}
           />
           <Select
+            aria-label="学生类型"
             value={flag}
             onChange={setFlag}
             style={{ width: 160 }}

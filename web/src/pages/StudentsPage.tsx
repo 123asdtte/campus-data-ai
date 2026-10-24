@@ -226,6 +226,7 @@ export default function StudentsPage() {
             <Input
               allowClear
               prefix={<SearchOutlined style={{ color: 'var(--faint)' }} />}
+              aria-label="关键词（学号或姓名）"
               placeholder="输入学号或姓名"
               value={keyword}
               onChange={(e) => {
@@ -237,6 +238,7 @@ export default function StudentsPage() {
           <div className="field">
             <span className="field-label">学院</span>
             <Select
+              aria-label="学院"
               allowClear
               placeholder="全部"
               style={{ width: 156 }}
@@ -251,6 +253,7 @@ export default function StudentsPage() {
           <div className="field">
             <span className="field-label">班级</span>
             <Select
+              aria-label="班级"
               allowClear
               showSearch
               placeholder="全部"
@@ -266,6 +269,7 @@ export default function StudentsPage() {
           <div className="field">
             <span className="field-label">在校状态</span>
             <Select
+              aria-label="在校状态"
               allowClear
               placeholder="全部"
               style={{ width: 124 }}
@@ -284,6 +288,7 @@ export default function StudentsPage() {
             <span className="field-label">停用记录</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32 }}>
               <Switch
+                aria-label="显示停用记录"
                 size="small"
                 checked={includeInactive}
                 onChange={(checked) => {

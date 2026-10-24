@@ -411,10 +411,11 @@ export default function ChangesPage() {
       <section className="wb-panel wb-table-panel">
         <header className="wb-panel-head"><h2>异动台账</h2><span>平台核对与源表正式审批分开显示 · 支持 Excel 导入</span></header>
         <div className="wb-toolbar">
-          <Input allowClear prefix={<SearchOutlined />} placeholder="异动编号 / UID / 班级" value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ width: 230 }} />
-          <Select value={type} onChange={setType} style={{ width: 150 }} options={[{ value: 'all', label: '全部类型' }, ...types.map((item) => ({ value: item, label: item }))]} />
-          <Select value={status} onChange={setStatus} style={{ width: 170 }} options={[{ value: 'all', label: '全部正式审批状态' }, ...statuses.map((item) => ({ value: item, label: item }))]} />
-          <Select value={college} onChange={setCollege} style={{ width: 170 }} options={[{ value: 'all', label: '全部学院' }, ...colleges.map((item) => ({ value: item, label: item }))]} />
+          <Input allowClear prefix={<SearchOutlined />} aria-label="搜索异动"
+            placeholder="异动编号 / UID / 班级" value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ width: 230 }} />
+          <Select aria-label="异动类型" value={type} onChange={setType} style={{ width: 150 }} options={[{ value: 'all', label: '全部类型' }, ...types.map((item) => ({ value: item, label: item }))]} />
+          <Select aria-label="正式审批状态" value={status} onChange={setStatus} style={{ width: 170 }} options={[{ value: 'all', label: '全部正式审批状态' }, ...statuses.map((item) => ({ value: item, label: item }))]} />
+          <Select aria-label="学院" value={college} onChange={setCollege} style={{ width: 170 }} options={[{ value: 'all', label: '全部学院' }, ...colleges.map((item) => ({ value: item, label: item }))]} />
           <Button icon={<SwapOutlined />} onClick={exportChanges}>导出异动清单</Button>
           <Button icon={<UploadOutlined />} onClick={() => fileInput.current?.click()}>导入 Excel</Button>
           <a className="wb-download" href="/demo/change-import-template.csv" download>下载导入模板</a>

@@ -648,6 +648,7 @@ export default function ImportPage() {
       <Panel title="中断恢复" sub="页面刷新或网络中断后使用">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <InputNumber
+            aria-label="批次号"
             min={1}
             placeholder="批次号"
             style={{ width: 150 }}

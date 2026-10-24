@@ -245,6 +245,7 @@ export default function AssistantPage() {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onPressEnter={() => send(input)}
+              aria-label="输入问题"
               placeholder="问：人工智能学院有多少学生 / 全校休学和退学各有多少人"
               disabled={thinking}
             />

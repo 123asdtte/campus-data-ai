@@ -258,8 +258,10 @@ export default function CounselorPage() {
       <section className="wb-panel wb-table-panel">
         <header className="wb-panel-head"><h2>本班学生</h2><span>仅显示 UID 与脱敏字段</span></header>
         <div className="wb-toolbar">
-          <Input allowClear prefix={<SearchOutlined />} placeholder="UID / 姓名 / 专业" value={keyword} onChange={(event) => setKeyword(event.target.value)} style={{ width: 240 }} />
+          <Input allowClear prefix={<SearchOutlined />} aria-label="搜索本班学生"
+            placeholder="UID / 姓名 / 专业" value={keyword} onChange={(event) => setKeyword(event.target.value)} style={{ width: 240 }} />
           <Select
+            aria-label="班级"
             value={classFilter}
             onChange={setClassFilter}
             style={{ width: 200 }}

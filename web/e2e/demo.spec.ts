@@ -148,6 +148,38 @@ test.describe('本地演示关键路径', () => {
     expect(problems).toEqual([]);
   });
 
+  test('管理员筛选控件具备可访问名称', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    const checks: Array<[string, string, string]> = [
+      ['/workbench', 'textbox', '搜索学生'],
+      ['/workbench', 'combobox', '学院'],
+      ['/workbench', 'combobox', '学籍状态'],
+      ['/workbench', 'combobox', '学生类型'],
+      ['/reports', 'textbox', '搜索学生'],
+      ['/reports', 'combobox', '学院'],
+      ['/reports', 'combobox', '学籍状态'],
+      ['/reports', 'combobox', '班级'],
+      ['/reports', 'combobox', '学生类型'],
+      ['/changes', 'textbox', '搜索异动'],
+      ['/changes', 'combobox', '异动类型'],
+      ['/changes', 'combobox', '正式审批状态'],
+      ['/changes', 'combobox', '学院'],
+      ['/counselor', 'textbox', '搜索本班学生'],
+      ['/counselor', 'combobox', '班级'],
+      ['/students', 'textbox', '关键词（学号或姓名）'],
+      ['/students', 'combobox', '学院'],
+      ['/students', 'combobox', '班级'],
+      ['/students', 'combobox', '在校状态'],
+      ['/students', 'switch', '显示停用记录'],
+      ['/assistant', 'textbox', '输入问题'],
+      ['/import', 'spinbutton', '批次号'],
+    ];
+    for (const [route, role, name] of checks) {
+      await page.goto(route);
+      await expect(page.getByRole(role as 'textbox', { name, exact: true })).toHaveCount(1);
+    }
+  });
+
   test('失效 token 清除会话并回到登录页', async ({ page }) => {
     await login(page, 'SK-2026-000001', 'Demo@2026');
     await expect(page).toHaveURL(/\/my-schedule/);
