@@ -16,6 +16,12 @@
 """
 from __future__ import annotations
 
+import sys as _sys
+
+if hasattr(_sys.stdout, "reconfigure"):
+    _sys.stdout.reconfigure(encoding="utf-8")
+    _sys.stderr.reconfigure(encoding="utf-8")
+
 import os
 import socket
 import subprocess

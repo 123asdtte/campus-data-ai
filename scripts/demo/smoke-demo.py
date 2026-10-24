@@ -1,0 +1,146 @@
+#!/usr/bin/env python
+"""本地演示栈冒烟测试（只读，不改数据）。
+
+检查：
+  1. 8083 健康探针与登录页可访问；
+  2. 四个演示账号能通过网关登录并拿到预期角色；
+  3. 缺 token / 伪造 token 不能读取身份。
+
+用法：
+    python scripts/demo/smoke-demo.py
+    DEMO_BASE_URL=http://127.0.0.1:8083 python scripts/demo/smoke-demo.py
+
+演示口令仅用于本机虚构数据环境，禁止用于正式环境。
+"""
+from __future__ import annotations
+
+import sys as _sys
+
+if hasattr(_sys.stdout, "reconfigure"):
+    _sys.stdout.reconfigure(encoding="utf-8")
+    _sys.stderr.reconfigure(encoding="utf-8")
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+BASE = os.environ.get("DEMO_BASE_URL", "http://127.0.0.1:8083").rstrip("/")
+CLIENT_ID = "e5cd7e4891bf95d1d19206ce24a7b32e"
+TIMEOUT = 10
+
+ACCOUNTS = [
+    ("SK-2026-000001", "Demo@2026", "student_portal", "学生"),
+    ("counselor01", "Demo@2026", "counselor", "辅导员"),
+    ("xgb01", "Demo@2026", "xgb", "学工处"),
+    ("admin", "admin123", "superadmin", "管理员"),
+]
+
+failures: list[str] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    print(f"[{'PASS' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}")
+    if not ok:
+        failures.append(name)
+
+
+def request(method: str, path: str, payload: dict | None = None, token: str | None = None):
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        headers["clientid"] = CLIENT_ID
+    req = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+    except OSError as exc:
+        raise RuntimeError(f"{method} {path} 不可达：{exc}") from exc
+
+
+def get_json(method: str, path: str, payload: dict | None = None, token: str | None = None):
+    status, raw = request(method, path, payload, token)
+    try:
+        return status, json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return status, {}
+
+
+def main() -> None:
+    try:
+        status, _ = request("GET", "/healthz")
+        check("演示站 healthz", status == 200, f"HTTP {status}")
+
+        status, raw = request("GET", "/login")
+        html = raw.decode("utf-8", errors="ignore")
+        check("登录页可访问", status == 200 and 'id="root"' in html, f"HTTP {status}")
+
+        for username, password, expected_role, label in ACCOUNTS:
+            status, payload = get_json(
+                "POST",
+                "/gw/auth/login",
+                {
+                    "clientId": CLIENT_ID,
+                    "grantType": "password",
+                    "username": username,
+                    "password": password,
+                    "tenantId": "000000",
+                },
+            )
+            data = payload.get("data") or {}
+            token = data.get("access_token")
+            check(f"{label} 登录", status == 200 and payload.get("code") == 200 and bool(token), f"{username}")
+            if not token:
+                continue
+
+            status, info = get_json("GET", "/gw/system/user/getInfo", token=token)
+            info_data = info.get("data") or {}
+            roles = info_data.get("roles") or []
+            user = (info_data.get("user") or {}).get("userName")
+            check(
+                f"{label} 角色",
+                status == 200 and info.get("code") == 200 and expected_role in roles,
+                f"{username} -> {roles}",
+            )
+            check(f"{label} 身份一致", user == username, f"{user!r}")
+
+            if expected_role == "student_portal":
+                check("学生无员工角色", not ({"counselor", "xgb", "superadmin"} & set(roles)), str(roles))
+
+        status, payload = get_json("GET", "/gw/system/user/getInfo")
+        check("缺 token 拒绝读身份", not (status == 200 and payload.get("code") == 200), f"HTTP {status}")
+
+        status, payload = get_json("GET", "/gw/system/user/getInfo", token="invalid-token")
+        check("伪 token 拒绝读身份", not (status == 200 and payload.get("code") == 200), f"HTTP {status}")
+
+        status, payload = get_json(
+            "POST",
+            "/gw/auth/login",
+            {
+                "clientId": CLIENT_ID,
+                "grantType": "password",
+                "username": "__smoke_nonexistent__",
+                "password": "not-a-real-password",
+                "tenantId": "000000",
+            },
+        )
+        check("不存在账号登录失败", not (status == 200 and payload.get("code") == 200), f"HTTP {status}")
+    except RuntimeError as exc:
+        print(f"[FAIL] {exc}")
+        failures.append(str(exc))
+
+    print()
+    if failures:
+        print(f"冒烟失败：{len(failures)} 项")
+        sys.exit(1)
+    print(f"冒烟通过：{BASE}")
+
+
+if __name__ == "__main__":
+    main()

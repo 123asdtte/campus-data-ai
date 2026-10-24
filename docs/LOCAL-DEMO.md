@@ -121,6 +121,12 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 
 脚本会检查网关、构建 `campus-data-web:local-demo`、在 `campus-net` 启动 `campus-web-demo`，并检查 `/healthz`。
 
+启动后跑只读冒烟（登录页、四角色身份、缺 token/伪 token/不存在账号拒绝）：
+
+```powershell
+python scripts/demo/smoke-demo.py
+```
+
 ---
 
 ## 8. 已验证
@@ -136,6 +142,7 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 - 登录页：蓝色品牌区 + 悬浮登录卡的机构门户版式，1920×1080 / 1366×768 / 1280×720 单屏无滚动；不展示演示人数、角色清单、账号或密码，演示账号见本文第 1 节
 - 登录失败提示已中文化（密码错误次数、账号不存在、账号停用）；四种角色登录后分别进入 `/my-schedule`、`/counselor`、`/workbench`、`/`
 - 登录页适配 390px 移动端；业务页面仍按桌面 1920 设计
+- 冒烟脚本 `scripts/demo/smoke-demo.py`：healthz、登录页、四角色登录/角色/身份、缺 token/伪 token/不存在账号拒绝，全部 PASS（2026-10-24）
 
 ---
 
