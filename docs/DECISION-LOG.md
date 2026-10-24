@@ -1459,3 +1459,23 @@
 - **未验证**：远端 CI（记录时尚未运行）；浏览器端 KPI 数字变化未截图核对——本地 Docker Desktop 引擎当前返回 `500 Internal Server Error`，演示栈 8083 不可达，无法重建容器跑 Playwright，因此「学生自助页不再显示 2 个班」只有单测与 payload 层面的证据；数据构建脚本为何产出两种写法、正式环境该用哪个班级主键属数据治理问题，需业务负责人确认。
 - **回退**：`scope_metrics()` 的两行计数改回 `len(classes)`，删除 `class_identity()` 与 `ClassScopeCountTest`；无数据与配置变更。
 - **授权**：B 类（演示环境服务端计数逻辑与虚构数据单测）。只读探针跑在临时脚本里、未写入仓库，未触碰正式环境、真实数据或认证配置。
+
+
+## D-066 健康检查与业务共用并发槽是真的，但「32 个慢请求就能摘掉服务」这条要先降级再修
+
+- **状态**：未修复（机制已实测；严重性按新证据下调；修复需要 HTTP 层测试与可用的演示栈，本轮不具备条件）
+- **Decision owner**：AI
+- **问题与证据**：`Server.process_request()`（`demo-api/app.py` 1206-1229 行）在解析请求路径**之前**就抢 `BoundedSemaphore(MAX_CONCURRENT_REQUESTS)`，而 `/healthz` 是在 Handler 里分发的，所以健康检查和业务抢同一批槽。本轮用 `MAX_CONCURRENT_REQUESTS=1` 直接起 `app.Server` 实测：占住唯一槽后 `GET /healthz` 返回 **503**（`{"error": "服务繁忙，请稍后重试"}`），释放后立刻回到 **200**；容器 HEALTHCHECK 读的就是这个码，因此「满槽 → 判不健康 → 负载均衡摘掉本来可用的服务」这条链路成立。但同一次实测也推翻了原先记录的触发门槛：**未认证的慢请求不占槽**——用声明 `Content-Length: 4096` 却只发 1 个字节的 POST 打 `/assistant/query`，服务端在**读请求体之前**就做 token 校验，立刻回 401 并释放槽（`/healthz` 同时 0.00s 返回 200）。也就是说外部匿名慢客户端并不能把槽耗尽，只有**已登录身份的持续慢流量**才行，演示环境里是十几个教职工账号。
+- **决定**：本轮**不改并发结构**，只把机制、真实触发条件和后果写进日志，并把「先补 `/assistant/query` 等端点的 HTTP 层测试，再改 `process_request`」列为前置条件。理由：安全修法要先在 `process_request` 里窥探请求行、再把已读字节回灌给 Handler 的 `rfile`（`socket.makefile` 之后无法回退已 `recv` 的字节），这是 socket 层改动；而项目当前**没有任何 HTTP 层测试**（Q5），演示栈又因 Docker Desktop 引擎 500 不可用（见「环境与阻塞」），在没有回归网的情况下动它，风险大于收益。
+- **备选方案**：把槽改到 Handler 内按需申请、`/healthz` 豁免——否掉，这样连接线程数不再受控，slowloris 反而能无限起线程，用一个可用性风险换另一个；单独开一个健康检查端口——否掉，要同时改 compose、HEALTHCHECK、CI 和 nginx 转发，演示环境用不上这个复杂度；把 `MAX_CONCURRENT_REQUESTS` 调大——否掉，只是推迟满槽，且掩盖真实容量问题。
+- **影响与兼容性**：本轮无代码变更，行为不变。已确认为既有限制：满槽时 `/healthz` 与业务一起 503。若后续正式环境要接入负载均衡，这条必须先修，且修法应包含「请求行窥探 + rfile 回灌 + HTTP 层回归测试」三件套。
+- **涉及文件**：仅 `docs/DECISION-LOG.md`（本条）。
+- **验证（实测）**：机制测试与门槛测试都在本机用真实 socket 起 `app.Server` 完成（`MAX_CONCURRENT_REQUESTS=1`、`STATE_DIR` 指向临时目录、不写演示台账），观测值即上文状态码与耗时；脚本是一次性探针，未入库。
+- **未验证**：满槽是否真能由**已登录**用户的并发流量稳定触发（需要网关发 token，本地 Docker 引擎当前返回 `500 Internal Server Error`，`curl http://127.0.0.1:8083/demo-api/healthz` 得 `000`）；容器 HEALTHCHECK 的实际翻牌次数与 restart 行为未观察。
+- **回退**：无代码变更，删除本条即可。
+- **授权**：B 类（本地隔离探针、虚构数据、临时状态目录）。未触碰正式环境、认证配置或真实数据。
+
+## 环境与阻塞（2026-10-24 本轮）
+
+- Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样失败，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本轮所有前端改动的浏览器验证、以及 `demo-api` 容器重建都无法在本地完成；受影响项：D-063 Esc 行为（未自动化）、跨周课程定位（未修复）、D-065 的学生页 KPI 截图核对。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`。
+- 远端 CI 本轮实测：`94b6770`（D-065）除「演示栈 E2E」仍在 `in_progress` 外，其余 9 项 check-run 已 completed success（含「本地演示 API 测试」「前端类型检查与构建」「AI 评审」）；E2E 结果待下一轮确认后再把 D-065 状态升级为 Verified in CI。
