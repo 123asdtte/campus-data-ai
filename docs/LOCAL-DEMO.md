@@ -181,6 +181,7 @@ python -m unittest discover -s demo-api/tests -v
 - 响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`Content-Security-Policy` 已启用，`Server` 隐藏版本号（8083 实测）；CSP 允许 AntD 内联样式但脚本仅限同源
 - 缓存策略：入口 HTML 与 SPA 回退返回 `Cache-Control: no-cache`（升级后不会引用已删除的哈希资源）；`/assets/*` 返回 `max-age=604800, immutable`（实测）
 - 入口超时：Nginx `client_header_timeout` / `client_body_timeout` 15s、`send_timeout` 30s、`keepalive_timeout` 30s（`nginx -T` 实测生效），降低慢速连接占用
+- 接口限流：`/gw/` 与 `/demo-api/` 按来源 IP `20r/s`、burst 60、并发 40，超限返回 429；200 个并发匿名请求实测 62 个放行（401）、138 个 429，8 秒后恢复；E2E 9 条不受影响
 - 路由拆包：入口 JS 1.39 MB → 0.69 MB；登录首屏不加载员工页/表格/xlsx chunk，懒加载页面实测正常
 - 数据接口：匿名 `/demo-api/data` 401；学生 1 人/15 排课；辅导员 270 人/73 排课/6 异动；学工处/管理员 5581 人；四件套学生/辅导员 403、学工处/管理员 200；旧公开 JSON 404
 - 数据缓存：同一登录身份内页面切换共享一次 `/demo-api/data`（管理员总览→工作台→报表仅 1 次请求）；退出后换学生登录会重新请求，页面只显示本人课表，未复用上一身份数据

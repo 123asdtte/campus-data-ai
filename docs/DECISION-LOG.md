@@ -972,3 +972,20 @@
 - **验证（实测）**：创建 `YD-LOCAL-*` → 备份 → 重置（本地记录 `[]`）→ 恢复（记录回归）→ demo-api healthy；演练数据与备份文件随后清理。
 - **回退**：删除两个脚本与文档条目；无数据变更。
 - **授权**：B 类（演示环境可运维性）。
+
+---
+
+## D-035 网关与演示 API 按 IP 限流
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：演示 API 可被脚本高频拉取全校数据，登录接口也可能被洪水请求；demo-api 的并发上限只能保护单个进程，不能阻止无意义的重复请求。
+- **决定**：
+  - 在 `nginx.conf` 的 http 上下文定义 `api_req`（20r/s）与 `api_conn`（40）区域，只作用于 `/gw/` 与 `/demo-api/`，静态资源不限；
+  - `burst=60 nodelay`，超限返回 429；
+  - TLS 模板复用同一区域，只补充 429 状态。
+- **影响与兼容性**：单用户正常页面与 E2E 不受影响；同一 NAT 下多人共享 IP 时，20r/s 仍高于演示负载；正式上线需按真实并发与网关容量重新评估。
+- **涉及文件**：`web/nginx.conf`、`web/nginx.tls.conf`、`web/nginx-common.conf`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：`nginx -T` 确认区域与 location 指令生效；200 个并发匿名请求得到 62 个 401（放行）与 138 个 429；8 秒后单请求恢复；Playwright **9 passed / 28.1s**；冒烟全部 PASS。
+- **回退**：移除两个 zone 定义与 location 内 `limit_req/limit_conn`；无数据变更。
+- **授权**：B 类（公网试用入口防护）。
