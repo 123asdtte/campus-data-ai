@@ -1477,8 +1477,11 @@
 
 ## 环境与阻塞（2026-10-24 本轮）
 
-- Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样失败，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本轮所有前端改动的浏览器验证、以及 `demo-api` 容器重建都无法在本地完成；受影响项：D-063 Esc 行为（未自动化）、跨周课程定位（未修复）、D-065 的学生页 KPI 截图核对。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`。
-- 远端 CI 本轮实测：`94b6770`（D-065）10 项 check-run 全部 completed success（含「演示栈 E2E」），已据此把 D-065 升级为 Verified in CI；`da9aa07`（仅本文档改动）的结果待下一轮确认。
+- Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样取不到服务端信息，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本地无法重建 `demo-api` 容器，也无法跑 Playwright。受影响且**仍未验证**的事项：D-063 悬浮助手 Esc 焦点守卫（无自动化覆盖）、D-071 跨周定位的新提示（逻辑已改为「当前周确有该课才高亮，否则明说未定位」，但页面表现没看过）、D-065 学生页 KPI 的截图核对、D-072 锁改动在高并发下的尾延迟。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`，或整体 `powershell -File scripts/demo/verify-local-demo.ps1`。
+- 远端 CI 最新实测（2026-10-24 13:17 UTC）：分支头 `c786abe`（纯文档）的一轮 checks 多数仍 pending，已见「脚本语法与孤儿清理自检」「后端语法与导入检查」「Compose 组合校验」pass。上一个代码头 `b0e603f`（D-072）可见「本地演示 API 测试」「前端类型检查与构建」「后端接口与校验测试」「AI 助手原型测试」「AI 评审」pass，「演示栈 E2E」当时仍 pending；远端日志没取到用例条数，所以不引用远端具体数字。任何一次 CI 绿都不等于生产验收。
+- PR #58 当前状态：`OPEN`、`MERGEABLE`、`mergeStateStatus=UNSTABLE`（checks 未跑完）、`reviewDecision` 为空。合并属于业务负责人批准范围，本轮未自行合并。
+- 本地测试基线：`demo-api` **91 tests OK (skipped=2)**，`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；27 条 Playwright E2E 因演示栈不可用未跑。
+- 历史 CI 记录：`94b6770`（D-065）当时 10 项 check-run 全部 completed success（含「演示栈 E2E」），D-065 据此升级为 Verified in CI；那条 E2E 绿只证明当时的镜像与用例，不代表本轮 D-071 的前端改动已被 E2E 覆盖。
 
 
 ## D-067 问数端点第一次有了 HTTP 层回归，同时暴露出「缺 token 时客户端读到 0 字节」
