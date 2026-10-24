@@ -22,6 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app as demo  # noqa: E402
+import os
+import stat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -731,3 +733,40 @@ class CounselorScopeIdentityTest(unittest.TestCase):
         self.assertEqual({s["uid"] for s in payload["students"]}, self.own)
         self.assertTrue(all(c["counselor"] != self.other_label for c in payload["class_summary"]))
         self.assertTrue(all(row["uid"] in self.own for row in payload["changes"]))
+
+@unittest.skipUnless(os.name == "posix", "POSIX 才有可校验的文件权限位")
+class AssistantAuditPermissionTest(unittest.TestCase):
+    """问数审计记着「谁在哪个页面问了什么」，可读性不能高于同目录下的台账。
+
+    追加写跟着 umask（演示容器里实测是 0644，台账却是 0600），所以要显式收紧一次。
+    Windows 的权限位是模拟的，只在 POSIX 上断言，免得留一条永远验不出名堂的测试。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self._state, self._log = demo.STATE_DIR, demo.ASSISTANT_LOG_PATH
+        demo.STATE_DIR = Path(self.tmp.name) / "state"
+        demo.ASSISTANT_LOG_PATH = demo.STATE_DIR / "assistant-audit.jsonl"
+        os.umask(0o022)
+
+    def tearDown(self):
+        demo.STATE_DIR, demo.ASSISTANT_LOG_PATH = self._state, self._log
+
+    def _audit_mode(self):
+        return stat.S_IMODE(os.stat(demo.ASSISTANT_LOG_PATH).st_mode)
+
+    def test_audit_file_is_not_group_or_world_readable(self):
+        demo.record_assistant_audit(
+            {"userName": "戴雅琴"}, {"counselor"},
+            {"intent": "affairs", "scope": {"label": "本班"}}, "本班有谁申请休学？", "/changes",
+        )
+        self.assertEqual(self._audit_mode(), 0o600, f"审计文件权限为 {oct(self._audit_mode())}")
+
+    def test_repeated_writes_keep_the_tightened_mode(self):
+        for index in range(3):
+            demo.record_assistant_audit(
+                {"userName": f"辅导员{index}"}, {"counselor"}, {"intent": "affairs"}, "追问", "/changes",
+            )
+        self.assertEqual(len(demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()), 3)
+        self.assertEqual(self._audit_mode(), 0o600)

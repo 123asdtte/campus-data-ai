@@ -772,6 +772,10 @@ def record_assistant_audit(user: dict, roles: set[str], result: dict, question: 
         with STATE_LOCK:
             with open(ASSISTANT_LOG_PATH, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            # 追加写出来的文件跟着 umask（容器里是 0644），而台账是 0600：审计里记着
+            # 谁在哪个页面问了什么，敏感度不低于台账，不能比台账更好读。后续截断重写
+            # 沿用同一个 inode，所以这里收紧一次就够。
+            os.chmod(ASSISTANT_LOG_PATH, 0o600)
             lines = ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()[-ASSISTANT_LOG_KEEP:]
             ASSISTANT_LOG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError as error:
