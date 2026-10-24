@@ -128,7 +128,7 @@ jobs:
       - name: 安装 Chromium
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: Playwright E2E（16 条，含悬浮 AI 与移动端）
+      - name: Playwright E2E（17 条，含悬浮 AI、服务端问数与移动端）
         working-directory: web
         env:
           PW_CHANNEL: chromium

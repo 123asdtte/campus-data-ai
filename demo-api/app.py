@@ -477,7 +477,9 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
                 f"{(quality.get('duplicate_rows') or {}).get('count', 0)} 行、同班同名 "
                 f"{(quality.get('same_name_groups') or {}).get('count', 0)} 组、身份证校验异常 "
                 f"{(quality.get('id_invalid') or {}).get('count', 0)} 条、班级名称未匹配 "
-                f"{(quality.get('class_not_found') or {}).get('count', 0)} 人。"
+                f"{(quality.get('class_not_found') or {}).get('count', 0)} 人、转专业已批但花名册未更新 "
+                f"{(quality.get('transfer_conflicts') or {}).get('count', 0)} 条。同名同姓 "
+                f"{(quality.get('same_name_all') or {}).get('count', 0)} 组仅作提示。"
             ),
             "scope": {"label": scope_label},
             "action": {"label": "查看数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},

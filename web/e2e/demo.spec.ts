@@ -233,6 +233,22 @@ test.describe('本地演示关键路径', () => {
     await expect(page.getByText('03 校验结果')).toBeVisible();
   });
 
+  test('管理员问数页调用服务端接口，且不重复悬浮入口', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/assistant');
+    await expect(page.getByRole('heading', { name: 'AI 问数' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '打开 AI 助手' })).toHaveCount(0);
+
+    const reply = page.waitForResponse((response) => response.url().includes('/demo-api/assistant/query'));
+    await page.getByRole('button', { name: '人工智能学院有多少学生？' }).click();
+    expect((await reply).status()).toBe(200);
+
+    const bubble = page.locator('.ai-message.is-assistant').last();
+    await expect(bubble).toContainText('人工智能学院');
+    await expect(bubble).toContainText('人数统计');
+    await expect(bubble.getByText('全校范围演示数据')).toBeVisible();
+  });
+
   test('管理员可查看全校数据并下载四件套', async ({ page }) => {
     await login(page, 'admin', 'admin123');
     await page.locator('a.app-nav-item', { hasText: '数据工作台' }).click();

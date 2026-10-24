@@ -45,6 +45,8 @@ export default function FloatingAssistant() {
   const navigate = useNavigate();
   const { session } = useSession();
   const isStudent = session?.roles.includes('student_portal') ?? false;
+  // AI 问数页本身就是一个完整对话界面，再挂悬浮入口只会重复。
+  const embedded = pathname === '/assistant';
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
@@ -112,6 +114,8 @@ export default function FloatingAssistant() {
     }
     navigate('/my-schedule', { state: { focusCourse: detail } });
   };
+
+  if (embedded) return null;
 
   return (
     <>

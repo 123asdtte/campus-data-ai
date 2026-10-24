@@ -249,6 +249,18 @@ class AssistantQueryTest(unittest.TestCase):
             expected = sum(1 for change in staff_payload["changes"] if change.get("type") == name)
             self.assertIn(f"{name} {expected} 条", reply["answer"])
 
+    def test_quality_answer_covers_every_flag(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        quality = staff_payload["metrics"]["data_quality"]
+        reply = demo.staff_answer("数据质量怎么样？", staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "quality")
+        # AI 问数页迁到服务端后，这些口径必须一条不漏，否则前端旧文案会丢失
+        for key in (
+            "duplicate_rows", "same_name_groups", "id_invalid",
+            "class_not_found", "transfer_conflicts", "same_name_all",
+        ):
+            self.assertIn(str((quality.get(key) or {}).get("count")), reply["answer"])
+
     def test_staff_scope_and_counselor_scope(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)
         staff_reply = demo.staff_answer("人工智能学院有多少学生？", staff_payload, STAFF)

@@ -1094,7 +1094,7 @@
 
 ## D-043 演示栈 E2E 接入 CI：补齐导入链路并隔离台账
 
-- **状态**：Implemented（2026-10-24，远端结果待本次运行确认）
+- **状态**：Verified in CI（2026-10-24，PR #58 run 40077110109 / commit 8d9d525，含「演示栈 E2E」在内 8 个 job 全部 success）
 - **Decision owner**：AI
 - **问题与证据**：PR #58 首次实跑 `demo-e2e`（commit 5af7220）为 10 passed / 1 failed / 5 did not run。① `管理员导入预检` 停在“识别结果”之前：job 只启动了 `gateway-db gateway-redis gateway`，`campus-db` 与 `import-api` 未启动，网关 `/internal/proxy/imports/*` 无下游；② `afterAll` 抛 `EACCES: permission denied, unlink demo-api/state/ledger.json`：容器以 root 写入宿主机绑定目录，runner 用户无权删除。
 - **决定**：
@@ -1106,7 +1106,25 @@
 - **影响与兼容性**：只改 CI 编排与测试清理，业务代码路径不变；`compose-config` job 增加 `demo.e2e.yml` 组合校验，避免覆盖文件语法回归。
 - **涉及文件**：`.github/workflows/ci.yml`、`docker-compose.demo.e2e.yml`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
 - **验证（实测）**：一次性空库按 CI 顺序执行 `001→002→003→004→006` 全部 OK，`campus.students` 200 行；`docker compose -f docker-compose.demo.yml -f docker-compose.demo.e2e.yml config` 渲染出命名卷；demo-api 33 passed；`npx tsc --noEmit` 通过。远端 `demo-e2e` 结果：待本次运行确认，未确认前不记为通过。
-- **未验证**：GitHub Actions 上的 `demo-e2e` 绿色结果；导入预检在开启内部验签后的端到端表现。
+- **远端证据**：run 40077110109（headSha 8d9d525）演示栈 E2E success，16 条用例在 Chromium + 全栈（网关签名→导入服务验签）下通过；同次 本地演示 API 测试、后端接口与校验测试、AI 助手原型测试、前端类型检查与构建、网关构建、Compose 组合校验、后端语法与导入检查均为 success。
 - **回退**：删除 `docker-compose.demo.e2e.yml` 并还原 `ci.yml` 的 `demo-e2e` job。
 - **授权**：B 类（CI 与演示环境，隔离且可回收）。
+
+## D-044 独立 AI 问数页改用服务端问答，去除重复的浏览器规则引擎
+
+- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待本次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：D-042 已把课表问答搬到服务端，但 `/assistant` 仍保留自己的一套浏览器规则引擎（`COLLEGE_ALIASES` / `findCollege` / `findStatuses` / `buildAnswer` 共 140 行），为了算几个数字把整份 `/demo-api/data` 全量拉到前端；同一入口在同一路由上还叠了悬浮助手，出现两个 AI 面板、两套口径。
+- **决定**：
+  1. `AssistantPage` 改为调用 `POST /demo-api/assistant/query`（`askAssistant`），身份、权限与数据范围全部由服务端判定，页面不再下载全量演示数据、不再自行统计。
+  2. 补齐服务端 `quality` 口径（新增“转专业已批但花名册未更新”“同名同姓仅作提示”），保证迁移后不丢旧文案信息，并用单测锁定六个质量指标都出现在回答里。
+  3. `/assistant` 路由不再渲染悬浮助手入口，避免两个 AI 面板同时出现；其余业务页仍使用悬浮入口。
+  4. 页面补上加载、失败与重试态（失败明确说明“服务端没有返回结果，本回答不含推测数据”），建议问题改为跟随服务端返回的 `suggestions`，问数记录继续留本机。
+- **备选方案**：删掉独立问数页只留悬浮面板——会丢掉边界说明与问数记录侧栏，管理员也需要可展开的对话区；保留前端引擎只做“影子调用”——等于继续维护两套口径，均不采用。
+- **影响与兼容性**：问答口径以服务端为准，前后端不再分叉；管理员问数页少一次约 3 MB 的全量数据请求；`/assistant` 的输入框可访问名保持“输入问题”，既有可访问性用例不受影响。
+- **涉及文件**：`web/src/pages/AssistantPage.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/src/styles.css`、`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/e2e/demo.spec.ts`。
+- **验证（实测）**：demo-api **34 passed**；`npx tsc --noEmit` 通过；Playwright E2E **17 passed / 1.0m**（新增用例断言 `/assistant` 无悬浮入口、点击建议问题命中 `/demo-api/assistant/query` 且返回 200、气泡含“人工智能学院 / 人数统计 / 全校范围演示数据”）。
+- **未验证**：本次提交后的远端 CI；Dify/LLM 接入；真实课表与真实业务库。
+- **回退**：恢复 `AssistantPage` 的本地 `buildAnswer` 与 `useDemoData`，并把悬浮入口在 `/assistant` 重新渲染即可；无数据结构变更。
+- **授权**：B 类（演示环境功能与测试），不涉及正式数据或外部服务。
 
