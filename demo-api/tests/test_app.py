@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 import socket
 import sys
 import threading
@@ -184,6 +185,50 @@ class QuietServer(demo.Server):
     def handle_error(self, request, client_address) -> None:
         # 测试里主动断开半开连接，忽略由此产生的写回失败
         pass
+
+
+class DataIntegrityTest(unittest.TestCase):
+    def setUp(self):
+        self.students = demo.DATA["students"]
+        self.uids = {student["uid"] for student in self.students}
+
+    def test_students_have_unique_non_empty_uid(self):
+        self.assertEqual(len(self.uids), len(self.students))
+        self.assertTrue(all(student.get("uid") for student in self.students))
+        self.assertTrue(all(student.get("name") for student in self.students))
+
+    def test_contact_fields_are_masked(self):
+        phone_pattern = re.compile(r"^(\d{3}\*{4}\d{4}|\*{4}\d{4})$")
+        id_pattern = re.compile(r"^\*{4}\d{3}[\dX]$")
+        for student in self.students:
+            self.assertRegex(student["phone"], phone_pattern, student["uid"])
+            self.assertRegex(student["id_card"], id_pattern, student["uid"])
+
+    def test_changes_reference_existing_students_and_known_types(self):
+        for change in demo.DATA["changes"]:
+            self.assertIn(change["uid"], self.uids, change.get("change_no"))
+            self.assertIn(change["type"], demo.CHANGE_TYPES, change.get("change_no"))
+
+    def test_schedule_references_known_classes(self):
+        class_keys = {
+            key
+            for student in self.students
+            for key in (student.get("class_name"), student.get("class_short"))
+            if key
+        }
+        for row in demo.DATA["schedule"]:
+            self.assertTrue(
+                row.get("class_name") in class_keys or row.get("class_short") in class_keys,
+                row.get("class_name"),
+            )
+            self.assertTrue(row.get("course"), row.get("class_name"))
+
+    def test_metrics_match_student_count(self):
+        self.assertEqual(demo.DATA["metrics"]["total_students"], len(self.students))
+
+    def test_four_sheet_file_is_present(self):
+        self.assertTrue(demo.FOUR_SHEET_PATH.is_file())
+        self.assertGreater(demo.FOUR_SHEET_PATH.stat().st_size, 100_000)
 
 
 class ConcurrencyLimitTest(unittest.TestCase):

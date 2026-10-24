@@ -34,7 +34,7 @@
 | 数据隔离 | 匿名数据请求 401；旧公开 JSON/XLSX 地址 404；台账文件容器内 `600 root` |
 | 传输与缓存 | gzip 生效（入口 JS 689 KB → 227 KB，员工 JSON 3,074 KB → 170 KB）；入口 HTML `no-cache`，哈希资源长缓存 |
 | 稳定性 | demo-api 慢连接 10 秒关闭、线程为 daemon；并发请求默认上限 32，超出返回 503；HTTP 请求体与导入条数有上限 |
-| 自动化测试 | Playwright **9 passed**（关键业务 + 401 + 管理员九页控制台/溢出巡检）；demo-api **19 passed**；只读冒烟全部 PASS |
+| 自动化测试 | Playwright **9 passed**（关键业务 + 401 + 管理员九页控制台/溢出巡检）；demo-api **25 passed**；只读冒烟全部 PASS |
 
 复现命令：
 
