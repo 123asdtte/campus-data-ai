@@ -188,13 +188,13 @@ python -m unittest discover -s demo-api/tests -v
 - 响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`Content-Security-Policy` 已启用，`Server` 隐藏版本号（8083 实测）；CSP 允许 AntD 内联样式但脚本仅限同源
 - 缓存策略：入口 HTML 与 SPA 回退返回 `Cache-Control: no-cache`（升级后不会引用已删除的哈希资源）；`/assets/*` 返回 `max-age=604800, immutable`（实测）
 - 入口超时：Nginx `client_header_timeout` / `client_body_timeout` 15s、`send_timeout` 30s、`keepalive_timeout` 30s（`nginx -T` 实测生效），降低慢速连接占用
-- 接口限流：`/gw/` 与 `/demo-api/` 按来源 IP `20r/s`、burst 60、并发 40，超限返回 429；200 个并发匿名请求实测 62 个放行（401）、138 个 429，8 秒后恢复；E2E 18 条不受影响
+- 接口限流：`/gw/` 与 `/demo-api/` 按来源 IP `20r/s`、burst 60、并发 40，超限返回 429；200 个并发匿名请求实测 62 个放行（401）、138 个 429，8 秒后恢复；E2E 19 条不受影响
 - 路由拆包：入口 JS 1.39 MB → 0.69 MB；登录首屏不加载员工页/表格/xlsx chunk，懒加载页面实测正常
 - 数据接口：匿名 `/demo-api/data` 401；学生 1 人/15 排课；辅导员 270 人/73 排课/6 异动；学工处/管理员 5581 人；四件套学生/辅导员 403、学工处/管理员 200；旧公开 JSON 404
 - 数据缓存：同一登录身份内页面切换共享一次 `/demo-api/data`（管理员总览→工作台→报表仅 1 次请求）；退出后换学生登录会重新请求，页面只显示本人课表，未复用上一身份数据
 - 异动台账：辅导员发起异动 → 服务端返回 `YD-LOCAL-*` 并进入“待平台核对”；刷新页面记录仍在，`docker compose ... --force-recreate demo-api` 后仍在；平台核对结果同样持久化
 - 台账备份/恢复演练：创建记录 → 备份 → 重置（本地记录 0 条）→ 恢复（记录回归）→ demo-api healthy（2026-10-24）
-- 一键校验：`scripts/demo/verify-local-demo.ps1` 依次执行 healthz、冒烟、34 项单测、18 条 E2E，最终输出 `All local demo checks passed.`（2026-10-24）
+- 一键校验：`scripts/demo/verify-local-demo.ps1` 依次执行 healthz、冒烟、37 项单测、19 条 E2E，最终输出 `All local demo checks passed.`（2026-10-24）
 - 异动权限（API 实测）：学生发起/核对 403；辅导员只能登记/核对本人学生（越界 403），学工处可登记他班学生；非法类型/格式日期/无效日历日（如 `2026-02-30`）400
 - 异动导入：带 BOM 的模板 CSV 经前端解析后批量提交，2 条写入并刷新后仍在；重复异动编号自动追加 `-IMPn`；非法类型/越界行按行跳过；单次上限 200 条
 - demo-api 测试：**34 passed**（2026-10-24）——学生/辅导员/全校身份范围、越界写入 403、无效日历日/格式/类型/空原因/不存在学生拒绝、台账按范围过滤、异动编号不重复、三种身份的 payload 范围、并发槽耗尽返回 503 且释放后恢复；数据一致性（UID 唯一、联系方式脱敏、异动/课表引用存在、指标与四件套文件）；课表问答（数字星期归一化、单双周、指定星期/节次、剩余课程、本人班级隔离、敏感问题拒答、学工处/辅导员范围）

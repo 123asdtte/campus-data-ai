@@ -375,3 +375,32 @@ class ConcurrencyLimitTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CollegeScopeAnswerTest(unittest.TestCase):
+    """辅导员载荷里的 college_counts 只是本人带班口径，不能当成全院数字播报。"""
+
+    def test_counselor_college_question_states_scope_limit(self):
+        payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        college = payload["metrics"]["college_counts"][0]["name"]
+        reply = demo.staff_answer(f"{college}有多少学生？", payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "out_of_scope")
+        self.assertIn("不在你的数据范围", reply["answer"])
+        self.assertNotIn(f"{college}共有", reply["answer"])
+
+    def test_counselor_status_count_still_answers(self):
+        payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        status = next(
+            item["name"] for item in payload["metrics"]["status_counts"]
+            if item["name"] not in ("休学", "退学", "转专业")
+        )
+        reply = demo.staff_answer(f"{status}有多少人？", payload, COUNSELOR_ROLE)
+        self.assertEqual(reply["intent"], "count")
+        self.assertIn(status, reply["answer"])
+
+    def test_staff_still_gets_college_total(self):
+        payload = demo.scoped_payload(staff_user(), STAFF)
+        entry = payload["metrics"]["college_counts"][0]
+        reply = demo.staff_answer(f"{entry['name']}有多少学生？", payload, STAFF)
+        self.assertEqual(reply["intent"], "count")
+        self.assertIn(str(entry["count"]), reply["answer"])

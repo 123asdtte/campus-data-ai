@@ -145,6 +145,16 @@ test.describe('本地演示关键路径', () => {
     expect(scrolledRoutes, '演示表格在 390px 下均未溢出，滚动保护已失效').toBeGreaterThan(0);
   });
 
+  test('辅导员问全院人数时，助手说明数据范围而不是给出口径错误的数字', async ({ page }) => {
+    await login(page, 'counselor01', 'Demo@2026');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('人工智能学院有多少学生？');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    await expect(panel.getByText(/不在你的数据范围/)).toBeVisible({ timeout: 15000 });
+    await expect(panel.getByText(/人工智能学院共有/)).toHaveCount(0);
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);

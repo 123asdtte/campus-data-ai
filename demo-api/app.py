@@ -425,7 +425,7 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
     is_counselor = "counselor" in roles and not (roles & STAFF_ROLES)
     scope_label = "本班范围" if is_counselor else "全校范围"
     report_target = "/counselor" if is_counselor else "/reports"
-    change_target = "/changes" if is_counselor else "/changes"
+    change_target = "/changes"
     base = {"courses": [], "note": f"{scope_label}演示数据；不返回身份证、电话或原始学号。", "action": None}
     q = question
 
@@ -451,6 +451,18 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
     college = next((item.get("name") for item in metrics.get("college_counts") or [] if item.get("name") and item["name"] in q), None)
     if not college:
         college = next((name for alias, name in COLLEGE_ALIASES.items() if alias in q), None)
+    if college and is_counselor:
+        # 辅导员载荷里的 college_counts 只覆盖本人所带的班，直接播报会变成“班级数冒充学院数”。
+        return {
+            **base,
+            "intent": "out_of_scope",
+            "answer": (
+                f"{college}的全院人数不在你的数据范围内：你可见的是所带班级共 {len(students)} 人，"
+                f"而 {college} 是更大的口径。需要全院数字请向学工处或管理员查询。"
+            ),
+            "scope": {"label": scope_label},
+            "action": {"label": "打开辅导员台", "to": "/counselor"},
+        }
     base_students = [student for student in students if student.get("college") == college] if college else students
     scope = college or scope_label
     statuses = [
