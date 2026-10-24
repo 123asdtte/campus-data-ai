@@ -1301,7 +1301,7 @@
 
 ## D-055 悬浮助手不管在哪个页面都问同一批问题；两条问法被服务端答成人数
 
-- **状态**：Implemented（2026-10-24 本地实测：50 单测 / 24 E2E / tsc 通过，远端 CI 待本次运行确认）
+- **状态**：Verified in CI（远端 run 40085524218 / 40085524186 / 40085524175，commit `a6596c7`：CI、运维脚本、AI 评审三条工作流全部 completed success）；本地实测 50 单测 / 24 E2E / tsc 通过
 - **Decision owner**：AI
 - **问题与证据**：悬浮面板的推荐问题对所有员工角色写死同一组 4 条（`STAFF_SUGGESTIONS`），在 `/changes`、`/reports`、`/import` 上看到的是同一串与本页无关的提问，AI 与业务页面仍是“两张皮”。为了确定哪些问法真的能答，用一次性脚本把 19 条候选问法分别喂给辅导员与管理员两种身份的 `staff_answer`（不落库、不起服务、跑完即删），实测结果里两条是错的：`收件箱里有哪些资料？` 因为命中触发词“哪些”而返回 `intent=count`，回答“全校共有 5581 名学生”——问的是资料库收件箱，答的是学籍人数；`留级和复学各多少人？` 同样落到 `count`，把两类只存在于异动台账的记录答成全全校人数。同时 `PAGE_LABELS`（悬浮面板）与 `AppLayout` 的 `TITLE`（页头）是两份各自维护的路由→名称映射，同一页面在两侧叫法不一致（`/` 一处“角色首页”一处“总览”，`/counselor` 一处“辅导员台”一处“辅导员工作台”）。
 - **决定**：服务端两处口径收敛——人数分支加 `about_students` 前置条件，只有问法真的指向学生（学生/人数/学籍/在读/全校/学院/班/名）才回 `count`，否则宁落回 `unknown` 的引导；台账专有类型（留级/复学/转专业等）在问“多少人”但没有学籍状态可对应时改走 `change_count`，并在回答里明说“这两类不是当前学籍状态，只能按异动台账条数回答”。前端把推荐问题按路由分成 `PAGE_SUGGESTIONS`（异动/报表/流水线/导入/学生信息各一组），且只保留单测里已锁定意图的问法；页面名称统一成单一来源 `web/src/pageTitles.ts`，侧边栏页头与悬浮面板共用。
@@ -1315,7 +1315,7 @@
 
 ## D-056 “今天数据有什么问题？”落回兜底回答：意图触发不能只认字面词
 
-- **状态**：Implemented（2026-10-24 本地实测：51 单测 / 25 E2E，重建 demo-api 前后各跑一遍做负向验证；远端 CI 待本次运行确认）
+- **状态**：Verified in CI（远端 run 40085524218 / 40085524186 / 40085524175，commit `a6596c7`：CI、运维脚本、AI 评审三条工作流全部 completed success）；本地实测 51 单测 / 25 E2E，重建 demo-api 前后各跑一遍做负向验证
 - **Decision owner**：AI
 - **问题与证据**：D-055 的问法探针里，`今天数据有什么问题？` 在辅导员与管理员两种身份下都返回 `intent=unknown`，回答是“我暂时只理解人数统计、学籍状态……”。原因不是没有这个能力，而是 `staff_answer` 的质量分支只认 `数据质量/缺失/异常/同名/数据标记` 五个字面词，用户最自然的“数据 + 问题”说法一条都不沾。同一能力的推荐问题（`数据质量怎么样？`）能答，说明差距完全在触发词，而不是数据或权限。
 - **决定**：质量分支补一条组合触发：问法同时含“数据”与“问题”即按 `quality` 回答。仍然只有辅导员等无全校质量统计的身份会拿到“当前角色没有全校数据质量统计范围”的说明，不编数字。
@@ -1326,3 +1326,17 @@
 - **未验证**：本次改动的远端 CI；`quality` 命中范围扩大后，是否在真实用户语料里抢掉别的意图（当前只按 19 条候选问法与既有用例回归，无更大规模真实提问日志）；含“数据”“问题”但语义无关的长句（如“异动数据有哪些问题”）按质量口径回答是否算合理解读。
 - **回退**：删掉组合触发条件即回到旧字面词表；无接口、权限与数据变更。
 - **授权**：B 类（演示环境业务能力与测试），不读写正式数据、不外发。
+
+## D-057 台账被写坏后会被当成空表覆盖：已有异动记录会静默丢失
+
+- **状态**：Implemented（2026-10-24 本地实测：56 单测 / 25 E2E / 端到端脚本 8 项断言全过；远端 CI 待本次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：来源是一次只读代码审计（`【示例】代码审查员`）给出的两条高危结论，逐条复核后确认。`load_ledger()`（原 `demo-api/app.py:97-109`）把 `OSError`、`json.JSONDecodeError` 和结构不合法一律吞成 `{"changes": [], "checked": {}}`，也就是**读不出来的台账等于没有台账**；而三条写链路（`_create_change`、`_import_changes`、`_check_change`）都是 `with STATE_LOCK: state = load_ledger()` → 改 → `save_ledger(state)`，于是任何一次登记都会把残缺文件当成空表重写，原有异动记录永久消失且没有任何提示。实测复现路径存在：`scripts/demo/reset-ledger.ps1` 在 `campus-demo-api` 运行中直接 `Remove-Item` 台账（原第 21 行），而 `save_ledger` 用 `os.replace` 落地，删除与写入并发即可能留下半个 JSON；`restore-ledger.ps1:43-46` 反而先停容器，说明这份脚本本身就不一致。第二条独立缺陷：`save_ledger`（原 `app.py:112-117`）没有异常处理，磁盘写失败时 `OSError` 会一路冒到 `ThreadingHTTPServer`，`BaseHTTPRequestHandler` 直接掐断连接，前端只会看到 fetch 失败而不是可理解的错误。**同批审计里另一条“高危”被否掉**：它称容器内 healthcheck 因 Docker Desktop 注入的 `HTTP_PROXY=127.0.0.1:8080` 而失败；本机 `docker inspect` 显示 `campus-demo-api` 与 `campus-web-demo` 均为 `healthy`，且容器环境里同时注入了 `NO_PROXY=localhost,127.0.0.1`，`127.0.0.1:8000/healthz` 根本不走代理，因此未做任何“修复”。
+- **决定**：把“没有台账”和“台账读不出来”分成两种事实。`load_ledger()` 只在 `FileNotFoundError` 时返回空台账；读取失败、非法 JSON、结构不是 `{changes: [], checked: {}}` 三种情况先尽力把原件复制成 `state/ledger.corrupt-<时间戳-微秒>.json`（`0o600`，复制自身失败只记 stderr，不掩盖原错误），再抛 `LedgerUnavailable`。三条写链路统一在 `do_POST` 外层收口：`LedgerUnavailable` → **503** 且错误文案直接给出恢复入口（`scripts/demo/restore-ledger.ps1`），`OSError` → **JSON 500** 并说明本次操作未生效。展示链路（`/data` 与 `/assistant/query` 共用的 `scoped_payload`）改用 `read_ledger_for_display()`，损坏时退回基础演示数据并记一条 stderr，避免一台机器上的坏文件把整站变成 500。`reset-ledger.ps1` 改成与 restore 一致：运行中先停容器、删除前把当前台账备份到 `state/backups/ledger-before-reset-<时间戳>.json`、结束后再启容器。
+- **备选方案**：读侧也一律 503——否掉，演示栈里一个坏台账不该让全部业务页不可用，而且基础数据仍是真数据；`load_ledger` 里顺手“修复”坏文件（补 `checked`、丢掉无法解析的尾部）继续写——否掉，这正是丢数据的成因；把台账换成 SQLite——否掉，超出当前演示阶段，且并发/审计问题应留给正式环境的数据库 API 方案（既有边界已写在 `docs/LOCAL-DEMO.md`）；只在文档里提醒操作者别手删文件——否掉，不可验证的约定防不住真实竞态。
+- **影响与兼容性**：`/changes`、`/changes/import`、`/changes/check` 新增 503/500 两种可预期响应（此前是静默成功或连接被掐断），请求体、成功响应与权限判定不变；台账损坏时 `state/` 目录会多出隔离副本（演示目录，`backup-ledger.ps1` 与 `restore-ledger.ps1` 均不受影响）；前端异动页与悬浮助手会原样显示中文错误文案。写成功路径仍依赖 `os.replace` 的原子性，本次未引入新的一致性假设。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`scripts/demo/reset-ledger.ps1`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests` → **56 passed**，新增 `LedgerIntegrityTest` 5 条（缺文件读成空表、合法台账原样回读、截断文件抛错且**原字节不变**并留下隔离副本、结构不合法不被静默清空、损坏时展示链路退回基础数据）；`docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api` 重建后跑 Playwright E2E **25 passed / 1.3m**，其中辅导员发起/核对/CSV 导入三条覆盖了台账正常写入链路未被这次改动破坏。**真实 HTTP 端到端验证**（一次性脚本走 8083 演示栈，登录后按序断言，跑完清理容器内 `state/`）：健康台账下 `POST /demo-api/changes` 返回 201；随后把 `ledger.json` 写成截断 JSON（内含可识别的 `YD-MARKER-LOSS` 编号）→ 再次创建返回 **503** 且文案含 `restore-ledger`；创建后文件字节与损坏时完全一致、标记仍在（即旧版会丢的那条记录没被覆盖掉），隔离副本 1 份；`GET /demo-api/data` 仍 **200** 并给出 96 条基础异动；`POST /demo-api/assistant/query` 问“全校有多少学生？”仍 200 且答“5581 名学生，其中在籍 5507 人”（与演示数据基线一致）；删掉损坏文件与隔离副本后再创建恢复为 201。8 项断言全部通过并打印 `ALL LEDGER GUARD CHECKS PASSED`。**运维脚本实测**（同样跑真容器，不只看语法）：先 `Parser`/`[scriptblock]::Create` 确认 `reset-ledger.ps1` 可解析，再写入一条含 `YD-BEFORE-RESET` 的台账、执行 `reset-ledger.ps1 -Force`，结果备份落到 `state/backups/ledger-before-reset-*.json`（内容仍是那行记录）、`ledger.json` 已删除、`demo-api` 自动回到 `running healthy`。这一轮实测暴露了脚本自身的两个问题并已修掉：提示串里写了转义的反引号导致打印出字面量 `$safety` 而不是备份路径；重启容器后没有像 `restore-ledger.ps1` 那样等健康检查，调用方可能紧接着访问到 `starting` 状态。测试产生的两个 `YD-BEFORE-RESET*` 备份已删除，`demo-api/state/` 本身在 `.gitignore` 内，不会入库。
+- **未验证**：本次改动的远端 CI；磁盘真实写满/只读导致的 `OSError → 500` 分支未做实物注入（仅在代码路径上收口，`save_ledger` 仍保留原子写）；`read_ledger_for_display` 在损坏期间只展示基础数据、不向终端用户显式提示台账降级（当前仅 stderr），是否需要前端可见提示留待产品判断；并发下多个隔离副本同名覆盖（已用微秒时间戳规避，未做高压实测）。
+- **回退**：`load_ledger` 恢复 `except (OSError, json.JSONDecodeError): return 空表`、`scoped_payload` 换回 `load_ledger`、去掉 `do_POST` 的 try/except、`reset-ledger.ps1` 去掉停容器与备份即可回到旧行为；隔离副本是新增文件，删除不影响台账本身。
+- **授权**：B 类（演示环境数据完整性与运维脚本），仅在隔离演示栈内制造与清理虚构台账，不读写正式数据、不外发、不涉密钥。

@@ -94,19 +94,56 @@ def counts(items: list[str]) -> list[dict]:
     ]
 
 
-def load_ledger() -> dict:
+class LedgerUnavailable(RuntimeError):
+    """台账文件存在却读不出来。此时绝不能把它当成空表写回去，否则已有异动记录会静默丢失。"""
+
+
+def empty_ledger() -> dict:
+    return {"changes": [], "checked": {}}
+
+
+def quarantine_ledger(reason: str) -> None:
+    # 隔离副本是为了「事后还能救」，所以这一步自己失败也不能盖掉真正的原因。
+    target = STATE_PATH.with_name(
+        f"ledger.corrupt-{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')}.json"
+    )
     try:
-        payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"changes": [], "checked": {}}
-    if not isinstance(payload, dict):
-        return {"changes": [], "checked": {}}
-    changes = payload.get("changes")
-    checked = payload.get("checked")
-    return {
-        "changes": changes if isinstance(changes, list) else [],
-        "checked": checked if isinstance(checked, dict) else {},
-    }
+        target.write_bytes(STATE_PATH.read_bytes())
+        os.chmod(target, 0o600)
+        print(f"[demo-api] 台账损坏（{reason}），原文件已隔离为 {target}", file=sys.stderr)
+    except OSError as error:
+        print(f"[demo-api] 台账损坏（{reason}），隔离副本写入失败：{error}", file=sys.stderr)
+
+
+def load_ledger() -> dict:
+    """读取台账。文件不存在就是空台账；文件读不动或结构不合法则抛错，交由调用方决定降级还是拒绝。"""
+    try:
+        raw = STATE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return empty_ledger()
+    except (OSError, UnicodeDecodeError) as error:
+        quarantine_ledger(f"读取失败：{error}")
+        raise LedgerUnavailable("学籍异动台账文件无法读取") from error
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        quarantine_ledger(f"JSON 解析失败（第 {error.lineno} 行）")
+        raise LedgerUnavailable("学籍异动台账文件不是合法 JSON") from error
+    changes = payload.get("changes") if isinstance(payload, dict) else None
+    checked = payload.get("checked") if isinstance(payload, dict) else None
+    if not isinstance(changes, list) or not isinstance(checked, dict):
+        quarantine_ledger("结构应为 {changes: [], checked: {}}")
+        raise LedgerUnavailable("学籍异动台账文件结构不合法")
+    return {"changes": changes, "checked": checked}
+
+
+def read_ledger_for_display() -> dict:
+    """展示链路（/data、AI 问数）遇到损坏台账时退回基础演示数据，不能让整站 500。"""
+    try:
+        return load_ledger()
+    except LedgerUnavailable as error:
+        print(f"[demo-api] {error}，本次展示仅使用基础演示数据", file=sys.stderr)
+        return empty_ledger()
 
 
 def save_ledger(state: dict) -> None:
@@ -729,7 +766,7 @@ def record_assistant_audit(user: dict, roles: set[str], result: dict, question: 
 def scoped_payload(user: dict, roles: set[str]) -> dict | None:
     """返回该身份可见的数据；无权限返回 None。"""
     with STATE_LOCK:
-        state = load_ledger()
+        state = read_ledger_for_display()
 
     if roles & STAFF_ROLES:
         changes, checked = merge_ledger(user, roles, state)
@@ -926,12 +963,22 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_json()
         if body is None:
             return
-        if path == "/changes":
-            self._create_change(user, roles, body)
-        elif path == "/changes/import":
-            self._import_changes(user, roles, body)
-        else:
-            self._check_change(user, roles, body)
+        try:
+            if path == "/changes":
+                self._create_change(user, roles, body)
+            elif path == "/changes/import":
+                self._import_changes(user, roles, body)
+            else:
+                self._check_change(user, roles, body)
+        except LedgerUnavailable as error:
+            # 台账读不出来就写，等于把已有异动记录覆盖成只剩这一条，必须硬拦。
+            self._json(
+                503,
+                {"error": f"{error}，为避免覆盖已有台账已拒绝写入；请管理员执行 scripts/demo/restore-ledger.ps1 恢复"},
+            )
+        except OSError as error:
+            print(f"[demo-api] 台账写入失败：{error}", file=sys.stderr)
+            self._json(500, {"error": "学籍异动台账写入失败，本次操作未生效，请重试"})
 
     def _assistant_query(self, user: dict, roles: set[str]) -> None:
         body = self._read_json()

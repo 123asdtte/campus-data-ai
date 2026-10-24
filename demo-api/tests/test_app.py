@@ -587,3 +587,57 @@ class LedgerPendingAnswerTest(unittest.TestCase):
         reply = demo.staff_answer("审批中的异动有多少？", payload, STAFF)
         self.assertEqual(reply["intent"], "pending")
         self.assertIn(f"有 {len(expected)} 条异动仍在审批中", reply["answer"])
+
+
+class LedgerIntegrityTest(unittest.TestCase):
+    """台账读不出来时不能当成空表：照旧写回去就等于静默删掉已有异动记录。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self._state_dir = demo.STATE_DIR
+        self._state_path = demo.STATE_PATH
+        demo.STATE_DIR = self.dir
+        demo.STATE_PATH = self.dir / "ledger.json"
+
+    def tearDown(self):
+        demo.STATE_DIR = self._state_dir
+        demo.STATE_PATH = self._state_path
+        self.tmp.cleanup()
+
+    def quarantined(self) -> list[Path]:
+        return sorted(p for p in self.dir.iterdir() if p.name.startswith("ledger.corrupt-"))
+
+    def test_absent_file_reads_as_empty_ledger(self):
+        self.assertEqual(demo.load_ledger(), {"changes": [], "checked": {}})
+
+    def test_valid_ledger_round_trips(self):
+        state = {"changes": [{"change_no": "BG-1", "type": "休学"}], "checked": {"BG-1": {"by": "admin"}}}
+        demo.save_ledger(state)
+        self.assertEqual(demo.load_ledger(), state)
+        self.assertEqual(self.quarantined(), [])
+
+    def test_truncated_file_is_refused_and_kept_recoverable(self):
+        demo.save_ledger({"changes": [{"change_no": "BG-OLD", "type": "休学"}], "checked": {}})
+        broken = '{"changes": [{"change_no": "BG-OLD", "type": "休学"}], "checked": '
+        demo.STATE_PATH.write_text(broken, encoding="utf-8")
+        with self.assertRaises(demo.LedgerUnavailable):
+            demo.load_ledger()
+        # 写链路唯一入口是 load_ledger，它抛错就说明这条写被拦在覆盖之前；原字节必须还在。
+        self.assertEqual(demo.STATE_PATH.read_text(encoding="utf-8"), broken)
+        copies = self.quarantined()
+        self.assertEqual(len(copies), 1)
+        self.assertEqual(copies[0].read_text(encoding="utf-8"), broken)
+
+    def test_wrong_shape_is_not_silently_emptied(self):
+        demo.STATE_PATH.write_text('{"changes": {"不是": "数组"}, "checked": {}}', encoding="utf-8")
+        with self.assertRaises(demo.LedgerUnavailable):
+            demo.load_ledger()
+        self.assertEqual(len(self.quarantined()), 1)
+
+    def test_display_path_degrades_instead_of_failing(self):
+        demo.STATE_PATH.write_text("{{{", encoding="utf-8")
+        self.assertEqual(demo.read_ledger_for_display(), {"changes": [], "checked": {}})
+        payload = demo.scoped_payload(staff_user(), STAFF)
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(payload["changes"]), len(demo.DATA["changes"]))
