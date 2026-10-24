@@ -3,6 +3,7 @@ import { Button, Input } from 'antd';
 import { CloseOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { askAssistant, type AssistantCourse, type AssistantReply } from '../api/assistant';
+import { PAGE_TITLES } from '../pageTitles';
 import { useSession } from '../session/SessionContext';
 
 interface ChatMessage {
@@ -14,16 +15,13 @@ interface ChatMessage {
   retry?: string;
 }
 
-const PAGE_LABELS: Record<string, string> = {
-  '/my-schedule': '我的课表',
-  '/workbench': '数据工作台',
-  '/pipeline': '资料库流水线',
-  '/reports': '报表中心',
-  '/changes': '学籍异动',
-  '/counselor': '辅导员台',
-  '/students': '学生信息',
-  '/assistant': 'AI 问数',
-  '/portal': '学生自助填报',
+// 只列服务端确实能答的问法（意图已在 demo-api 单测里锁定），按当前页面换掉最贴身的三条。
+const PAGE_SUGGESTIONS: Record<string, string[]> = {
+  '/changes': ['还有哪些异动没核对？', '最近的学籍异动情况', '异动台账里休学和退学各有多少条？'],
+  '/reports': ['有哪些报表可以下载？', '导出全校学生名单', '全校学生总数是多少？'],
+  '/pipeline': ['数据质量怎么样？', '最近的学籍异动情况', '全校学生总数是多少？'],
+  '/import': ['数据质量怎么样？', '有哪些报表可以下载？'],
+  '/students': ['全校休学和退学各有多少人？', '人工智能学院有多少学生？', '数据质量怎么样？'],
 };
 
 const STUDENT_SUGGESTIONS = [
@@ -61,8 +59,8 @@ export default function FloatingAssistant() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
 
-  const contextLabel = PAGE_LABELS[pathname] ?? '数据管理';
-  const suggestions = isStudent ? STUDENT_SUGGESTIONS : STAFF_SUGGESTIONS;
+  const contextLabel = PAGE_TITLES[pathname] ?? '数据管理';
+  const suggestions = isStudent ? STUDENT_SUGGESTIONS : PAGE_SUGGESTIONS[pathname] ?? STAFF_SUGGESTIONS;
   const welcome = isStudent
     ? '我是你的课表助手，只读取你自己的班级课表和本人学籍档案。可以问：明天下午有什么课、今天还剩几节课、这周五第一节在哪、我的学籍状态是什么。'
     : '我是数据助手，按当前账号的数据范围统计人数、学籍状态、异动分布和数据质量；不返回身份证、电话或原始学号。';

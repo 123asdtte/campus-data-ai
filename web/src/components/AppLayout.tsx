@@ -3,6 +3,7 @@ import { Layout, Spin } from 'antd';
 import { AppstoreOutlined, CalendarOutlined, CloudUploadOutlined, DatabaseOutlined, FileTextOutlined, InboxOutlined, LogoutOutlined, RobotOutlined, SwapOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getLoginUser, logout } from '../api/auth';
+import { PAGE_TITLES } from '../pageTitles';
 import { useSession } from '../session/SessionContext';
 import SchoolCrest from './SchoolCrest';
 import FloatingAssistant from './FloatingAssistant';
@@ -24,20 +25,6 @@ const STAFF_NAV = [
 const STUDENT_NAV = [
   { to: '/my-schedule', label: '我的课表', icon: <CalendarOutlined /> },
 ];
-
-const TITLE: Record<string, string> = {
-  '/': '总览',
-  '/my-schedule': '我的课表',
-  '/students': '学生信息',
-  '/import': '数据导入',
-  '/workbench': '数据工作台',
-  '/pipeline': '资料库流水线',
-  '/reports': '报表中心',
-  '/assistant': 'AI 问数',
-  '/changes': '学籍异动',
-  '/counselor': '辅导员工作台',
-  '/portal': '学生自助填报',
-};
 
 function roleLabel(roles: string[]): string {
   if (roles.includes('student_portal')) return '学生';
@@ -116,7 +103,7 @@ export default function AppLayout() {
           <div className="app-header-left">
             <span className="app-crumb">数据管理</span>
             <span className="app-crumb-sep">/</span>
-            <span className="app-header-title">{TITLE[active?.to ?? ''] ?? '总览'}</span>
+            <span className="app-header-title">{PAGE_TITLES[active?.to ?? ''] ?? '总览'}</span>
           </div>
           <div className="app-header-right">
             <span className="app-actor" title={uid ? `UID：${uid}` : undefined}>

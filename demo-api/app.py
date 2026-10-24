@@ -584,15 +584,17 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "action": {"label": "查看数据工作台", "to": "/workbench" if not is_counselor else "/counselor"},
         }
 
-    if wants_change_rows and change_types and count_words:
+    if change_types and count_words and (wants_change_rows or not statuses):
         parts = [
             f"{name} {sum(1 for change in changes if change.get('type') == name)} 条"
             for name in change_types
         ]
+        # “留级和复学各多少人”问的是人数，但这两类只存在于异动台账里，必须说清给的是条数。
+        note = "" if statuses or wants_change_rows else "这两类不是当前学籍状态，只能按异动台账条数回答。"
         return {
             **base,
             "intent": "change_count",
-            "answer": f"{scope_label}学籍异动记录共 {len(changes)} 条；{'，'.join(parts)}。统计范围为演示台账。",
+            "answer": f"{scope_label}学籍异动记录共 {len(changes)} 条；{'，'.join(parts)}。统计范围为演示台账。{note}",
             "scope": {"label": scope_label},
             "action": {"label": "打开学籍异动", "to": change_target},
         }
@@ -614,7 +616,9 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
             "action": {"label": "打开学籍异动", "to": change_target},
         }
 
-    if count_words:
+    # “哪些/多少”本身不指向学生：问收件箱、导入批次时不能回一句人数，宁落回 unknown 的引导。
+    about_students = any(word in q for word in ("学生", "人数", "人", "学籍", "在读", "全校", "学院", "班", "名"))
+    if count_words and about_students:
         return {
             **base,
             "intent": "count",

@@ -205,6 +205,31 @@ test.describe('本地演示关键路径', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('悬浮助手的页面上下文与推荐问题会跟着业务页面切换', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    const chips = panel.locator('.fa-suggestions').getByRole('button');
+
+    await page.goto('/changes');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    await expect(panel.locator('.fa-head')).toContainText('当前页面 · 学籍异动');
+    await expect(chips.first()).toHaveText('还有哪些异动没核对？');
+    await expect(chips.nth(2)).toHaveText('异动台账里休学和退学各有多少条？');
+
+    // SPA 内跳转：面板不被关闭、历史不丢，但页面上下文与推荐问题必须换成本页口径
+    await page.getByRole('link', { name: '报表中心' }).click();
+    await expect(page).toHaveURL(/\/reports/);
+    await expect(panel.locator('.fa-head')).toContainText('当前页面 · 报表中心');
+    await expect(chips.first()).toHaveText('有哪些报表可以下载？');
+    await chips.first().click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('报表中心', { timeout: 15000 });
+    await expect(bubble.locator('.fa-scope')).toBeVisible();
+    await expect(bubble.locator('.fa-action')).toBeVisible();
+    // 前一轮问答还在：说明换页不会把用户已经问出来的结果清空
+    await expect(panel.locator('.fa-message.is-assistant')).toHaveCount(2);
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);

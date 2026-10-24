@@ -310,6 +310,28 @@ class AssistantQueryTest(unittest.TestCase):
         self.assertIn("人工智能学院", reply["answer"])
         self.assertIn(f"休学 {expected} 人", reply["answer"])
 
+    def test_ledger_only_types_answer_as_rows_not_headcount(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        # 留级/复学只存在于异动台账里，不是当前学籍状态；回答必须承认这一点而不是回一句全校人数。
+        reply = demo.staff_answer("留级和复学各多少人？", staff_payload, STAFF)
+        self.assertEqual(reply["intent"], "change_count")
+        for name in ("留级", "复学"):
+            rows = sum(1 for change in staff_payload["changes"] if change.get("type") == name)
+            self.assertIn(f"{name} {rows} 条", reply["answer"])
+        self.assertIn("不是当前学籍状态", reply["answer"])
+        self.assertNotIn("名学生", reply["answer"])
+
+    def test_question_about_other_objects_is_not_answered_with_headcount(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        # “哪些”是提问词，不指向学生：收件箱资料不能拿学籍人数冒充答案，宁落回 unknown 的引导。
+        for question in ("收件箱里有哪些资料？", "导入批次怎么提交？"):
+            reply = demo.staff_answer(question, staff_payload, STAFF)
+            self.assertEqual(reply["intent"], "unknown", question)
+            self.assertNotIn("名学生", reply["answer"], question)
+        for question in ("全校学生总数是多少？", "人工智能学院有多少学生？"):
+            reply = demo.staff_answer(question, staff_payload, STAFF)
+            self.assertEqual(reply["intent"], "count", question)
+
     def test_change_type_counts(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)
         reply = demo.staff_answer("异动台账里休学和退学各有多少条？", staff_payload, STAFF)

@@ -1269,7 +1269,7 @@
 
 ## D-053 悬浮面板看不出“答的是哪个范围”，限流失败只剩 HTTP 码
 
-- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待本次运行确认）
+- **状态**：Verified in CI（远端 run 40083854961、commit `efcd61b`：8 个 job 全部 success，含「本地演示 API 测试」与「演示栈 E2E」）
 - **Decision owner**：AI
 - **问题与证据**：
   1. 服务端每条回答都带 `scope.label`（全校范围/本班范围/仅本人档案），独立问数页把它渲染成“数据范围”标签，悬浮面板只渲染正文、课程卡片、跳转和提示，把范围丢掉了。D-051/D-052 之后，AI 的可信度恰恰取决于“这个数字是按谁的范围算的”，两个入口同一份数据却给出两种信息量。
@@ -1287,7 +1287,7 @@
 
 ## D-054 悬浮助手不自动滚到最新回答：多轮追问后答案落在可视区外
 
-- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待本次运行确认）
+- **状态**：Verified in CI（远端 run 40083854961、commit `efcd61b`：8 个 job 全部 success，「演示栈 E2E」含本用例）
 - **Decision owner**：AI
 - **问题与证据**：为 D-053 做浏览器量测时发现，管理员在 `/students` 连问两问后，`.fa-scope` 出现在 `top=680`，而消息区可视底边在它之上——即最新回答的尾部（口径胶囊、跳转按钮、提示行）落在折叠线下。查 `FloatingAssistant.tsx` 全文没有任何 `scroll` 相关代码，`.fa-panel` 是 `max-height: min(620px, 100vh-120px)`、`.fa-messages` 是 `overflow-y: auto`，也就是说面板一旦长满就只靠用户自己滚。第 3～5 问量测里最新一条胶囊仍在 `top=615..634` 处不可见，历史胶囊反而留在视野里——正好是反的。独立问数页有滚动逻辑，悬浮面板是后加的，漏了这一步。
 - **决定**：给 `.fa-messages` 挂 ref，在 `messages`/`pending` 变化后把容器滚到底，但只在用户本来就贴着底部时滚（`scrollHeight - scrollTop - clientHeight < 160`）。这样新回答一定可见，而用户往上翻历史记录时不会被强行拽回底部。用即时滚动、不加平滑动画，保持面板动效克制。
@@ -1295,6 +1295,20 @@
 - **影响与兼容性**：只影响悬浮面板滚动行为，接口与数据结构不变；单轮问答、课表卡片、跳转按钮的既有用例全部保持通过。移动端 390px 下面板 370×476，同样受益。
 - **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`.github/workflows/ci.yml`。
 - **验证（实测）**：`npx tsc --noEmit` 通过；重建容器后浏览器量测 5 轮问答，最新胶囊每轮都在可视区内（`top=615..634`、`visible=true`），1440×900 与 390×844 均无横向溢出，判定 `NO-LAYOUT-PROBLEMS`；Playwright E2E **23 passed / 1.2m**，新增用例在 1280×560 视口连问两问，先断言消息区确实溢出（`scrollHeight - clientHeight > 40`）再断言最新胶囊未越折叠线、容器贴底（`gapToBottom ≤ 1`）。**负向验证**：把滚动阈值临时改成永不触发后重建，该用例失败（`1 failed`），恢复阈值后重建又通过（`1 passed`），说明断言真的在保护这个行为，不是空过。
-- **未验证**：本次改动的远端 CI；键盘 Tab 焦点落在历史消息上时是否会被滚动打断（未做键盘遍历）；iOS Safari / Android 真机惯性滚动下的表现。
+- **未验证**：键盘 Tab 焦点落在历史消息上时是否会被滚动打断（未做键盘遍历）；iOS Safari / Android 真机惯性滚动下的表现。
 - **回退**：删掉 ref 与该 `useEffect` 即回到旧行为；无接口与数据变更。
 - **授权**：B 类（演示环境前端体验与测试），不读写正式数据、不外发。
+
+## D-055 悬浮助手不管在哪个页面都问同一批问题；两条问法被服务端答成人数
+
+- **状态**：Implemented（2026-10-24 本地实测：50 单测 / 24 E2E / tsc 通过，远端 CI 待本次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：悬浮面板的推荐问题对所有员工角色写死同一组 4 条（`STAFF_SUGGESTIONS`），在 `/changes`、`/reports`、`/import` 上看到的是同一串与本页无关的提问，AI 与业务页面仍是“两张皮”。为了确定哪些问法真的能答，用一次性脚本把 19 条候选问法分别喂给辅导员与管理员两种身份的 `staff_answer`（不落库、不起服务、跑完即删），实测结果里两条是错的：`收件箱里有哪些资料？` 因为命中触发词“哪些”而返回 `intent=count`，回答“全校共有 5581 名学生”——问的是资料库收件箱，答的是学籍人数；`留级和复学各多少人？` 同样落到 `count`，把两类只存在于异动台账的记录答成全全校人数。同时 `PAGE_LABELS`（悬浮面板）与 `AppLayout` 的 `TITLE`（页头）是两份各自维护的路由→名称映射，同一页面在两侧叫法不一致（`/` 一处“角色首页”一处“总览”，`/counselor` 一处“辅导员台”一处“辅导员工作台”）。
+- **决定**：服务端两处口径收敛——人数分支加 `about_students` 前置条件，只有问法真的指向学生（学生/人数/学籍/在读/全校/学院/班/名）才回 `count`，否则宁落回 `unknown` 的引导；台账专有类型（留级/复学/转专业等）在问“多少人”但没有学籍状态可对应时改走 `change_count`，并在回答里明说“这两类不是当前学籍状态，只能按异动台账条数回答”。前端把推荐问题按路由分成 `PAGE_SUGGESTIONS`（异动/报表/流水线/导入/学生信息各一组），且只保留单测里已锁定意图的问法；页面名称统一成单一来源 `web/src/pageTitles.ts`，侧边栏页头与悬浮面板共用。
+- **备选方案**：把 `page` 传给服务端让它按页面改写答案——否掉，服务端答案口径必须只由身份、数据范围和问法决定，页面只进审计，否则同一问题在不同页面给出不同数字会更难核对；为凑齐每页三条而写“导入批次怎么提交？”这类服务端答不了的问法——否掉，实测这类问法落 `unknown`，展示出来等于承诺一个不存在的业务；在前端复制一份意图判断只为挑推荐问题——否掉，前后端重复实现同一业务逻辑是既有决策要避免的。
+- **影响与兼容性**：`count` 与 `change_count` 的适用问法范围收窄，其余意图与接口契约不变；`/demo-api/assistant/query` 请求体不变（`page` 仍只写审计与 `context`）。悬浮面板多出的“当前页面 · X”文案与侧边栏页头用词一致，不再有第二套叫法。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/pageTitles.ts`、`web/src/components/AppLayout.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`.github/workflows/ci.yml`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：`python -m unittest discover -s tests` → **50 passed**（新增两条：`test_question_about_other_objects_is_not_answered_with_headcount`、`test_ledger_only_types_answered_as_rows_not_headcount`）；`npx tsc --noEmit` 通过；重建 `demo-api` 与 `web` 镜像后 Playwright E2E **24 passed / 1.3m**，新增用例断言 `/changes` 面板头显示“当前页面 · 学籍异动”且三条推荐分别是待核对/异动汇总/台账条数，经侧边栏链接跳到 `/reports` 后面板不关闭、上下文变为“当前页面 · 报表中心”、推荐首条变为“有哪些报表可以下载？”，点该推荐能拿到真实回答（含口径胶囊与跳转按钮）且上一轮对话未被清空。该用例首轮实跑就失败过（`waiting for getByRole('button', { name: '打开 AI 助手' })` 超时），据此纠正为“SPA 内跳转保持面板开启与历史”的真实行为，不是先写死再迁就实现。
+- **未验证**：本次改动的远端 CI；其余角色（学工处）在各页面的推荐问法是否同样贴身（只在管理员下实测）；学生身份的推荐问题仍是课表一组，未按 `/portal` 单独拆分。
+- **回退**：删去 `about_students` 前置条件与 `change_count` 分支的 `not statuses` 条件、恢复 `PAGE_LABELS`/`TITLE` 两份映射即回到旧行为；无接口与数据变更。
+- **授权**：B 类（演示环境业务能力与测试），不读写正式数据、不外发。
