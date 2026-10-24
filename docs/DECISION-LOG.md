@@ -1017,3 +1017,17 @@
 - **验证（实测）**：脚本完整运行，healthz 200、冒烟 PASS、25 项单测 OK、E2E **10 passed / 35.9s**，最终输出 `All local demo checks passed.`。
 - **回退**：删除脚本与文档命令；无数据变更。
 - **授权**：B 类（工程自动化）。
+
+---
+
+## D-038 登录失败提示按网关真实文案匹配
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：网关实际返回 `Sorry, your account: {0} does not exist`、`User does not exist/Password error`、`Sorry, your account: {0} has been disabled...`、`Password input error {0} times, account locked for {1} minutes`；原翻译只匹配 `user does not exist`，账号不存在时会把英文原文直接展示给用户，锁定提示也会丢失锁定分钟数。
+- **决定**：按网关 `messages_en_US.properties` 的真实文案逐类匹配，分别提示账号不存在、账号或密码不正确、账号停用、连续输错次数、锁定分钟数；锁定匹配放在普通次数匹配之前。
+- **影响与兼容性**：只影响错误提示文案，不改变登录与锁定逻辑；不新增账号枚举入口。
+- **涉及文件**：`web/src/api/auth.ts`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：不存在账号 `__e2e_missing__` 登录停留在 `/login` 并显示“账号不存在”；学生课表“明天/本周”问答断言通过；Playwright **11 passed / 40.3s**。
+- **回退**：还原 `translateLoginError`；无数据变更。
+- **授权**：B 类（本地演示用户体验）。

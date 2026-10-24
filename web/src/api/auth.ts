@@ -107,10 +107,13 @@ export async function fetchSession(): Promise<SessionInfo> {
 
 /** 网关默认返回英文错误，这里统一转成面向校内用户的提示。 */
 function translateLoginError(message: string): string {
+  const locked = message.match(/Password input error (\d+) times, account locked for (\d+) minutes/i);
+  if (locked) return `密码连续输错 ${locked[1]} 次，账号已锁定 ${locked[2]} 分钟，请稍后再试。`;
   const attempts = message.match(/Password input error (\d+) times/i);
   if (attempts) return `密码不正确（已连续输错 ${attempts[1]} 次）。`;
-  if (/user does not exist/i.test(message)) return '账号不存在，请检查学号或工号。';
-  if (/user is disabled|account.*disabled/i.test(message)) return '账号已停用，请联系学工处。';
+  if (/your account:.*does not exist/i.test(message)) return '账号不存在，请检查学号或工号。';
+  if (/does not exist\/password error/i.test(message)) return '账号或密码不正确。';
+  if (/has been disabled|is disabled|account.*blocked/i.test(message)) return '账号已停用，请联系学工处。';
   return message || '登录失败，请稍后重试。';
 }
 

@@ -30,6 +30,16 @@ test.describe('本地演示关键路径', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
+  test('不存在账号显示中文登录提示', async ({ page }) => {
+    await page.goto('/login');
+    await page.getByRole('textbox', { name: '账号' }).fill('__e2e_missing__');
+    await page.getByRole('textbox', { name: '密码' }).fill('bad-password');
+    await page.getByRole('button', { name: /登\s*录/ }).click();
+
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole('alert')).toContainText('账号不存在');
+  });
+
   test('学生只看到本人课表，越权路由被送回', async ({ page }) => {
     await login(page, 'SK-2026-000001', 'Demo@2026');
     await expect(page).toHaveURL(/\/my-schedule/);
@@ -44,6 +54,12 @@ test.describe('本地演示关键路径', () => {
 
     await page.getByRole('button', { name: '今天下午有没有课？' }).click();
     await expect(page.getByText(/青果\/教务处/)).toBeVisible();
+
+    const answers = page.locator('.ai-message.is-assistant .ai-bubble p');
+    await page.getByRole('button', { name: '明天几节课？' }).click();
+    await expect(answers.last()).toContainText('明天');
+    await page.getByRole('button', { name: '这周有哪些课？' }).click();
+    await expect(answers.last()).toContainText('本周');
   });
 
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
