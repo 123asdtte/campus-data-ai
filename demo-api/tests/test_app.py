@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -21,6 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app as demo  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 STUDENT_UID = "SK-2026-000001"
@@ -439,6 +442,36 @@ class DataIntegrityTest(unittest.TestCase):
         self.assertGreater(demo.FOUR_SHEET_PATH.stat().st_size, 100_000)
 
 
+class DatasetTrackingTest(unittest.TestCase):
+    """`.gitignore` 里的 `data/` 曾经把整个演示数据集目录盖掉：新增的数据文件
+    在 `git status` 里完全不出现，只有 CI 报缺文件时才被发现。"""
+
+    @classmethod
+    def setUpClass(cls):
+        if not (REPO_ROOT / ".git").exists():
+            raise unittest.SkipTest("不是 git 工作区，忽略规则无从校验")
+
+    @staticmethod
+    def is_ignored(relpath: str) -> bool:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", relpath],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+        return result.returncode == 0
+
+    def test_demo_dataset_is_not_hidden_by_the_data_rule(self):
+        self.assertFalse(self.is_ignored("demo-api/data/demo-data.json"))
+        # 还没入库的新数据集也必须能被 git status 看到，否则等于问题没修。
+        self.assertFalse(self.is_ignored("demo-api/data/next-semester.xlsx"))
+
+    def test_real_export_paths_stay_ignored(self):
+        # 放行演示目录不能顺手把真实导出的个人信息变成可提交。
+        self.assertTrue(self.is_ignored("data/real-students.csv"))
+        self.assertTrue(self.is_ignored("import-api/data/real-students.csv"))
+        self.assertTrue(self.is_ignored("demo-api/state/ledger.json"))
+
+
 class ConcurrencyLimitTest(unittest.TestCase):
     def test_rejects_when_slots_exhausted_then_recovers(self):
         original = demo.MAX_CONCURRENT_REQUESTS
@@ -643,7 +676,7 @@ class LedgerIntegrityTest(unittest.TestCase):
         self.assertEqual(len(payload["changes"]), len(demo.DATA["changes"]))
 
 
-SEED_ACCOUNTS = Path(__file__).resolve().parents[2] / "scripts" / "demo" / "seed-demo-accounts.sql"
+SEED_ACCOUNTS = REPO_ROOT / "scripts" / "demo" / "seed-demo-accounts.sql"
 
 
 class CounselorScopeIdentityTest(unittest.TestCase):

@@ -10,6 +10,11 @@ uploads/
 *.sql.gz
 *.dump
 
+# demo-api/data 是入库的虚构演示数据集，必须放行；否则 data/ 会让新生成的
+# 数据文件在 git status 里彻底隐身，提交时静默漏掉、CI 才报缺文件。
+!demo-api/data/
+!demo-api/data/*
+
 # 演示异动台账运行时状态（由 demo-api 写入）
 demo-api/state/
 
