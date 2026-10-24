@@ -11,6 +11,9 @@ services:
     container_name: campus-demo-api
     environment:
       GATEWAY_BASE: ${GATEWAY_BASE:-http://gateway:9180}
+    volumes:
+      # 异动台账写入宿主机，重建容器不丢；删除该目录即重置演示台账
+      - ./demo-api/state:/app/state
     networks:
       - campus-net
     restart: unless-stopped

@@ -775,3 +775,41 @@
 - **验证（实测）**：`/login` 返回完整 CSP；学生刷新 `/my-schedule` 正常渲染，无控制台 error/warn；冒烟新增断言通过。
 - **回退**：删除 CSP `add_header` 行并重建 web 镜像；无数据变更。
 - **授权**：B 类（演示环境安全加固）。
+
+---
+
+## D-026 学籍异动改为服务端持久化演示台账
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - 学工核心诉求是“把原始 Excel 异动表变成在线统一管理”；
+  - 改造前 `ChangesPage` 的发起、核对只写入 React state，刷新即重置，两个浏览器互不可见，无法支撑演示中的“登记 → 核对 → 复查”。
+- **可选方案**：
+  1. 直接建业务库表——需要正式迁移与授权，超出本轮演示边界（否决）；
+  2. `localStorage`——仍是单浏览器，无法统一管理（否决）；
+  3. 在 `demo-api` 增加受限写接口，JSON 台账落在容器外卷，沿用网关 token 与角色范围（采用）。
+- **决定**：
+  - 新增 `POST /changes`（登记）与 `POST /changes/check`（平台核对）；
+  - 角色：学生 403；辅导员仅本人所带学生；学工处/管理员可登记任意学生；
+  - 校验：UID 必须存在、异动类型白名单、日期 `YYYY-MM-DD`、原因 1–200 字、去向 ≤200 字、请求体 ≤8KB；
+  - 台账最多 500 条；写文件使用锁 + 临时文件 + `os.replace` 原子替换；
+  - 记录 `created_by/created_at` 与 `checked{by,at}`；`/data` 合并本地异动并返回 `platform_checked`；
+  - Compose 挂载 `./demo-api/state:/app/state`，重建容器不丢；删除该目录即重置；
+  - 前端新增 `demo/ledger.ts`，写成功后失效数据缓存，其他页面下次进入可看到新台账。
+- **影响与兼容性**：
+  - `demo-api` 从纯只读变为“只读查询 + 受限异动写入”；学生/辅导员的数据范围规则不变；
+  - 真实学籍状态、青果/线下审批均不回写；
+  - 仍是单文件演示存储，不是生产数据库。
+- **风险与限制**：
+  - 无数据库事务、逐条审计表、分页与备份；单进程锁只在单实例内有效；
+  - 需要清理时删除 `demo-api/state/ledger.json`；文件损坏会回退为空台账；
+  - 生产必须改为数据库 + 行级授权 + 审计与迁移。
+- **涉及文件**：`demo-api/app.py`、`demo-api/Dockerfile`、`docker-compose.demo.yml`、`.gitignore`、`web/src/demo/ledger.ts`、`web/src/demo/useDemoData.ts`、`web/src/demo/types.ts`、`web/src/pages/ChangesPage.tsx`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：
+  - API：学生登记/核对 403；辅导员本班登记 201、他班登记 403；学工处登记他班 201；非法类型/日期 400；学生仅见本人异动，辅导员不见他班异动；
+  - UI：辅导员选择本人学生发起休学 → 出现 `YD-LOCAL-*` 与成功提示；刷新后记录仍在；平台核对后状态持久化；
+  - `docker compose ... up -d --force-recreate demo-api` 后本地异动与核对状态仍存在；
+  - `npm run build` 通过。
+- **回退**：移除两个 POST 路由与前端 `ledger.ts` 调用，恢复本地 state 逻辑；删除 `demo-api/state`；无业务数据变更。
+- **授权**：B 类（演示环境业务闭环）；生产数据库落库需人工授权后实施。

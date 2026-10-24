@@ -78,6 +78,8 @@ export interface DemoChange {
   date: string;
   target: string;
   status: string;
+  created_by?: string;
+  created_at?: string;
 }
 
 export interface DemoData {
@@ -115,6 +117,7 @@ export interface DemoData {
   students: DemoStudent[];
   schedule: ScheduleRow[];
   changes: DemoChange[];
+  platform_checked?: string[];
   class_summary: Array<{
     class_name: string;
     class_short: string;

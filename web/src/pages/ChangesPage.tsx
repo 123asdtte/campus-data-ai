@@ -17,7 +17,8 @@ import { PageHeader } from '../components/ui';
 import { useSession } from '../session/SessionContext';
 import { fmt, todayStamp } from '../demo/format';
 import type { DemoChange, DemoStudent } from '../demo/types';
-import { useDemoData } from '../demo/useDemoData';
+import { invalidateDemoData, useDemoData } from '../demo/useDemoData';
+import { checkChange, createChange } from '../demo/ledger';
 
 interface ChangeRow {
   key: string;
@@ -79,7 +80,11 @@ export default function ChangesPage() {
   useEffect(() => {
     if (!data) return;
     setChanges(data.changes);
-    setPlatformChecked(new Set(data.changes.filter((change) => change.status.includes('已批')).map((change) => change.change_no)));
+    const checked = new Set(
+      data.changes.filter((change) => change.status.includes('已批')).map((change) => change.change_no),
+    );
+    (data.platform_checked ?? []).forEach((changeNo) => checked.add(changeNo));
+    setPlatformChecked(checked);
   }, [data]);
 
   const studentMap = useMemo(() => {
@@ -173,14 +178,20 @@ export default function ChangesPage() {
     ].slice(0, 6));
   };
 
-  const markChecked = (row: ChangeRow) => {
-    setPlatformChecked((current) => {
-      const next = new Set(current);
-      next.add(row.change_no);
-      return next;
-    });
-    addAudit('平台核对', `${row.change_no} ${row.type}`);
-    void message.success(`${row.change_no} 已标记平台核对；正式审批状态不变`);
+  const markChecked = async (row: ChangeRow) => {
+    try {
+      await checkChange(row.change_no);
+      setPlatformChecked((current) => {
+        const next = new Set(current);
+        next.add(row.change_no);
+        return next;
+      });
+      addAudit('平台核对', `${row.change_no} ${row.type}`);
+      invalidateDemoData();
+      void message.success(`${row.change_no} 已标记平台核对；正式审批状态不变`);
+    } catch (reason) {
+      void message.error(reason instanceof Error ? reason.message : '平台核对失败');
+    }
   };
 
   const importWorkbook = async (file: File) => {
@@ -234,24 +245,23 @@ export default function ChangesPage() {
   const submitChange = async () => {
     try {
       const values = await form.validateFields();
-      const student = studentMap.get(values.uid);
-      if (!student) return;
-      const next: DemoChange = {
+      if (!studentMap.has(values.uid)) return;
+      const next = await createChange({
         uid: values.uid,
-        change_no: `YD-LOCAL-${Date.now().toString().slice(-6)}`,
         type: values.type,
         date: values.date,
         reason: values.reason,
-        target: values.target || '—',
-        status: '审批中',
-      };
+        target: values.target,
+      });
       setChanges((current) => [next, ...current]);
-      addAudit('发起异动', `${next.uid} ${next.type}（${next.date}）`);
+      addAudit('发起异动', `${next.uid} ${next.type}（${next.date}）· ${next.created_by ?? ''}`);
+      invalidateDemoData();
       setModalOpen(false);
       form.resetFields();
-      void message.success(`已发起 ${next.type}，等待教务确认（本地演示）`);
-    } catch {
-      // Ant Design 会在表单上展示校验错误
+      void message.success(`已发起 ${next.type}，台账已写入演示服务端，等待平台核对`);
+    } catch (reason) {
+      // 表单校验失败由 Ant Design 展示；接口错误在此提示
+      if (reason instanceof Error) void message.error(reason.message);
     }
   };
 
@@ -323,7 +333,7 @@ export default function ChangesPage() {
       width: 110,
       render: (_, row) =>
         row.platform_status !== '已核对' ? (
-          <Button size="small" type="link" onClick={() => markChecked(row)}>
+          <Button size="small" type="link" onClick={() => void markChecked(row)}>
             平台核对
           </Button>
         ) : (
@@ -372,7 +382,7 @@ export default function ChangesPage() {
         </section>
 
         <section className="wb-panel">
-          <header className="wb-panel-head"><h2>操作记录</h2><span>本地演示 · 最近 6 条</span></header>
+          <header className="wb-panel-head"><h2>操作记录</h2><span>本次会话 · 最近 6 条</span></header>
           {audit.length ? (
             <div className="rp-log-list">
               {audit.map((item, index) => (
@@ -386,7 +396,7 @@ export default function ChangesPage() {
           ) : (
             <Empty description="还没有本地操作；发起一次异动试试" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
-          <p className="wb-note">导入模板使用 UID；正式版由后端按学号 → UID 映射并校验权限。演示版刷新页面即重置。</p>
+          <p className="wb-note">导入模板使用 UID；正式版由后端按学号 → UID 映射并校验权限。演示台账保存在 demo-api 的 state 目录，重建容器仍保留；删除该目录即重置。</p>
         </section>
       </div>
 
@@ -425,7 +435,7 @@ export default function ChangesPage() {
         />
       </section>
 
-      <p className="wb-footnote">{data.metrics.disclaimer} · 异动流程为本地演示，不写正式库</p>
+      <p className="wb-footnote">{data.metrics.disclaimer} · 异动登记写入演示服务端台账，不写青果或正式库</p>
 
       <Modal
         title="发起学籍异动"
@@ -456,7 +466,7 @@ export default function ChangesPage() {
           <Form.Item name="reason" label="异动原因" rules={[{ required: true, message: '请填写原因' }]}><Input.TextArea rows={2} placeholder="如：身体原因 / 新生转专业（笔试面试通过）" /></Form.Item>
           <Form.Item name="target" label="异动后去向（可选）"><Input placeholder="如：转入汽车工程学院新能源汽车检测与维修技术2601" /></Form.Item>
         </Form>
-        <p className="wb-note">提交后进入“待平台核对”；正式审批仍在青果/线下完成。本地演示不写正式库，也不回写源系统。</p>
+        <p className="wb-note">提交后进入“待平台核对”，并写入演示服务端台账；正式审批仍在青果/线下完成，不写正式库，也不回写源系统。</p>
       </Modal>
     </div>
   );

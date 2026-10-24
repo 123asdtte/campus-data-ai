@@ -3,6 +3,7 @@ FROM python:3.12-alpine
 WORKDIR /app
 COPY app.py ./
 COPY data ./data
+RUN mkdir -p /app/state
 
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \

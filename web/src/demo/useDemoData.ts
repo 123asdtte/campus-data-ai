@@ -28,6 +28,11 @@ function loadDemoData(token: string): Promise<DemoData> {
   return promise;
 }
 
+export function invalidateDemoData(): void {
+  inFlight = null;
+  resolved = null;
+}
+
 export function useDemoData() {
   const [data, setData] = useState<DemoData | null>(null);
   const [error, setError] = useState<string | null>(null);
