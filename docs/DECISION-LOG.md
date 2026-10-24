@@ -1671,3 +1671,12 @@
 - 测试：本地 `python -m unittest discover -s tests -p "test_*.py"` → Ran 97 tests, OK (skipped=2)，含 2 个新用例；探测复跑确认 3 个跨学生问题全部 `refused`、8 个本人课表/档案问法全部不受影响。
 - 未验证：真实浏览器中悬浮助手对这三问的观感（依赖本地 Docker 恢复）；CI 复核结果见本条目提交对应的 run。
 - 授权要求：B 类（纯演示代码与测试，无正式环境操作）。
+
+## D-079 学生助手花名册姓名守卫（收口 D-078 漏判）
+
+- 日期：2026-10-24　分支：`feat/local-demo-workbench`（PR #58）
+- 问题与证据：D-078 的 `OTHER_STUDENT_PATTERN` 只匹配纯汉字（`([\u4e00-\u9fa5]{2,4})的(?:课表|课程表)`），而演示数据的学生姓名是脱敏格式、含 `*`（如 `朱**`）。探测（修复前）：`朱**的课表` 与 `朱**今天有没有课？` 均返回 `schedule_day`，被按本人课表误答为「今天没有课」，而非拒绝。
+- 方案取舍：a) 扩宽正则以容纳 `*` —— 会引入更宽的误拦面且仍依赖措辞；b) 用花名册字面匹配兜底 —— 与数据同源、精确、并按姓名排除本人。选择 b：`STUDENT_NAMES`（从 DATA students 去重提取）+ `mentions_roster_student(question, student)`，并入 schedule_answer 现有 refused 分支，复用同一拒绝话术与 intent=refused 审计。
+- 风险与回退：问题中若恰好包含与某学生姓名同形的课程名/教师名等片段，会被误拦为 refused；姓名含 `*` 使普通词组同形概率极低，接受该风险。回退：`git revert` 本提交。
+- 测试：新增 `test_roster_student_names_are_refused_even_without_keewei`（真实花名册姓名两种问法 intent=refused、courses=[]、本人姓名不误拦）；修复前探测已证明两个问法均被误答。本地 `python -X utf8 -m unittest discover -s tests`：98 tests OK (skipped=2)。
+- 未验证：浏览器端拒绝话术观感（本地 Docker Desktop 仍 500，待恢复后由演示栈 E2E/人工验证；远端 CI 的 E2E job 覆盖服务端行为）。

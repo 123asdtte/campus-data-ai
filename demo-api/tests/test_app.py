@@ -262,6 +262,24 @@ class AssistantQueryTest(unittest.TestCase):
             reply = self.answer(question)
             self.assertNotEqual(reply["intent"], "refused", question)
 
+    def test_roster_student_names_are_refused_even_without_keewei(self):
+        # 脱敏姓名含 * （如 朱**），不在 OTHER_STUDENT_PATTERN 的纯汉字类里；
+        # 花名册兜底必须拦住“X今天有没有课？”这类不带“的课表”的问法。
+        other = next(
+            item["name"] for item in demo.DATA["students"]
+            if item["name"] and item["name"] != self.student["name"]
+        )
+        for question in (f"{other}今天有没有课？", f"{other}的课表是什么？"):
+            reply = self.answer(question)
+            self.assertEqual(reply["intent"], "refused", question)
+            self.assertEqual(reply["courses"], [], question)
+            self.assertIn("查不到其他学生", reply["answer"], question)
+
+        own = self.student["name"]
+        if own:
+            reply = self.answer(f"{own}今天有没有课？")
+            self.assertNotEqual(reply["intent"], "refused", "本人姓名不应被花名册守卫误拦")
+
     def test_student_profile_question_uses_own_record(self):
         student = next(
             item for item in demo.DATA["students"]

@@ -90,6 +90,24 @@ except (OSError, json.JSONDecodeError) as exc:
     print(f"demo-api: 无法加载 {DATA_PATH}: {exc}", file=sys.stderr)
     raise SystemExit(1)
 
+# 问题里出现其他学生的真实姓名（不带“的课表”）时，靠花名册兜底识别；
+# 这是 OTHER_STUDENT_PATTERN 规则的补充，规则只能拦“室友/同学/X的课表”这类说法。
+STUDENT_NAMES = tuple(
+    dict.fromkeys(
+        str(student.get("name") or "").strip()
+        for student in DATA.get("students") or []
+        if str(student.get("name") or "").strip()
+    )
+)
+
+
+def mentions_roster_student(question: str, student: dict) -> bool:
+    own = str((student or {}).get("name") or "").strip()
+    for name in STUDENT_NAMES:
+        if name != own and name in question:
+            return True
+    return False
+
 
 def normalize_weekday(value: object) -> str:
     text = str(value or "").strip()
@@ -387,7 +405,7 @@ def schedule_answer(
             "scope": {"label": "仅本人课表", "week": current_week},
         }
 
-    if mentions_other_student(question):
+    if mentions_other_student(question) or mentions_roster_student(question, student):
         return {
             **base,
             "intent": "refused",
