@@ -22,6 +22,7 @@ if hasattr(_sys.stdout, "reconfigure"):
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -72,8 +73,13 @@ def get_json(method: str, path: str, payload: dict | None = None, token: str | N
         return status, {}
 
 
-def response_headers(path: str) -> dict[str, str]:
-    req = urllib.request.Request(BASE + path, method="GET")
+def response_headers(path: str, token: str | None = None, accept_gzip: bool = False) -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if accept_gzip:
+        headers["Accept-Encoding"] = "gzip"
+    req = urllib.request.Request(BASE + path, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return {key.lower(): value for key, value in resp.headers.items()}
@@ -101,6 +107,16 @@ def main() -> None:
             "script-src 'self'" in csp and "object-src 'none'" in csp,
             csp[:80] + ("…" if len(csp) > 80 else ""),
         )
+
+        asset = re.search(r'src="(/assets/[^"]+\.js)"', html)
+        check("可定位入口脚本", bool(asset))
+        if asset:
+            asset_headers = response_headers(asset.group(1), accept_gzip=True)
+            check(
+                "静态资源 gzip",
+                asset_headers.get("content-encoding") == "gzip",
+                asset_headers.get("content-encoding", "未压缩"),
+            )
 
         for username, password, expected_role, label in ACCOUNTS:
             status, payload = get_json(
@@ -160,6 +176,13 @@ def main() -> None:
                     data_status == 200 and len(students) > 5000,
                     f"{len(students)} 学生",
                 )
+                if expected_role == "xgb":
+                    data_headers = response_headers("/demo-api/data", token=token, accept_gzip=True)
+                    check(
+                        "员工数据 gzip",
+                        data_headers.get("content-encoding") == "gzip",
+                        data_headers.get("content-encoding", "未压缩"),
+                    )
 
             sheet_status, _ = request("GET", "/demo-api/four-sheet", token=token)
             expected_sheet = 200 if expected_role in {"xgb", "superadmin"} else 403

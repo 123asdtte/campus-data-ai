@@ -845,3 +845,30 @@
 - **验证（实测）**：`cd web && PW_CHANNEL=msedge npx playwright test` → **5 passed / 16.9s**；测试后 `demo-api/state/ledger.json` 已清理。
 - **回退**：删除 E2E 配置/用例与 devDependency，移除 npm 脚本与忽略项；无业务数据变更。
 - **授权**：B 类（本地测试与交付质量）。
+
+---
+
+## D-028 启用 Nginx 文本压缩
+
+- **状态**：Verified（本地，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：
+  - `nginx.conf` / `nginx.tls.conf` 未配置 `gzip`；实测入口 JS `689,089 B` 无 `Content-Encoding`；
+  - 员工数据接口 `/demo-api/data` 实测 `3,074,533 B`，未压缩传输，首屏和页面切换成本高。
+- **可选方案**：
+  1. 构建时预压缩 + `gzip_static`——需改构建产物与镜像，收益接近但链路更长（暂缓）；
+  2. Brotli——标准镜像不含模块，需换镜像（暂缓）；
+  3. 直接启用 Nginx gzip（采用）。
+- **决定**：
+  - HTTP/TLS 两个 server 均启用 `gzip on`、`gzip_comp_level 5`、`gzip_min_length 1024`、`gzip_vary on`、`gzip_proxied any`；
+  - 类型：`text/plain text/css application/json application/javascript application/xml image/svg+xml`；
+  - 冒烟新增入口脚本与员工数据的 `Content-Encoding: gzip` 断言。
+- **影响与兼容性**：只改响应传输；浏览器自动解压；E2E 下载、API JSON、登录均不受影响；`Vary: Accept-Encoding` 正确返回。
+- **风险与限制**：压缩增加少量 CPU；未压缩已压缩媒体；BREACH 风险不适用（token 在请求头，不在响应体）。
+- **涉及文件**：`web/nginx.conf`、`web/nginx.tls.conf`、`scripts/demo/smoke-demo.py`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：
+  - 入口 JS `689,089 → 227,056 B`；
+  - 员工 `/demo-api/data` `3,074,533 → 170,250 B`，`Content-Encoding: gzip`、`Vary: Accept-Encoding`；
+  - 冒烟全部 PASS（含新增压缩断言）；Playwright **5 passed / 15.8s**。
+- **回退**：删除两个 server 的 gzip 指令并重建 web 镜像；无数据变更。
+- **授权**：B 类（本地性能与交付质量）。
