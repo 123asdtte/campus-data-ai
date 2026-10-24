@@ -1003,3 +1003,17 @@
 - **验证（实测）**：登录页与 9 个管理员页均有 1 个 h1/main；23 个控件按 role+name 各命中 1 次；`npm run build` 通过；Playwright **10 passed / 38.1s**。
 - **回退**：移除新增 `aria-label`；无数据变更。
 - **授权**：B 类（本地演示可访问性）。
+
+---
+
+## D-037 本地演示一键校验
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：README 与 LOCAL-DEMO 分别列出 healthz、冒烟、单测、E2E 命令，交付/演示前需要人工逐条执行，容易漏跑或看错退出码。
+- **决定**：新增 `scripts/demo/verify-local-demo.ps1`，按顺序检查 healthz、只读冒烟、25 项 demo-api 测试、10 条 Playwright E2E；任一步失败即非零退出；支持 `-SkipE2E`。
+- **影响与兼容性**：不启动/重建容器，不修改数据；要求演示栈已启动。E2E 仍会在前后清空演示台账。
+- **涉及文件**：`scripts/demo/verify-local-demo.ps1`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：脚本完整运行，healthz 200、冒烟 PASS、25 项单测 OK、E2E **10 passed / 35.9s**，最终输出 `All local demo checks passed.`。
+- **回退**：删除脚本与文档命令；无数据变更。
+- **授权**：B 类（工程自动化）。
