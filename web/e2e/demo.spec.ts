@@ -107,6 +107,15 @@ test.describe('本地演示关键路径', () => {
     await expect(page.getByRole('row', { name: /UI-IMP-E2E/ })).toContainText('E2E 导入测试');
   });
 
+  test('辅导员可导出本班名单', async ({ page }) => {
+    await login(page, 'counselor01', 'Demo@2026');
+    await expect(page.getByRole('heading', { name: '辅导员工作台' })).toBeVisible();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: /导出本班名单/ }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/带班名单_.*\.csv$/);
+  });
+
   test('管理员导入预检：上传 CSV 后可校验（不提交）', async ({ page }) => {
     await login(page, 'admin', 'admin123');
     await page.locator('a.app-nav-item', { hasText: '数据导入' }).click();
