@@ -1083,7 +1083,7 @@
   2. 服务端解析今天/明天/后天/本周/下周/星期几/上午下午晚上/第 N 节/剩余课程，返回结构化 `courses`、`scope`、`action` 和来源说明；不调用外部模型。
   3. 前端新增 `FloatingAssistant`（挂在 `AppLayout`，全角色、跨路由保留会话）；学生课程卡可点击，通过事件或路由 state 定位并高亮课表单元格；移除课表页内嵌聊天面板，统一入口。
   4. 星期在 demo-api 加载、前端 `demo/schedule.ts`、数据生成器三处归一化；数字星期不再漏课。
-  5. `<=900px` 侧栏改为顶部横向导航，内容/悬浮面板不再横向溢出。
+  5. `<=900px` 侧栏改为顶部横向导航，内容/悬浮面板不再横向溢出（同尺寸的“内容列塌陷”缺陷由 D-045 修复）。
 - **备选方案**：只把独立 AI 页塞进弹窗——无法获得页面上下文和课表定位；只在前端做问答——无法满足服务端独立授权的安全要求，均不采用。
 - **影响与兼容性**：`/assistant` 页面保留给管理员；新增接口受 nginx 限流与网关鉴权保护；响应不含身份证/电话/原始学号；课表数据经 `/demo-api/data` 时星期已归一化，页面统计口径不变。
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/api/assistant.ts`、`web/src/components/FloatingAssistant.tsx`、`web/src/components/AppLayout.tsx`、`web/src/demo/schedule.ts`、`web/src/pages/StudentSchedulePage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`scripts/demo/build_demo_dataset.py`。
@@ -1127,4 +1127,23 @@
 - **未验证**：本次提交后的远端 CI；Dify/LLM 接入；真实课表与真实业务库。
 - **回退**：恢复 `AssistantPage` 的本地 `buildAnswer` 与 `useDemoData`，并把悬浮入口在 `/assistant` 重新渲染即可；无数据结构变更。
 - **授权**：B 类（演示环境功能与测试），不涉及正式数据或外部服务。
+
+## D-045 移动端内容列塌陷修复 + 并发用例去时序化
+
+- **状态**：Implemented（2026-10-24 本地实测，远端结果待本次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：
+  1. D-042 的移动端外壳只改了 `flex-direction`。真机尺寸实测（390×844）：`.ant-layout` 宽 0、`.app-content` 宽 28、`.wb` 宽 0，即所有业务页在手机上被压成一列 0 宽内容（课表/AI 问数都读不到字）。原因是 AntD 给 `has-sider` 的子 Layout 固定 `flex-basis: auto`，纵向排列后不再撑满交叉轴。之前的 E2E 只断言 `scrollWidth <= 390`，塌陷时 `scrollWidth` 恰好也是 390，所以“绿色”掩盖了缺陷。
+  2. CI run 40077675452 的 `本地演示 API 测试` 失败：`并发槽满时应返回 503` 实得 200。旧用例靠“半截请求占住槽 + 轮询信号量”判断占用，槽位是否在断言前被释放取决于线程时序。
+- **决定**：
+  1. `<=900px` 显式给内容列 `width: 100%; min-width: 0; flex: 1 1 auto !important`，让内容列在纵向外壳里真的占满宽度。
+  2. E2E 移动端用例除了 `scrollWidth`，增加内容列宽 `>=360`、页面容器宽 `>=340` 两条断言，把“塌陷也算不溢出”的盲区堵住。
+  3. 并发用例改为测试线程直接占用信号量制造饱和，再用原始 socket 读满整个 503 响应（含中文提示体），随后释放并断言恢复 200 —— 覆盖同一段网关代码，但不依赖任何线程时序。
+- **备选方案**：给测试加 `try/finally` 重试或删除并发用例（都是在掩盖时序问题，不采用）；移动端改用 AntD 断点组件重排（改动面远大于一条宽度规则，不采用）。
+- **影响与兼容性**：仅 `<=900px` 生效，桌面端布局不变；`demo-api` 运行时行为未改，只改测试写法。
+- **涉及文件**：`web/src/styles.css`、`web/e2e/demo.spec.ts`、`demo-api/tests/test_app.py`。
+- **验证（实测）**：demo-api **34 passed**；`npx tsc --noEmit` 通过；Playwright E2E **17 passed / 1.2m**（含新增宽度断言）；390×844 下重新测量内容列与页面容器均已撑满，桌面 1366 无回归。
+- **未验证**：本次提交的远端 CI 结果；iOS Safari/安卓实机（仅 Chromium 引擎测量）。
+- **回退**：删除该宽度规则与两条断言即回到 D-042 的状态（同时会重新暴露塌陷缺陷）。
+- **授权**：B 类（演示环境与测试），无正式环境影响。
 

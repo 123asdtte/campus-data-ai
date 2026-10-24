@@ -277,6 +277,14 @@ body {
     flex-direction: column !important;
   }
 
+  /* AntD 给 has-sider 的子 Layout 固定 flex-basis:auto：
+     改成纵向后它不再自动撑满交叉轴，实测内容列宽为 0（手机整页不可读）。 */
+  .app-shell.ant-layout-has-sider > .ant-layout {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto !important;
+  }
+
   .app-sider {
     flex: none !important;
     width: 100% !important;

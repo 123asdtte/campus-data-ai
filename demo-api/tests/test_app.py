@@ -337,33 +337,24 @@ class ConcurrencyLimitTest(unittest.TestCase):
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
                 self.assertEqual(response.status, 200)
 
-            holder = socket.create_connection(("127.0.0.1", port), timeout=3)
-            holder.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\n")
+            # 并发槽由测试线程直接占住：不再依赖“慢客户端刚好还没释放”的时序，
+            # CI 上曾出现槽已释放导致 503 断言偶发失败（run 40077675452）。
+            self.assertTrue(server._slots.acquire(blocking=False))
+            raw = socket.create_connection(("127.0.0.1", port), timeout=3)
+            holder = raw
+            raw.sendall(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            drained = b""
             deadline = time.time() + 3
-            while server._slots._value > 0 and time.time() < deadline:
-                time.sleep(0.02)
-            self.assertEqual(server._slots._value, 0, "慢请求未占用唯一并发槽")
-
-            status = None
-            for _ in range(5):
-                try:
-                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as response:
-                        status = response.status
-                except urllib.error.HTTPError as exc:
-                    status = exc.code
-                except (ConnectionResetError, ConnectionAbortedError, urllib.error.URLError):
-                    status = None
-                if status == 503:
+            while b"503" not in drained and time.time() < deadline:
+                chunk = raw.recv(2048)
+                if not chunk:
                     break
-                time.sleep(0.05)
-            self.assertEqual(status, 503, "并发槽满时应返回 503")
-
-            holder.close()
+                drained += chunk
+            self.assertIn(b"503 Service Unavailable", drained, "并发槽满时应返回 503")
+            self.assertIn("服务繁忙".encode("utf-8"), drained, "503 应带中文提示体")
+            raw.close()
             holder = None
-            deadline = time.time() + 3
-            while server._slots._value == 0 and time.time() < deadline:
-                time.sleep(0.02)
-            time.sleep(0.05)
+            server._slots.release()
 
             status = None
             for _ in range(100):

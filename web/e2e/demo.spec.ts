@@ -105,6 +105,11 @@ test.describe('本地演示关键路径', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(scrollWidth).toBeLessThanOrEqual(390);
+    // 仅看 scrollWidth 会漏掉“内容被压成 0 宽”的塌陷：必须断言内容列真的有宽度
+    const contentWidth = await page.locator('.app-content').evaluate((el) => el.getBoundingClientRect().width);
+    expect(contentWidth, '移动端内容列被压窄').toBeGreaterThanOrEqual(360);
+    const pageWidth = await page.locator('.app-content > *').first().evaluate((el) => el.getBoundingClientRect().width);
+    expect(pageWidth, '移动端页面容器被压窄').toBeGreaterThanOrEqual(340);
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
   });

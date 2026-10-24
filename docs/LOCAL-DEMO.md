@@ -216,7 +216,7 @@ python -m unittest discover -s demo-api/tests -v
 - E2E 依赖已启动的 8083 演示栈与本机 Edge/Chromium；CI 的 `demo-e2e` job 用 Chromium 在全栈上跑同一批用例。测试会清空演示异动台账（仅限演示环境），CI 用命名卷隔离台账。
 - CI：`.github/workflows/ci.yml` 的 `demo-tests` job（compileall + unittest）已在 PR #58 实跑通过；同次检查全部 success。`demo-e2e` job 首次实跑（commit 5af7220）为 10 passed / 1 failed（未启动业务库与导入服务、台账属主为容器 root）；修复后 run 40077110109（commit 8d9d525）**演示栈 E2E success**，与其余 7 个 job 一起全绿。E2E 已接入 CI。
 - 资料库流水线是**用已生成数据模拟**；正式版需要接后端上传/解析/任务队列。
-- 业务页面按桌面 1920 设计；登录页已适配移动端，其余页面尚未专门适配。
+- 业务页面按桌面 1920 设计；`<=900px` 已改为顶部横向导航 + 满宽内容列（2026-10-24 修复内容列塌陷，E2E 断言内容列 ≥360px），但仍未做平板/手机的排版级精修。
 - AI 问数与悬浮助手当前是**服务端规则版**（独立问数页也已走同一接口，前端不再自建规则），不是 Dify/LLM；`POST /demo-api/assistant/query` 用登录 token 调网关取身份，再由 `scoped_payload` 限定数据范围，前端不传 UID/角色。当前独立的只读 AI POC 不在这套演示入口内。
 - 源表存在 1–7 数字星期；`demo-api` 加载时、前端展示时和数据生成器均已归一化为中文星期，避免 119 条排课在课表与问答中“消失”。
 - 不包含正式库迁移、正式认证切换、TLS/域名、生产监控；这些仍按 `PRODUCTION-READINESS-REPORT.md` 的 C 类事项处理。
