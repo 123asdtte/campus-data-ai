@@ -165,6 +165,20 @@ def main() -> None:
             expected_sheet = 200 if expected_role in {"xgb", "superadmin"} else 403
             check(f"{label} 四件套权限", sheet_status == expected_sheet, f"HTTP {sheet_status}")
 
+            if expected_role == "student_portal":
+                change_status, _ = get_json(
+                    "POST",
+                    "/demo-api/changes",
+                    {
+                        "uid": username,
+                        "type": "休学",
+                        "date": "2026-10-24",
+                        "reason": "冒烟：学生不应能登记",
+                    },
+                    token=token,
+                )
+                check("学生不能登记异动", change_status == 403, f"HTTP {change_status}")
+
         status, payload = get_json("GET", "/gw/system/user/getInfo")
         check("缺 token 拒绝读身份", not (status == 200 and payload.get("code") == 200), f"HTTP {status}")
 
@@ -186,6 +200,13 @@ def main() -> None:
 
         status, _ = request("GET", "/demo-api/data")
         check("数据接口拒绝匿名请求", status == 401, f"HTTP {status}")
+
+        status, _ = request(
+            "POST",
+            "/demo-api/changes",
+            {"uid": "SK-2026-000001", "type": "休学", "date": "2026-10-24", "reason": "匿名"},
+        )
+        check("异动接口拒绝匿名请求", status == 401, f"HTTP {status}")
 
         status, _ = request("GET", "/demo/demo-data.json")
         check("旧公开数据入口已关闭", status == 404, f"HTTP {status}")
