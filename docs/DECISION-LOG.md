@@ -1180,3 +1180,20 @@
 - **未验证**：本次改动的远端 CI；真实业务库中的学院/班级层级口径（演示数据为虚构）；学工处 `xgb` 角色是否需要同样的学院越界保护（当前 xgb 走全校载荷，全院口径对其是合法范围）。
 - **回退**：删除学院分支的 `is_counselor` early-return 与对应测试即可恢复旧行为（同时重新引入错误口径）。
 - **授权**：B 类（演示环境业务逻辑与测试），不涉及正式数据、迁移或外部服务。
+## D-048 AI 问数审计落到服务端文件，问题原文不进日志
+
+- **状态**：Implemented（2026-10-24 本地实测，远端 CI 待下次运行确认）
+- **Decision owner**：AI
+- **问题与证据**：D-044 之后问数全部由服务端回答，但服务端只在 stderr 打一行 `assistant <intent> by <user>`，可回溯性取决于容器日志留存；`AssistantPage` 里那份“问数记录”是 `localStorage` 的最近 8 条，清缓存即消失，管理员也无法证明“谁在什么时候问过什么口径”。文档里一直写着“正式版写服务端审计”，即当前并没有服务端审计。
+- **决定**：
+  1. `_assistant_query` 在返回答案与返回 403（身份没有可用数据范围）两处调用 `record_assistant_audit`，追加写入 `STATE_DIR/assistant-audit.jsonl`，字段固定为 `time / actor / roles / intent / scope / page / question_chars`。
+  2. **不记录问题原文**：问数里可能带姓名、班级等个人信息，日志文件不该成为第二份学生数据副本；只记字符数用于判断是否有人在试探超长输入。
+  3. 写入用现有 `STATE_LOCK` 串行化，超上限后只保留最近 `ASSISTANT_LOG_KEEP=500` 行；写失败（只读卷等）退化为 stderr 告警，不影响回答。
+  4. 审计目录沿用 `STATE_DIR`：本地是 `demo-api/state/` 绑定目录（已在 `.gitignore`），CI 用命名卷（D-043），因此不需要新的卷或挂载改动。
+- **备选方案**：把问题原文也记下来（等于把可能含 PII 的文本落到第二个存储，且演示阶段并不需要全文检索，不采用）；先做 DB 版审计表（属于生产化待授权项，且当前台账本身还是文件存储，先把“有没有审计”这件事补上更有价值）。
+- **影响与兼容性**：多一个状态文件，不改任何接口契约与响应结构；`demo-api/state/` 已被忽略，不会误提交审计。审计目前是文件且仅保留 500 行，正式环境仍需按审批换成服务端持久化审计（DB）并加留存策略。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`、`docs/DECISION-LOG.md`。
+- **验证（实测）**：`python -m unittest discover -s tests` **39 passed**（新增“身份入库但不含问题原文”“审计行数受上限约束”两条）；重建 `campus-demo-api` 后跑辅导员越界口径 E2E 用例（1 passed），宿主 `demo-api/state/assistant-audit.jsonl` 实测得到 `{"time":"2026-10-24T08:58:49+00:00","actor":"counselor01","roles":["counselor"],"intent":"out_of_scope","scope":"本班范围","page":"/counselor","question_chars":12}`，问题原文确实未落盘。
+- **未验证**：远端 CI；审计日志的读取/导出界面（目前需进容器或读绑定目录）；并发写大量问数下的 500 行截断性能（仅单线程语义正确性验证）；正式环境留存与合规策略。
+- **回退**：删除 `record_assistant_audit` 及两处调用即恢复旧行为；已生成的 jsonl 可手工删除。
+- **授权**：B 类（演示环境可观测性与测试），只写本机演示状态目录，未向任何外部服务发送数据。

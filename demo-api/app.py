@@ -28,6 +28,8 @@ DATA_PATH = BASE_DIR / "data" / "demo-data.json"
 FOUR_SHEET_PATH = BASE_DIR / "data" / "four-sheet.xlsx"
 STATE_DIR = Path(os.environ.get("STATE_DIR", str(BASE_DIR / "state")))
 STATE_PATH = STATE_DIR / "ledger.json"
+ASSISTANT_LOG_PATH = STATE_DIR / "assistant-audit.jsonl"
+ASSISTANT_LOG_KEEP = 500
 GATEWAY_BASE = os.environ.get("GATEWAY_BASE", "http://gateway:9180").rstrip("/")
 CLIENT_ID = os.environ.get(
     "GATEWAY_CLIENT_ID", "e5cd7e4891bf95d1d19206ce24a7b32e"
@@ -630,6 +632,28 @@ def scope_metrics(students: list[dict], changes: list[dict], classes: list[dict]
     }
 
 
+def record_assistant_audit(user: dict, roles: set[str], result: dict, question: str, page: str) -> None:
+    """服务端问数审计：只留身份、角色、意图、范围与问题长度，不落问题原文（问题里可能带姓名等信息）。"""
+    entry = {
+        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "actor": (user.get("userName") or "").strip(),
+        "roles": sorted(roles),
+        "intent": result.get("intent"),
+        "scope": (result.get("scope") or {}).get("label"),
+        "page": page or None,
+        "question_chars": len(question),
+    }
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with STATE_LOCK:
+            with open(ASSISTANT_LOG_PATH, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            lines = ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()[-ASSISTANT_LOG_KEEP:]
+            ASSISTANT_LOG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as error:
+        print(f"[demo-api] 问数审计写入失败：{error}", file=sys.stderr)
+
+
 def scoped_payload(user: dict, roles: set[str]) -> dict | None:
     """返回该身份可见的数据；无权限返回 None。"""
     with STATE_LOCK:
@@ -848,6 +872,7 @@ class Handler(BaseHTTPRequestHandler):
         page = str(body.get("page") or "").strip()[:60]
         payload = scoped_payload(user, roles)
         if payload is None:
+            record_assistant_audit(user, roles, {"intent": "denied"}, question, page)
             self._json(403, {"error": "当前角色没有可用的数据范围"})
             return
 
@@ -876,6 +901,7 @@ class Handler(BaseHTTPRequestHandler):
             f"[demo-api] assistant {result.get('intent')} by {username} page={page or '-'}",
             file=sys.stderr,
         )
+        record_assistant_audit(user, roles, result, question, page)
         self._json(200, result)
 
     def _create_change(self, user: dict, roles: set[str], body: dict) -> None:

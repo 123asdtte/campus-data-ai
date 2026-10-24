@@ -5,9 +5,11 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import socket
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -404,3 +406,43 @@ class CollegeScopeAnswerTest(unittest.TestCase):
         reply = demo.staff_answer(f"{entry['name']}有多少学生？", payload, STAFF)
         self.assertEqual(reply["intent"], "count")
         self.assertIn(str(entry["count"]), reply["answer"])
+
+
+class AssistantAuditTest(unittest.TestCase):
+    """问数审计要落在服务端，且不得把问题原文写进审计文件。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self._state_dir = demo.STATE_DIR
+        self._log_path = demo.ASSISTANT_LOG_PATH
+        demo.STATE_DIR = self.dir
+        demo.ASSISTANT_LOG_PATH = self.dir / "assistant-audit.jsonl"
+
+    def tearDown(self):
+        demo.STATE_DIR = self._state_dir
+        demo.ASSISTANT_LOG_PATH = self._log_path
+        self.tmp.cleanup()
+
+    def test_records_identity_without_question_text(self):
+        demo.record_assistant_audit(
+            {"userName": "counselor01"}, COUNSELOR_ROLE,
+            {"intent": "out_of_scope", "scope": {"label": "本班范围"}},
+            "张三的身份证号是多少", "/counselor",
+        )
+        entry = json.loads(demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").strip())
+        self.assertEqual(entry["actor"], "counselor01")
+        self.assertEqual(entry["roles"], ["counselor"])
+        self.assertEqual(entry["intent"], "out_of_scope")
+        self.assertEqual(entry["scope"], "本班范围")
+        self.assertEqual(entry["page"], "/counselor")
+        self.assertNotIn("张三", demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(entry["question_chars"], len("张三的身份证号是多少"))
+
+    def test_log_stays_bounded(self):
+        for index in range(demo.ASSISTANT_LOG_KEEP + 40):
+            demo.record_assistant_audit(
+                {"userName": f"u{index}"}, COUNSELOR_ROLE, {"intent": "count"}, "问", "")
+        lines = demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), demo.ASSISTANT_LOG_KEEP)
+        self.assertEqual(json.loads(lines[-1])["actor"], f"u{demo.ASSISTANT_LOG_KEEP + 39}")
