@@ -11,6 +11,7 @@
 import http.client
 import json
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -42,7 +43,6 @@ class HttpBase(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         demo.STATE_DIR = Path(cls.tmp.name)
-        demo.ASSISTANT_LOG_PATH = Path(cls.tmp.name) / "assistant-audit.jsonl"
         cls.server = demo.Server(("127.0.0.1", 0), demo.Handler)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -146,12 +146,35 @@ class HttpContractTest(HttpBase):
 
 
 class HttpAbusiveClientTest(HttpBase):
-    def test_body_over_limit_is_rejected_not_parsed(self):
+    def audit_lines(self) -> int:
+        path = demo.assistant_log_path()
+        return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0
+
+    def test_body_far_over_limit_is_never_parsed(self):
+        # 请求体比排空上限（DRAIN_MAX_BYTES）还大时，服务端读不干净，关闭就是 RST，
+        # 413 不保证送达——这是 D-074 明说的取舍：为了「让错误码一定送到」去替攻击者
+        # 吞几十 GB，等于把上限本身变成消耗战。所以这里断言真正的契约：这么大的请求体
+        # 绝不被解析、绝不留问数痕迹；连接要是还能读，读到的必须是 413。
+        # 「刚超限、落在排空窗口内」的送达性由 test_over_limit_body_still_delivers_the_413 钉。
         self.stub_identity(self.student(), {"student_portal"})
-        big = json.dumps({"question": "啊" * (demo.MAX_BODY_BYTES + 10)}).encode("utf-8")
-        status, data = _post(self.port, "/assistant/query", None, raw=big)
-        self.assertEqual(413, status)
-        self.assertIn("error", json.loads(data.decode("utf-8")))
+        # 请求体要是被读了、被解析了，这条真问题就会 answered 并留下一行审计，
+        # 所以「行数不变」是可证伪的断言，不是一句空话。
+        body = json.dumps(
+            {"question": "明天有什么课" + "啊" * (demo.DRAIN_MAX_BYTES + 10)},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.assertGreater(len(body), demo.DRAIN_MAX_BYTES, "示例请求体必须落在排空上限之外")
+        before = self.audit_lines()
+        status = None
+        try:
+            status, data = _post(self.port, "/assistant/query", None, raw=body)
+        except OSError as exc:
+            # RST 是本用例接受的失败方式：连接被中止，但请求绝不能已经被服务端处理
+            print(f"[test] 超限请求体被 RST 中止：{type(exc).__name__}", file=sys.stderr)
+        if status is not None:
+            self.assertEqual(413, status)
+            self.assertIn("error", json.loads(data.decode("utf-8")))
+        self.assertEqual(before, self.audit_lines(), "超限请求体被解析了：问数审计多了一条")
 
     def test_deferred_request_body_does_not_lose_the_401(self):
         # D-068：分两次写（先请求头、隔一会儿再请求体）时，服务端若没把请求体读掉就关闭，
@@ -167,6 +190,26 @@ class HttpAbusiveClientTest(HttpBase):
         self.assertIn(b"401", collected.split(CRLF, 1)[0])
         self.assertIn("未登录", collected.decode("utf-8", "replace"))
 
+    def test_over_limit_body_still_delivers_the_413(self):
+        # D-074：请求体超限时服务端确实不该解析它，但那些字节已经躺在接收缓冲区里。
+        # 不排空就关闭，内核发的是 RST，客户端连已经收到的 413 都会一起丢——实测整轮
+        # 测试 10 次里 4 次就是这样红的，前端只会看到「网络错误」而不是「请求体过大」。
+        # 这个失败是时序相关的，一次通过证明不了什么，所以连打三次；
+        # 任何一次被 RST 吞掉，send_raw 就会红。
+        self.stub_identity(self.student(), {"student_portal"})
+        body = json.dumps({"question": "啊" * (demo.MAX_BODY_BYTES + 10)}, ensure_ascii=False).encode("utf-8")
+        self.assertLessEqual(len(body), demo.DRAIN_MAX_BYTES, "示例请求体必须落在排空上限之内")
+        head = (
+            b"POST /assistant/query HTTP/1.1\r\nHost: demo\r\n"
+            b"Content-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        )
+        for attempt in range(3):
+            collected = self.send_raw(head, body)
+            status_line = collected.split(CRLF, 1)[0]
+            self.assertIn(b"413", status_line, f"第 {attempt + 1} 次没拿到 413：{status_line!r}")
+            self.assertIn("请求体过大", collected.decode("utf-8", "replace"))
+
 
 class HttpHealthSlotTest(unittest.TestCase):
     """D-066 的既有特征：健康检查与业务抢同一个并发槽，满槽时一起 503。"""
@@ -174,7 +217,6 @@ class HttpHealthSlotTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         demo.STATE_DIR = Path(self.tmp.name)
-        demo.ASSISTANT_LOG_PATH = Path(self.tmp.name) / "assistant-audit.jsonl"
         self.server = demo.Server(("127.0.0.1", 0), demo.Handler)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

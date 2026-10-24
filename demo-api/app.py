@@ -38,6 +38,13 @@ CHANGE_STATUSES = {"审批中", "已批", "退回"}
 MAX_LOCAL_CHANGES = 500
 MAX_IMPORT_ROWS = 200
 MAX_BODY_BYTES = 64 * 1024
+# 拒绝响应之前允许排空的最大字节数。必须比 MAX_BODY_BYTES 大，否则「超限就拒绝」这条
+# 路径永远排不干净，413 会被 RST 吞掉；必须有上限，否则排空 10GB 的请求体等于把拒绝
+# 本身变成消耗战（读到一半就占着线程）。
+DRAIN_MAX_BYTES = 4 * MAX_BODY_BYTES
+# 排空用的是短超时：此刻客户端多半早把数据发完了，真堵着的是慢速攻击，不值得为它
+# 占满 Handler.timeout（10 秒）——并发槽一共才那么多。
+DRAIN_TIMEOUT_SECONDS = 1.0
 MAX_CONCURRENT_REQUESTS = max(1, int(os.environ.get("MAX_CONCURRENT_REQUESTS", "32")))
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CHANGE_NO_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
@@ -910,26 +917,43 @@ class Handler(BaseHTTPRequestHandler):
     def _reject(self, status: int, message: str) -> None:
         """还没读请求体就要回错误码时走这里，别直接用 _json。
 
-        带未读数据关 socket 会让内核发 RST 而不是 FIN；客户端在这之后才把请求体写完的话，
-        RST 会把它这边已收到的响应一起丢弃（D-068：401 变成「连接被重置」，前端无法识别成未登录）。
+        带未读数据关 socket 会让内核发 RST 而不是 FIN；RST 会把客户端这边已经收到的
+        响应一起丢弃（D-068：401 变成「连接被重置」，前端无法识别成未登录）。
         """
         self._drain_body()
         self._json(status, {"error": message})
 
     def _drain_body(self) -> None:
+        """把声明过的请求体读干净，好让这次关闭是 FIN 而不是 RST。"""
         if self._body_consumed:
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             return
-        if length <= 0 or length > MAX_BODY_BYTES:
-            # 超限的请求体是 413 要拦的对象，读干净等于放弃了这个上限
+        if length <= 0 or length > DRAIN_MAX_BYTES:
+            # 超过排空上限就不排空：宁可让这条连接的错误码可能被 RST 吞掉，也不能替攻击者
+            # 把几十 GB 读进进程。413 的正常触发区间（刚过 MAX_BODY_BYTES）仍在上限之内。
             return
         try:
-            self.rfile.read(length)
+            self.connection.settimeout(DRAIN_TIMEOUT_SECONDS)
+        except OSError:
+            return
+        try:
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(min(remaining, 8192))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
         except (OSError, ValueError):
+            # 短超时到点就放弃：慢速客户端不该占着处理线程，此时连接反正要关。
             pass
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
 
     def _identify(self) -> dict | None:
         auth = self.headers.get("Authorization", "")
@@ -1007,7 +1031,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "请求体为空"})
             return None
         if length > MAX_BODY_BYTES:
-            self._json(413, {"error": "请求体过大"})
+            # 走 _reject 而不是 _json：客户端通常已经把这一大块请求体发完了，字节还躺在
+            # 接收缓冲区里，直接关闭会发 RST，把这条 413 一起吞掉（实测 WinError 10053）。
+            self._reject(413, "请求体过大")
             return None
         try:
             raw = self.rfile.read(length)
