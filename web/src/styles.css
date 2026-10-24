@@ -1822,6 +1822,15 @@ body {
   color: var(--accent-hover);
 }
 
+.hv-source {
+  margin: 0;
+  padding: 12px 28px 18px;
+  border-bottom: var(--hl-stroke) solid var(--hl-lo);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 .wb-note {
   margin: 8px 0 0;
   color: var(--muted);

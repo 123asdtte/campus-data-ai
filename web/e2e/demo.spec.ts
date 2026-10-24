@@ -535,4 +535,37 @@ test.describe('本地演示关键路径', () => {
     await expect(page.getByRole('alert')).toHaveCount(0);
   });
 
+
+  test('总览与工作台各自标明数据源，两套条数不一致不再被读成同步失败', async ({ page }) => {
+    // 侧栏导航里也有「学籍异动」链接，所以必须按卡片结构取数，不能按裸文本找。
+    // 工作台用 toLocaleString 渲染（5,581），千分位要剥掉，否则数字解析成 NaN。
+    const kpiNumber = async (section: string, item: string, value: string, label: string) => {
+      const cell = page.locator(`.${section} .${item}`, { hasText: label }).locator(`.${value}`);
+      await expect(cell).toHaveCount(1);
+      return Number((await cell.innerText()).replace(/[^\d.-]/g, ''));
+    };
+
+    await login(page, 'admin', 'admin123');
+    await page.goto('/');
+    await expect(page.getByText('两套数据彼此独立')).toBeVisible();
+    const overview = {
+      changes: await kpiNumber('hv-metrics', 'hv-metric', 'hv-metric-value', '学籍异动'),
+      students: await kpiNumber('hv-metrics', 'hv-metric', 'hv-metric-value', '在校学生'),
+    };
+
+    await page.goto('/workbench');
+    const workbench = {
+      changes: await kpiNumber('wb-kpis', 'wb-kpi', 'wb-kpi-value', '学籍异动'),
+      students: await kpiNumber('wb-kpis', 'wb-kpi', 'wb-kpi-value', '学生总数'),
+    };
+
+    // 两边都是真实数字，不是 '—' 占位
+    for (const value of [...Object.values(overview), ...Object.values(workbench)]) {
+      expect(value).toBeGreaterThan(0);
+    }
+    // 两条链路读的是不同数据集；一旦将来统一数据源这两组会相等并让本用例变红，
+    // 那时才该删掉总览的口径说明，而不是现在假装它们是同一套数。
+    expect(overview.changes).not.toBe(workbench.changes);
+    expect(overview.students).not.toBe(workbench.students);
+  });
 });
