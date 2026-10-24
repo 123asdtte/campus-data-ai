@@ -885,6 +885,21 @@
 
 ---
 
+## D-031 入口 HTML 缓存策略
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：`/assets/*` 已按哈希长期缓存，但 `/` 与 SPA 回退返回的 `index.html` 没有显式缓存策略；若浏览器启发式缓存旧 HTML，升级后会请求新镜像中已不存在的旧哈希资源。
+- **可选方案**：为 index.html 加 `no-store`（每次全新加载，放弃校验缓存）、`no-cache`（每次回源校验，采用）、保持现状。
+- **决定**：`location /` 返回 `Cache-Control: no-cache`，并重新引入安全头（location 内 `add_header` 会覆盖 server 级）；`/assets/*` 保持 `max-age=604800, immutable`。
+- **影响与兼容性**：只增加一次 304/200 校验，不影响静态资源长缓存和业务接口。
+- **涉及文件**：`web/nginx-common.conf`、`docs/LOCAL-DEMO.md`。
+- **验证（实测）**：`/` 与 `/students` 返回 `Cache-Control: no-cache` 且安全头仍在；当前入口 JS 返回 `max-age=604800, immutable`；Playwright **7 passed / 20.1s**。
+- **回退**：移除 `location /` 内的缓存与安全头指令；无数据变更。
+- **授权**：B 类（本地演示可部署性）。
+
+---
+
 ## D-028 启用 Nginx 文本压缩
 
 - **状态**：Verified（本地，2026-10-24；未合并）

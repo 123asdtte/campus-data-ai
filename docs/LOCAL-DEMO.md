@@ -167,6 +167,7 @@ npm run test:e2e
 - 登录页适配 390px 移动端；业务页面仍按桌面 1920 设计
 - 冒烟脚本 `scripts/demo/smoke-demo.py`：healthz、登录页、四角色登录/角色/身份、缺 token/伪 token/不存在账号拒绝，全部 PASS（2026-10-24）
 - 响应头：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`Content-Security-Policy` 已启用，`Server` 隐藏版本号（8083 实测）；CSP 允许 AntD 内联样式但脚本仅限同源
+- 缓存策略：入口 HTML 与 SPA 回退返回 `Cache-Control: no-cache`（升级后不会引用已删除的哈希资源）；`/assets/*` 返回 `max-age=604800, immutable`（实测）
 - 路由拆包：入口 JS 1.39 MB → 0.69 MB；登录首屏不加载员工页/表格/xlsx chunk，懒加载页面实测正常
 - 数据接口：匿名 `/demo-api/data` 401；学生 1 人/15 排课；辅导员 270 人/73 排课/6 异动；学工处/管理员 5581 人；四件套学生/辅导员 403、学工处/管理员 200；旧公开 JSON 404
 - 数据缓存：同一登录身份内页面切换共享一次 `/demo-api/data`（管理员总览→工作台→报表仅 1 次请求）；退出后换学生登录会重新请求，页面只显示本人课表，未复用上一身份数据
