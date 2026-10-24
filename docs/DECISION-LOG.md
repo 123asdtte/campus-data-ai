@@ -1693,3 +1693,14 @@
 - 涉及文件：`scripts/demo/local-demo-node.py`（新增）、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
 - 回退：删除 `scripts/demo/local-demo-node.py` 即完全回退，不影响任何现有路径。
 - 授权：B 类（仅本地脚本与文档，虚构数据，不出网、无副作用）。
+
+## D-082 AI 评审脚本失败路径优化：连接阶段超时与 429 退避
+
+- 日期：2026-10-24　分支：`feat/local-demo-workbench`（PR #58）
+- 问题与证据：2026-10-24 重跑 AI 评审（run 40109339936），job 显示 success 但日志揭示 LLM 上游不可用的完整失败链——探测请求 `curl: (28) Connection timed out after 30002 milliseconds`，正式请求 `Connection timed out after 300002 milliseconds`，重试后 `HTTP 429`。三个问题：①脚本只有 `--max-time` 总超时，上游地址路由不通时，TCP 连接阶段就把 30s/300s 全部耗光，而连接失败本可在秒级判死；②429 后固定 `sleep 5` 立即重试，实测 2s 后再次 429（限流窗口通常在秒级以上）；③整体表现为一次评审失败耗时约 5.5 分钟，占掉 15 分钟 job 预算的三分之一。
+- 备选方案：a) 缩短 `--max-time`——拒绝：生成阶段确实需要长超时（流式输出大 diff 评审结论可达数分钟），一刀切会误伤慢模型；b) 加 `--connect-timeout` 把「连不上」与「生成慢」分开约束——选择；c) 429 换成指数退避——对最多 2 次尝试的脚本过度设计，固定 20s 足够跨过秒级限流窗口。
+- 选择：新增 `LLM_CONNECT_TIMEOUT`（默认 15s，入参校验循环统一回退默认）；probe_once 的 curl 用 `--connect-timeout min(10, tmo)`；正式请求用 `min(LLM_CONNECT_TIMEOUT, CUR_TIMEOUT)`（CUR_TIMEOUT 可能被剩余预算压小，connect-timeout 不应超过总超时）；重试 sleep 改为「429 → 20s，其他 → 5s」。成功路径行为不变：连接建立后 connect-timeout 即失效，生成阶段仍可用满 `--max-time`。
+- 本地验证边界（诚实记录）：尝试用黑洞 IP（10.255.255.1 / 192.0.2.1）在本机复现 connect 阶段挂起失败——本机代理环境下两者均 5-8s 快速返回 `curl: (52) Empty reply`，无法本地复现挂起。修复依据改为：curl 文档语义（`--connect-timeout` 仅约束连接阶段）+ CI 日志的 30002/300002ms 实测证据。端到端验证方式：推送后 PR 自动触发的真实评审 run——若上游仍不通，失败应在约 1 分钟内出现（探测 10s 判死 + 正式请求 15s 判死 ×2 + 退避），并正常发布失败说明；若上游恢复则直接获得真实评审结论。
+- 涉及文件：`.github/scripts/ai-review.sh`、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- 回退：`git revert` 本提交，恢复为仅 `--max-time` 的原行为。
+- 授权：B 类（仅 CI 脚本与文档，无正式环境操作；LLM 上游 Secrets 更换仍为授权项，本条不涉及）。
