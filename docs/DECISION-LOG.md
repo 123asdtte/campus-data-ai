@@ -1555,3 +1555,16 @@
 - **未验证**：真实浏览器里点击卡片的高亮与提示文案、移动端布局、Playwright 27 条 E2E —— Docker Desktop Linux 引擎仍返回 500，演示栈起不来，本轮无法验证，不得当作已验收。
 - **回退**：`git revert` 本次提交即可，事件多出的 `course` 字段是可选的，旧调用路径不受影响。
 - **授权**：B 类（仅前端展示逻辑，虚构数据，无副作用）。
+
+## D-072 S3 台账锁不再覆盖 socket 写入；顺带查出 STATE_PATH 在导入期绑定导致的测试串写
+
+- **日期**：2026-10-24
+- **状态**：Fixed locally；远端 CI 与演示栈未验证
+- **问题 1（S3，真实稳定性缺陷）**：`_check_change` 把 404、403 写在 `with STATE_LOCK:` 里，`_create_change` 把 409 写在锁里。`Handler` 的 `timeout = 10` 意味着一个不再收数据的客户端可以把 `wfile.write` 卡到 10 秒；这期间全局锁不放手，别人的建单、导入、核销以及 `scoped_payload()` 的台账读全部串行等待。演示栈并发槽有 32 个，但一把锁把并发优势抹平了。
+- **修法**：两个 handler 都改成「锁内只读台账 + 落账，结果装进 `response`，`self._json()` 与日志都挪到 `with` 之外」。响应状态码与 body 一字未改，只调整了写出时机；越权仍然是 403、不存在仍然是 404、超限仍然是 409，权限判断依旧在锁内读到的最新台账上做。
+- **问题 2（写这条时发现的新缺陷，测试隔离）**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入时就绑定了路径（app.py:29-31），所以测试里只换 `demo.STATE_DIR` 并不会换台账文件。第一版 `test_ledger_lock.py` 就这样把 6 条虚构测试行写进了仓库真实的 `demo-api/state/ledger.json`（本地运行时状态，已被 gitignore，不影响远端）。核对内容后确认这 6 行 `created_by=xgb01 / reason=演示测试` 全是本轮测试写入、没有夹带别人的数据，才还原成空台账；新测试现在同时替换并在 `tearDown` 还原 `STATE_DIR`、`STATE_PATH`、`ASSISTANT_LOG_PATH`，跑完两轮后 `state/ledger.json` 仍是 0 条，隔离成立。
+- **为什么不顺手把路径改成调用期解析**：现有 `test_app.py`、`test_http_api.py` 直接 patch `ASSISTANT_LOG_PATH` 这个名字，改成函数解析要一并动这些用例，收益只是「少写三行 setUp」，而容器里 `STATE_DIR` 是导入前就注入的环境变量，产品行为没有缺陷。先记为可维护性债，等有真实需求（运行期切状态目录）再一并改。
+- **验证（实测）**：`python -m unittest discover -s tests -p 'test_*.py'` → **91 tests OK (skipped=2)**，连跑两次一致（87 → 91）；新回归 `demo-api/tests/test_ledger_lock.py` 断言「调用 `Handler._json` 的那一刻 `STATE_LOCK.locked()` 为假」，并用一段等价脚本证明探针有牙：锁内调用采样 `True`、锁外采样 `False`（`[True, False]`），所以修复前这类断言必然变红，不是空断言。
+- **未验证**：远端 CI（本条推送后回填）；并发压测下 409/403 的真实尾延迟；Docker 演示栈与 Playwright E2E（引擎仍返回 500）。
+- **回退**：`git revert` 本次提交，`test_ledger_lock.py` 随之一并删除。
+- **授权**：B 类（本地虚构数据与本地状态文件；清理动作只针对本轮测试自己写入的行，且已先核对无他人数据）。

@@ -1112,21 +1112,30 @@ class Handler(BaseHTTPRequestHandler):
         with STATE_LOCK:
             state = load_ledger()
             if len(state["changes"]) >= MAX_LOCAL_CHANGES:
-                self._json(409, {"error": "本地演示台账已达上限，请清理 state/ledger.json"})
-                return
-            existing = {c.get("change_no") for c in (DATA.get("changes") or [])}
-            existing.update(c.get("change_no") for c in state["changes"])
-            change = {
-                **fields,
-                "change_no": next_change_no(existing),
-                "status": "审批中",
-                "created_by": username,
-                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            }
-            state["changes"].insert(0, change)
-            save_ledger(state)
-        print(f"[demo-api] change created by {username}: {change['change_no']} {fields['uid']} {fields['type']}", file=sys.stderr)
-        self._json(201, {"change": change})
+                response = (409, {"error": "本地演示台账已达上限，请清理 state/ledger.json"})
+            else:
+                existing = {c.get("change_no") for c in (DATA.get("changes") or [])}
+                existing.update(c.get("change_no") for c in state["changes"])
+                change = {
+                    **fields,
+                    "change_no": next_change_no(existing),
+                    "status": "审批中",
+                    "created_by": username,
+                    "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                }
+                state["changes"].insert(0, change)
+                save_ledger(state)
+                response = (201, {"change": change})
+        # 409 与 201 都在锁外写：锁内只留读台账与落账，socket 慢客户端拖不住别人（S3）
+        status, payload = response
+        self._json(status, payload)
+        created = payload.get("change")
+        if created:
+            print(
+                f"[demo-api] change created by {username}: {created['change_no']} "
+                f"{created['uid']} {created['type']}",
+                file=sys.stderr,
+            )
 
     def _import_changes(self, user: dict, roles: set[str], body: dict) -> None:
         rows = body.get("changes")
@@ -1199,6 +1208,7 @@ class Handler(BaseHTTPRequestHandler):
         if not change_no:
             self._json(400, {"error": "缺少异动编号"})
             return
+        username = (user.get("userName") or "").strip()
         with STATE_LOCK:
             state = load_ledger()
             change = next(
@@ -1209,20 +1219,24 @@ class Handler(BaseHTTPRequestHandler):
                 None,
             )
             if not change:
-                self._json(404, {"error": "异动记录不存在"})
-                return
-            scope = visible_uids(user, roles)
-            if scope is not None and change.get("uid") not in scope:
-                self._json(403, {"error": "该异动不在当前账号的数据范围内"})
-                return
-            username = (user.get("userName") or "").strip()
-            state["checked"][change_no] = {
-                "by": username,
-                "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            }
-            save_ledger(state)
-        print(f"[demo-api] change checked by {username}: {change_no}", file=sys.stderr)
-        self._json(200, {"change_no": change_no, "checked": True})
+                response = (404, {"error": "异动记录不存在"})
+            else:
+                scope = visible_uids(user, roles)
+                if scope is not None and change.get("uid") not in scope:
+                    response = (403, {"error": "该异动不在当前账号的数据范围内"})
+                else:
+                    state["checked"][change_no] = {
+                        "by": username,
+                        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    }
+                    save_ledger(state)
+                    response = (200, {"change_no": change_no, "checked": True})
+        # 响应必须写在锁外面：锁内写 socket 时，一个不再收数据的客户端会把 wfile.write 卡到
+        # 10 秒超时，期间所有台账读写（含别人的建单、导入、问数）都被这把锁拖住（S3）。
+        status, payload = response
+        self._json(status, payload)
+        if payload.get("checked"):
+            print(f"[demo-api] change checked by {username}: {change_no}", file=sys.stderr)
 
 
 class Server(ThreadingHTTPServer):
