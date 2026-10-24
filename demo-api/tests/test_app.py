@@ -805,3 +805,55 @@ class TruncatedBodyTest(unittest.TestCase):
         handler = self._handler(io.BytesIO(b'{"question":'), responses)
         self.assertIsNone(handler._read_json())
         self.assertEqual(responses[0][0], 400)
+
+
+class ClassScopeCountTest(unittest.TestCase):
+    """同一个班的两种写法（全称 + 简称）只能算一个班（D-065）。"""
+
+    def test_alias_rows_count_as_one_class(self):
+        rows = [
+            {"class_code": "26010201", "class_name": "信息安全技术应用2601班",
+             "class_short": "信息安全2601", "students": 44, "status": {}},
+            {"class_code": "26010201", "class_name": "信息安全2601",
+             "class_short": "信息安全2601", "students": 1, "status": {}},
+        ]
+        metrics = demo.scope_metrics([], [], rows)
+        self.assertEqual(1, metrics["total_classes"])
+        self.assertEqual(2, metrics["roster_class_names"])
+
+    def test_different_classes_still_count_separately(self):
+        rows = [
+            {"class_code": "26010201", "class_name": "信息安全2601班", "class_short": "信息安全2601"},
+            {"class_code": "26010301", "class_name": "数媒2601班", "class_short": "数媒2601"},
+        ]
+        self.assertEqual(2, demo.scope_metrics([], [], rows)["total_classes"])
+
+    def test_missing_class_code_falls_back_to_normalized_name(self):
+        rows = [
+            {"class_code": "", "class_name": "数媒2601", "class_short": "数媒2601"},
+            {"class_code": "", "class_name": "数字媒体技术2601班", "class_short": "数媒2601"},
+        ]
+        self.assertEqual(1, demo.scope_metrics([], [], rows)["total_classes"])
+
+    def test_shipped_fixture_actually_contains_split_class_names(self):
+        by_code = {}
+        for row in demo.DATA["class_summary"]:
+            by_code.setdefault(row.get("class_code"), []).append(row)
+        split = next((rows for rows in by_code.values() if len(rows) > 1), None)
+        self.assertIsNotNone(split, "演示数据里已查不到同名多写法班级，需重新确认班级数口径")
+
+    def test_student_scope_reports_one_class_for_split_name(self):
+        by_code = {}
+        for row in demo.DATA["class_summary"]:
+            by_code.setdefault(row.get("class_code"), []).append(row)
+        rows = next(rows for rows in by_code.values() if len(rows) > 1)
+        names = {row.get("class_name") for row in rows}
+        student = next(
+            s for s in demo.DATA["students"]
+            if s.get("class_name") in names and s.get("uid")
+        )
+        payload = demo.scoped_payload({"userName": student["uid"]}, {"student_portal"})
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(rows), len(payload["class_summary"]))
+        self.assertEqual(1, payload["metrics"]["total_classes"])
+        self.assertEqual(len(rows), payload["metrics"]["roster_class_names"])

@@ -728,6 +728,21 @@ def next_change_no(existing: set[str]) -> str:
             return change_no
 
 
+def class_identity(row: dict) -> str:
+    """同一个班在花名册里常有两行（全称 + 简称），班级数必须按班级本体去重。
+
+    演示数据里 170 行班级只对应 135 个 class_code，学生被排课系统的花名册写法分开；
+    直接按行数算会让学生的「我的班级」显示成 2 个班、工作台班级数虚高 26%。
+    class_code 缺失时退回辅导员页同一条归一化规则（去空白、去结尾「班」），保持前后端口径一致。
+    """
+    code = (row.get("class_code") or "").strip()
+    if code:
+        return f"code:{code}"
+    name = (row.get("class_short") or row.get("class_name") or "").strip()
+    key = "".join(name.split())
+    return f"name:{key[:-1] if key.endswith('班') else key}"
+
+
 def scope_metrics(students: list[dict], changes: list[dict], classes: list[dict]) -> dict:
     base = DATA.get("metrics") or {}
     return {
@@ -735,7 +750,7 @@ def scope_metrics(students: list[dict], changes: list[dict], classes: list[dict]
         "generated_at": base.get("generated_at", ""),
         "source": base.get("source", ""),
         "total_students": len(students),
-        "total_classes": len(classes),
+        "total_classes": len({class_identity(c) for c in classes}),
         "roster_class_names": len(classes),
         "total_colleges": len({s.get("college") for s in students if s.get("college")}),
         "total_majors": len({s.get("major") for s in students if s.get("major")}),

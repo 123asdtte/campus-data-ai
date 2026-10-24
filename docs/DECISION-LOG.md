@@ -1390,7 +1390,7 @@
 
 ## D-061 总览与工作台读的是两套数据：先把口径写进页面，再用测试锁住「不许被读成同步失败」
 
-- **状态**：Implemented（2026-10-24 本地实测：Playwright E2E **27 passed / 1.4m**；远端 CI 待本轮推送后确认）
+- **状态**：Verified in CI（提交 `a1b89c4`：远端 10 项 check-run 全部 completed success，含「演示栈 E2E」check-run 120861741450；本地实测 Playwright E2E **27 passed / 1.4m**）
 - **Decision owner**：AI（产品负责人身份）
 - **问题与证据**：同一个演示栈里并存两套互不相干的数据源——总览页（`HomePage`）的四个指标来自 Java 网关库（`web/src/api/types.ts` 的 `changes_total`/`students_active`，与「学生信息」「数据导入」写入的是同一套库），而数据工作台、学籍异动页与 AI 问数读的是 `demo-api` 的本地演示数据集加容器内台账文件。本轮直接读取两个页面渲染出来的 KPI 数字（不是复用上一轮 HTTP 数值）确认两者不同：异动与学生两组数字各自都不相等，且异动类型词表也不一致（网关侧为英文码、`demo-api` 侧为中文类型）。同时 `HomePage` 的引导文案此前写的是「统一入库」，等于主动把两套口径讲成一套；文档里也没有任何地方说明这个分裂。用户从总览跳到工作台会看到数字对不上，最自然的读法是「同步坏了」，这是可交付性问题而不是显示瑕疵。
 - **决定**：本轮做**诚实披露 + 回归哨兵**，不做数据统一。① `HomePage` 引导语改为「学生信息与导入批次经网关入库，异动台账另有本地演示数据集（见下方口径说明）」；② 在指标区下方新增 `.hv-source` 段落，明确写出本页数字来自网关库、工作台与异动台账读的是 `demo-api` 数据集、两套彼此独立、条数不一致属预期不是同步失败；③ 新增 E2E「总览与工作台各自标明数据源」，按卡片结构（`.hv-metrics .hv-metric` / `.wb-kpis .wb-kpi`）读取异动与学生两组 KPI，断言都是真实数字（>0，不是 `—` 占位）、且两两不相等，并在剥掉千分位后再比较。将来若真把两套数据接到同一来源，这条会立刻变红，提示把口径说明删掉——这是本条测试的主要价值。
@@ -1404,7 +1404,7 @@
 
 ## D-062 问数审计文件比台账更好读：追加写跟了 umask，权限收到 0600
 
-- **状态**：Implemented（2026-10-24：演示镜像内 POSIX 实跑通过；本机 Windows 只能跳过该断言）
+- **状态**：Verified in CI（提交 `41ff105`：远端 10 项 check-run completed success，含「本地演示 API 测试」；Linux 上两条 0600 断言真正执行）；2026-10-24 演示镜像内 POSIX 实跑通过，本机 Windows 跳过该 2 条断言
 - **Decision owner**：AI
 - **问题与证据**：在跑着的演示容器里 `ls -l /app/state` 实测：`assistant-audit.jsonl` 是 `-rw-r--r--`（0644），同目录的 `ledger.json` 与隔离副本是 `-rw-------`（0600），`STATE_DIR` 本身按 0700 创建。原因在 `record_assistant_audit()` 用 `open(path, "a")` 追加写，新建文件跟 umask；同一镜像里跑 `umask` 得 `0022`、纯追加写出来的文件是 `0o644`，与线上看到的一致。审计里记着每次问数的操作人姓名、角色、可见范围、所在页面与问题长度——目标里点名要防的「日志安全」「学生个人信息保护」，可读性反而低于台账，属实现与意图不一致。
 - **决定**：追加写之后、按 `ASSISTANT_LOG_KEEP` 截断重写之前显式 `os.chmod(..., 0o600)`。截断走的是同一个 inode（`write_text` 以 `w` 打开已存在文件不改权限），所以一次收紧即长期有效；新增两条 POSIX 单测分别锁住「首次写入后权限为 0600」和「连续写入+轮转后仍是 0600 且条数正确」。测试用 `skipUnless(os.name == "posix")`：Windows 的权限位是模拟的，在那儿断言等于验不出名堂，宁可标记为只在 Linux 生效，也不放宽成「看起来通过」。
@@ -1433,7 +1433,7 @@
 
 ## D-064 请求体拖到超时会直接掐连接：0 字节响应比 408 更难排查
 
-- **状态**：Implemented（2026-10-24 本地：67 单测通过，去掉修复后新用例以 `TimeoutError` 失败；远端 CI 待复核）
+- **状态**：Verified in CI（提交 `d541985`：远端 run 40092141380（CI）/ 40092141357（AI 评审）success，10 项 check-run 全绿）；本地 67 单测通过，去掉修复后新用例以 `TimeoutError` 失败
 - **Decision owner**：AI
 - **问题与证据**：`demo-api/app.py` 的 `_read_json()` 原先只把 `json.loads` 包在 `try` 里，`self.rfile.read(length)` 在外面。服务端 `timeout = 10`，因此客户端声明 `Content-Length` 却只发半截请求体时抛的是 `TimeoutError`（`OSError` 子类），沿 `handle_one_request` 冒泡后连接被直接关闭。审计代理在真实服务上实测：`bytes_received=0, elapsed=10.0s`，无状态码、无 JSON 错误体；`POST /assistant/query`、`/changes`、`/changes/import` 全部受影响。前端 `askAssistant` 拿到的是 fetch 层网络异常，只能显示「查询失败，请重试」，运维侧也无法从响应区分是网关、超时还是数据问题。
 - **决定**：把 `read` 单独包进 `except (OSError, ValueError)`，回 `408 {"error": "请求体读取超时或不完整，请重试"}` 并打服务端日志；解析失败仍走原来的 400，两类失败不再混在一起。补 2 条单测：`TimeoutError` → 408 且文案含「重试」；只发半截 JSON（未超时）→ 仍是 400。
@@ -1444,3 +1444,18 @@
 - **未验证**：远端 CI（本轮记录时尚未推送）；`handle_one_request` 更外层的未捕获异常（如 `_identify` 阶段的意外错误）仍会表现为连接被关而非结构化错误——本轮只收口请求体读取；慢速请求体拖满并发槽导致 `/healthz` 一并 503 的风险（审计项 S2）**未修**，因为把槽位判断从 `Server.process_request` 挪进 `handle()` 需要先窥探请求行（`rfile.peek` 会在恶意空闲连接上阻塞），风险大于收益，留待单独一轮处理。
 - **回退**：删除该 `try/except` 与新增测试类即可，无数据与配置变更。
 - **授权**：B 类（演示服务错误处理与单测）。未触碰正式环境、真实数据与认证配置。
+
+
+## D-065 班级数被花名册写法放大：170 行班名只对应 135 个班，学生把自己的班读成两个
+
+- **状态**：Implemented（2026-10-24 本地实测：**72 单测通过（skipped=2）**；只回退 `app.py` 时新用例 3 条失败、`AssertionError: 1 != 2`；远端 CI 待本轮推送后确认）
+- **Decision owner**：AI
+- **问题与证据**：读 `demo-api/data/demo-data.json` 实测：`class_summary` 170 行只对应 **135 个 `class_code`**，其中 35 个班各占两行（全称「信息安全技术应用2601班」44 人 + 简称「信息安全2601」1 人），因为班级汇总按 `class_name` 分组而花名册里同一班存在两种写法。`scope_metrics()` 把 `total_classes` 和 `roster_class_names` 都设成行数（`demo-api/app.py` 原 737-739 行），于是学生 scoped payload 实测 `total_classes=2 / roster_class_names=2`——前 400 名学生里 136 人（34%）看到的「班级数」大于自己真实的班级数；全校口径下 `metrics.total_classes` 是 135 而 `roster_class_names` 是 170，两个数被同一个字段名族混在一起，工作台 KPI「班级数」随时会从 135 跳成 170。先按 §十 复核过是否越权：`class_short` 跨 `class_code` 的数量实测为 **0**，排课表里 `class_short → class_name` 也是 1:1，所以这不是数据泄露而是计数错误，优先级按「关键业务缺陷」处理。
+- **决定**：在 `scope_metrics()` 里引入 `class_identity()`：优先用 `class_code` 作为班级本体标识，`class_code` 缺失时退回辅导员页已经在用的同一条归一化规则（去空白、去结尾「班」），保证前后端只有一套口径。`total_classes` 改成按 `class_identity` 去重计数，`roster_class_names` 继续按行数计（它本来表示「花名册里有几种写法」，`WorkbenchPage.tsx` 的提示文案「花名册 N 个班名」正是这个意思）。**不动 `class_summary` 行本身**：辅导员页 `CounselorPage.tsx:44-58` 依赖逐行 `class_name`/`class_short` 生成匹配键，合并行会让 40 名写法为简称的学生从名单里消失——把可见缺陷修成不可见丢人，不能接受。
+- **备选方案**：在加载时按 `class_code` 合并 `class_summary`——否掉，理由同上，且会让「两种写法」这一真实数据质量问题从页面上消失，正是目标里禁止的「把返回看起来合理等同于数据真实」；改数据构建脚本把花名册写法归一——否掉，构建脚本不在本轮演示链路里，且真实数据源确实存在两种写法，归一属于数据治理决策，需要业务负责人定口径；前端各自再数一遍——否掉，前后端重复实现同一条业务口径，正是 §4.4 要点名的问题。
+- **影响与兼容性**：响应字段名与结构不变，只改 `total_classes` 的取值口径；学生自助页「我的班级」不再显示成 2 个班，工作台/辅导员范围内的班级数与全校 135 的口径一致。`class_summary` 数组长度仍是 170，所以任何按下标或长度渲染的既有页面行为不变。
+- **涉及文件**：`demo-api/app.py`（新增 `class_identity()`、`scope_metrics()` 计数口径）、`demo-api/tests/test_app.py`（新增 `ClassScopeCountTest` 5 条）、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：**72 tests OK (skipped=2)**。新用例覆盖：两行同 `class_code` → `total_classes=1 / roster_class_names=2`；不同 `class_code` → 仍分别计数；无 `class_code` 时按归一化班名合并；**并锁住前提**——当前演示数据里确实存在同码多行（`test_shipped_fixture_actually_contains_split_class_names`），否则前面的合成断言可能空转；最后用真实 fixture 走 `scoped_payload()`，断言该学生拿到 2 行班级但 `total_classes==1`。负向证据：`git show HEAD:demo-api/app.py` 临时覆盖修复后重跑，`Ran 5 tests ... FAILED (failures=3)`，报错正是 `AssertionError: 1 != 2`，恢复后 5 条全绿。
+- **未验证**：远端 CI（记录时尚未运行）；浏览器端 KPI 数字变化未截图核对——本地 Docker Desktop 引擎当前返回 `500 Internal Server Error`，演示栈 8083 不可达，无法重建容器跑 Playwright，因此「学生自助页不再显示 2 个班」只有单测与 payload 层面的证据；数据构建脚本为何产出两种写法、正式环境该用哪个班级主键属数据治理问题，需业务负责人确认。
+- **回退**：`scope_metrics()` 的两行计数改回 `len(classes)`，删除 `class_identity()` 与 `ClassScopeCountTest`；无数据与配置变更。
+- **授权**：B 类（演示环境服务端计数逻辑与虚构数据单测）。只读探针跑在临时脚本里、未写入仓库，未触碰正式环境、真实数据或认证配置。
