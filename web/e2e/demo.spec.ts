@@ -502,6 +502,24 @@ test.describe('本地演示关键路径', () => {
     await expect(bubble.getByText('全校范围演示数据')).toBeVisible();
   });
 
+  test('管理员独立 AI 页渲染学生候选并跳转档案', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/assistant');
+    await page.getByRole('textbox', { name: '输入问题' }).fill('找一下李**');
+    await page.getByRole('button', { name: '发送' }).click();
+
+    const bubble = page.locator('.ai-message.is-assistant').last();
+    await expect(bubble).toContainText('无法确定是哪一位', { timeout: 15000 });
+    await expect(bubble.locator('.ai-student')).toHaveCount(5);
+
+    const first = bubble.locator('.ai-student').first();
+    const uid = (await first.locator('.ai-student-id').textContent())?.trim() ?? '';
+    expect(uid).toMatch(/^SK-\d{4}-\d{6}$/);
+    await first.click();
+    await expect(page).toHaveURL(new RegExp(`/workbench\\?student=${uid}$`));
+    await expect(page.locator('.ant-drawer-title')).toContainText(uid);
+  });
+
   test('管理员可查看全校数据并下载四件套', async ({ page }) => {
     await login(page, 'admin', 'admin123');
     await page.locator('a.app-nav-item', { hasText: '数据工作台' }).click();

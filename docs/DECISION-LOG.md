@@ -1714,9 +1714,9 @@
 - **备选方案**：a) 新建独立学生检索页和详情页——会与现有工作台/辅导员台重复；b) 让模型或前端按姓名取第一条——违反“不猜测、不误开档案”；c) 在现有学生抽屉上补服务端检索 + URL 定位 + 候选卡片——选择 c，复用现有组件和页面。
 - **实现**：
   - `demo-api/app.py`：新增 UID/脱敏姓名提取、按当前身份范围 `search_scoped_students`、`student_brief`，以及 `student_found / student_ambiguous / student_not_found / student_query_needs_identifier`；页面上下文 `student_uid` 只在服务端复核命中后才用于“他的/这个学生”指称；唯一命中返回受控的 `/workbench?student=` 或 `/counselor?student=`，问异动时返回 `/changes?student=`；候选只含 UID/脱敏姓名/班级/状态，不含电话/身份证。
-  - 前端：`StudentProfileDrawer` 抽出工作台/辅导员共用抽屉；`FloatingAssistant` 渲染候选卡片并把当前 URL 的学生/异动上下文传给服务端；工作台/辅导员读取 `?student=` 自动打开抽屉并按范围拒绝；`ChangesPage` 支持 `?student=`/`?change=` 过滤、横幅与行高亮；异动表的学生 UID 可点进档案。
+  - 前端：`StudentProfileDrawer` 抽出工作台/辅导员共用抽屉；`FloatingAssistant` 与管理员独立 `AssistantPage` 都渲染候选卡片，悬浮入口把当前 URL 的学生/异动上下文传给服务端；工作台/辅导员读取 `?student=` 自动打开抽屉并按范围拒绝；`ChangesPage` 支持 `?student=`/`?change=` 过滤、横幅与行高亮；异动表的学生 UID 可点进档案。
 - **为什么不是模糊匹配**：演示数据姓名脱敏（如“李**”全校 57 人），只有唯一 UID 自动打开；同名只给候选。名称片段只形成候选集合，不取第一条。
-- **测试（实测）**：`demo-api` 105 tests OK（skipped=2，新增 7 条检索/歧义/越界/上下文/聚合回归）；`npm run build` 通过；Playwright 32 passed（新增 3 条：唯一 UID→档案→异动定位+上下文、同名只给候选、辅导员范围外不打开）；只读冒烟 33 项全 PASS；E2E 前后台账已备份/恢复。
+- **测试（实测）**：`demo-api` 105 tests OK（skipped=2，新增 7 条检索/歧义/越界/上下文/聚合回归）；`npm run build` 通过；Playwright 32 passed（新增 3 条：唯一 UID→档案→异动定位+上下文、同名只给候选、辅导员范围外不打开）；随后补管理员独立 AI 页候选跳转用例并单独通过（完整 33 条待 CI 复核）；只读冒烟 33 项全 PASS；E2E 前后台账已备份/恢复。
 - **未验证/边界**：仅虚构演示数据；真实学生数据未接入；姓名脱敏导致同名较多，真实系统需要按学号/UID 的映射与更细的检索字段；页面上下文来自 URL，服务端会再次按身份复核，但跨标签页/旧对话仍以当前 URL 为准。
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/components/StudentProfileDrawer.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/src/api/assistant.ts`、`web/src/pages/WorkbenchPage.tsx`、`web/src/pages/CounselorPage.tsx`、`web/src/pages/ChangesPage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
 - **回退**：`git revert` 本分支提交；服务端检索/上下文为新增路径，回退后助手回到原聚合问答，不涉及数据迁移。

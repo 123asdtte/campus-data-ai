@@ -25,8 +25,8 @@ const SUGGESTIONS = [
   '人工智能学院有多少学生？',
   '全校休学和退学各有多少人？',
   '数据质量怎么样？',
-  '生成退学名单',
-  '最近的学籍异动情况',
+  '帮我找 SK-2026-000004',
+  '打开 SK-2026-000004 的异动记录',
 ];
 
 const INTENT_LABELS: Record<string, string> = {
@@ -38,6 +38,10 @@ const INTENT_LABELS: Record<string, string> = {
   change_count: '异动统计',
   count: '人数统计',
   profile: '本人学籍信息',
+  student_found: '学生检索 · 已定位',
+  student_ambiguous: '学生检索 · 同名候选',
+  student_not_found: '学生检索 · 无结果/越界',
+  student_query_needs_identifier: '学生检索 · 需要 UID/姓名',
   refused: '超出可回答范围',
   out_of_scope: '超出数据范围',
   unknown: '未识别意图',
@@ -59,7 +63,7 @@ export default function AssistantPage() {
     {
       id: 'welcome',
       role: 'assistant',
-      text: '问数由服务端按你的登录身份限定范围后回答，可以问学院人数、休学/退学、数据质量或异动；当前不调用外部模型，数据只在本机。',
+      text: '问数由服务端按你的登录身份限定范围后回答，可以问学院人数、休学/退学、数据质量或异动；也可以按 UID/脱敏姓名检索学生并打开档案。当前不调用外部模型，数据只在本机。',
     },
   ]);
   const [input, setInput] = useState('');
@@ -143,6 +147,17 @@ export default function AssistantPage() {
                     </small>
                   ) : null}
                   {message.reply?.note ? <small className="ai-note">{message.reply.note}</small> : null}
+                  {message.reply?.students?.length ? (
+                    <div className="ai-students">
+                      {message.reply.students.map((student) => (
+                        <Link className="ai-student" key={student.uid} to={student.profile_to}>
+                          <span className="ai-student-id">{student.uid}</span>
+                          <b>{student.name}</b>
+                          <small>{student.class_short || student.class_name} · {student.status} · {student.college}</small>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
                   {message.reply?.action ? (
                     <Link className="ai-action" to={message.reply.action.to}>{message.reply.action.label} →</Link>
                   ) : null}
@@ -182,6 +197,7 @@ export default function AssistantPage() {
             <ul className="wb-uid-list">
               <li>身份、权限与数据范围都在服务端判定，前端不传 UID 或角色。</li>
               <li>只返回聚合与脱敏结果，不返回身份证、电话、原始学号。</li>
+              <li>学生检索按 UID/脱敏姓名，唯一命中才给档案；同名只给候选，范围外不打开。</li>
               <li>管理员/学工处为全校范围，辅导员只得到本班范围；与页面数据口径一致。</li>
               <li>不调用外部模型；接入 Dify 后只替换意图解析，工具仍走同一批服务端接口。</li>
               <li>提问内容留在本机，服务端只记录意图，正式版写服务端审计。</li>
