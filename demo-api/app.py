@@ -875,6 +875,8 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
     # 慢请求/半开连接最多占用一个线程 10 秒，避免公网试用时线程被拖满
     timeout = 10
+    # 请求体是否已被读走：早退分支据此决定要不要排空，重复读会一直堵到 socket 超时
+    _body_consumed = False
 
     def log_message(self, fmt: str, *args) -> None:
         print("[demo-api] " + (fmt % args), file=sys.stderr)
@@ -893,10 +895,34 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8")
 
+    def _reject(self, status: int, message: str) -> None:
+        """还没读请求体就要回错误码时走这里，别直接用 _json。
+
+        带未读数据关 socket 会让内核发 RST 而不是 FIN；客户端在这之后才把请求体写完的话，
+        RST 会把它这边已收到的响应一起丢弃（D-068：401 变成「连接被重置」，前端无法识别成未登录）。
+        """
+        self._drain_body()
+        self._json(status, {"error": message})
+
+    def _drain_body(self) -> None:
+        if self._body_consumed:
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if length <= 0 or length > MAX_BODY_BYTES:
+            # 超限的请求体是 413 要拦的对象，读干净等于放弃了这个上限
+            return
+        try:
+            self.rfile.read(length)
+        except (OSError, ValueError):
+            pass
+
     def _identify(self) -> dict | None:
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
-            self._json(401, {"error": "未登录"})
+            self._reject(401, "未登录")
             return None
         request = urllib.request.Request(
             GATEWAY_BASE + "/system/user/getInfo",
@@ -910,14 +936,14 @@ class Handler(BaseHTTPRequestHandler):
             with NO_PROXY_OPENER.open(request, timeout=5) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            self._json(401 if exc.code == 401 else 503, {"error": "身份校验失败"})
+            self._reject(401 if exc.code == 401 else 503, "身份校验失败")
             return None
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             print(f"demo-api: 网关不可用: {exc}", file=sys.stderr)
-            self._json(503, {"error": "身份服务暂不可用"})
+            self._reject(503, "身份服务暂不可用")
             return None
         if payload.get("code") != 200 or not payload.get("data"):
-            self._json(401, {"error": "身份校验失败"})
+            self._reject(401, "身份校验失败")
             return None
         data = payload["data"]
         return {
@@ -980,6 +1006,9 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[demo-api] 请求体读取失败：{error}", file=sys.stderr)
             self._json(408, {"error": "请求体读取超时或不完整，请重试"})
             return None
+        finally:
+            # 读过了就必须标记，否则后续 _reject 会再读一次同样长度、一直堵到超时
+            self._body_consumed = True
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -993,7 +1022,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if path not in ("/changes", "/changes/import", "/changes/check", "/assistant/query"):
-            self._json(404, {"error": "not found"})
+            self._reject(404, "not found")
             return
         identity = self._identify()
         if identity is None:
@@ -1004,7 +1033,7 @@ class Handler(BaseHTTPRequestHandler):
             self._assistant_query(user, roles)
             return
         if not (roles & STAFF_ROLES or "counselor" in roles):
-            self._json(403, {"error": "当前角色不能管理学籍异动"})
+            self._reject(403, "当前角色不能管理学籍异动")
             return
         body = self._read_json()
         if body is None:

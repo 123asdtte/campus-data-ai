@@ -2,16 +2,24 @@
 
 单元测试直接调函数，测不到路径分发、请求体上限、JSON 解析失败、身份缺失时的
 状态码，以及健康检查与并发槽的耦合（D-066）。这些只有真发一次 HTTP 请求才看得见。
+
+故意把连接搞坏的用例（超大请求体、裸 socket 分两次写）单独一个类、单独一个服务：
+它们会让 Winsock 在同一个进程里留下半发送/未读的数据，跟正常契约用例混跑时会互相干扰
+（实测表现为下一个用例 ConnectionAbortedError WinError 10053）。分开跑，断言一条都不减。
 """
 
 import http.client
 import json
+import socket
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
 import app as demo
+
+CRLF = bytes([13, 10])
 
 
 def _post(port: int, path: str, payload, raw: bytes | None = None, timeout: float = 5.0, token: str = "t"):
@@ -27,7 +35,9 @@ def _post(port: int, path: str, payload, raw: bytes | None = None, timeout: floa
     return response.status, data
 
 
-class HttpAssistantTest(unittest.TestCase):
+class HttpBase(unittest.TestCase):
+    """自己起一台 Server，身份那一跳按需换成桩。"""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -37,17 +47,19 @@ class HttpAssistantTest(unittest.TestCase):
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
-        cls._identify = demo.Handler._identify
+        # 名字必须和被替换的 Handler._identify 不同：同名时 self.xxx 会绑成测试实例的方法，
+        # handler 线程里 self 就变成 TestCase，直接 AttributeError 断开连接（D-068 的真实成因）
+        cls.original_identify = demo.Handler._identify
 
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        demo.Handler._identify = cls._identify
+        demo.Handler._identify = cls.original_identify
         cls.tmp.cleanup()
 
     def setUp(self):
-        demo.Handler._identify = self._identify
+        demo.Handler._identify = type(self).original_identify
 
     def stub_identity(self, user: dict, roles: set) -> None:
         demo.Handler._identify = lambda self, _u=user, _r=roles: {"user": _u, "roles": _r}
@@ -56,6 +68,30 @@ class HttpAssistantTest(unittest.TestCase):
         student = next(s for s in demo.DATA["students"] if s.get("uid"))
         return {"userName": student["uid"], "nickName": student["name"], "userId": "1"}
 
+    def send_raw(self, head: bytes, body: bytes, gap: float = 0.05) -> bytes:
+        """先写请求头、停 gap 秒再写请求体，然后读到 EOF。用于复现「服务端读完体才回」的时序。"""
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        collected = b""
+        try:
+            sock.sendall(head)
+            time.sleep(gap)
+            sock.sendall(body)
+            while True:
+                try:
+                    chunk = sock.recv(4096)
+                except OSError as exc:
+                    self.fail(
+                        f"响应被 RST 丢弃：{type(exc).__name__}，已收到 {len(collected)} 字节"
+                    )
+                if not chunk:
+                    break
+                collected += chunk
+        finally:
+            sock.close()
+        return collected
+
+
+class HttpContractTest(HttpBase):
     def test_student_gets_own_timetable_over_http(self):
         user = self.student()
         self.stub_identity(user, {"student_portal"})
@@ -69,26 +105,22 @@ class HttpAssistantTest(unittest.TestCase):
         for course in answer.get("courses") or []:
             self.assertIn(course.get("course"), own)
 
-    @unittest.expectedFailure
     def test_missing_token_is_401_not_a_dropped_connection(self):
-        # D-067：缺 token 时服务端日志已经写出 401，但客户端读到的是 0 字节
-        # （http.client.RemoteDisconnected）。试过「回 401 前先把请求体读掉」并不解决，
-        # 成因还没定位，所以这条按已知缺陷登记，不伪装成通过。
         status, data = _post(self.port, "/assistant/query", {"question": "明天有什么课"}, token=None)
         self.assertEqual(401, status)
-        self.assertIn("error", json.loads(data.decode("utf-8")))
+        self.assertEqual("未登录", json.loads(data.decode("utf-8"))["error"])
+
+    def test_role_denied_post_keeps_the_response(self):
+        # /changes 的 403 也发生在读请求体之前，同样要让客户端拿到明确拒绝而不是网络错误
+        self.stub_identity(self.student(), {"student_portal"})
+        status, data = _post(self.port, "/changes", {"uid": "X", "type": "休学"})
+        self.assertEqual(403, status)
+        self.assertIn("学籍异动", json.loads(data.decode("utf-8"))["error"])
 
     def test_unknown_path_is_404_before_identity(self):
         # 路径白名单在身份校验之前（app.py 的 do_POST 开头），所以这里不需要任何身份
         status, _data = _post(self.port, "/assistant/nope", {"question": "x"}, token=None)
         self.assertEqual(404, status)
-
-    def test_body_over_limit_is_rejected_not_parsed(self):
-        self.stub_identity(self.student(), {"student_portal"})
-        big = json.dumps({"question": "啊" * (demo.MAX_BODY_BYTES + 10)}).encode("utf-8")
-        status, data = _post(self.port, "/assistant/query", None, raw=big)
-        self.assertEqual(413, status)
-        self.assertIn("error", json.loads(data.decode("utf-8")))
 
     def test_invalid_json_is_400(self):
         self.stub_identity(self.student(), {"student_portal"})
@@ -111,6 +143,29 @@ class HttpAssistantTest(unittest.TestCase):
         response.read()
         conn.close()
         self.assertEqual(200, response.status)
+
+
+class HttpAbusiveClientTest(HttpBase):
+    def test_body_over_limit_is_rejected_not_parsed(self):
+        self.stub_identity(self.student(), {"student_portal"})
+        big = json.dumps({"question": "啊" * (demo.MAX_BODY_BYTES + 10)}).encode("utf-8")
+        status, data = _post(self.port, "/assistant/query", None, raw=big)
+        self.assertEqual(413, status)
+        self.assertIn("error", json.loads(data.decode("utf-8")))
+
+    def test_deferred_request_body_does_not_lose_the_401(self):
+        # D-068：分两次写（先请求头、隔一会儿再请求体）时，服务端若没把请求体读掉就关闭，
+        # 内核回的是 RST 而不是 FIN，客户端已收到的 401 会被一起丢弃。真实浏览器和 curl
+        # 都可能这样发，所以「未登录」必须稳定送达，不能变成网络错误。
+        body = json.dumps({"question": "明天有什么课"}, ensure_ascii=False).encode("utf-8")
+        head = (
+            b"POST /assistant/query HTTP/1.1\r\nHost: demo\r\n"
+            b"Content-Type: application/json\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+        )
+        collected = self.send_raw(head, body)
+        self.assertIn(b"401", collected.split(CRLF, 1)[0])
+        self.assertIn("未登录", collected.decode("utf-8", "replace"))
 
 
 class HttpHealthSlotTest(unittest.TestCase):
