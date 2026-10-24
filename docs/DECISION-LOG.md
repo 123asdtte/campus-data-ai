@@ -790,9 +790,10 @@
   2. `localStorage`——仍是单浏览器，无法统一管理（否决）；
   3. 在 `demo-api` 增加受限写接口，JSON 台账落在容器外卷，沿用网关 token 与角色范围（采用）。
 - **决定**：
-  - 新增 `POST /changes`（登记）与 `POST /changes/check`（平台核对）；
+  - 新增 `POST /changes`（登记）、`POST /changes/import`（批量导入）与 `POST /changes/check`（平台核对）；
   - 角色：学生 403；辅导员仅本人所带学生；学工处/管理员可登记任意学生；
-  - 校验：UID 必须存在、异动类型白名单、日期 `YYYY-MM-DD`、原因 1–200 字、去向 ≤200 字、请求体 ≤8KB；
+  - 校验：UID 必须存在、异动类型白名单、日期 `YYYY-MM-DD`、原因 1–200 字、去向 ≤200 字、请求体 ≤64KB、单次导入 ≤200 条；
+  - 导入按行校验，非法/越界行返回 `skipped` 原因而不整批失败；保留原异动编号，重复时追加 `-IMPn`；
   - 台账最多 500 条；写文件使用锁 + 临时文件 + `os.replace` 原子替换；
   - 记录 `created_by/created_at` 与 `checked{by,at}`；`/data` 合并本地异动并返回 `platform_checked`；
   - Compose 挂载 `./demo-api/state:/app/state`，重建容器不丢；删除该目录即重置；
@@ -809,6 +810,8 @@
 - **验证（实测）**：
   - API：学生登记/核对 403；辅导员本班登记 201、他班登记 403；学工处登记他班 201；非法类型/日期 400；学生仅见本人异动，辅导员不见他班异动；
   - UI：辅导员选择本人学生发起休学 → 出现 `YD-LOCAL-*` 与成功提示；刷新后记录仍在；平台核对后状态持久化；
+  - UI 导入：带 BOM 的 CSV 2 条写入、刷新后仍在；非法类型/越界行按行跳过；空导入 400；
+  - API 导入：学生 403；辅导员 200（合法 1 条 + 跳过 3 条）；重复编号生成 `-IMP1`；201 条 413；
   - `docker compose ... up -d --force-recreate demo-api` 后本地异动与核对状态仍存在；
   - `npm run build` 通过。
 - **回退**：移除两个 POST 路由与前端 `ledger.ts` 调用，恢复本地 state 逻辑；删除 `demo-api/state`；无业务数据变更。

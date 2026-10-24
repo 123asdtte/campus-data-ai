@@ -9,6 +9,17 @@ export interface ChangeInput {
   target?: string;
 }
 
+export interface ImportRow extends ChangeInput {
+  change_no?: string;
+  status?: string;
+}
+
+export interface ImportResult {
+  imported: DemoChange[];
+  skipped: Array<{ row: number | string; uid?: string; reason: string }>;
+  skipped_total: number;
+}
+
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const token = getToken();
   if (!token) throw new Error('登录已失效，请重新登录');
@@ -36,4 +47,8 @@ export function createChange(input: ChangeInput): Promise<DemoChange> {
 
 export function checkChange(changeNo: string): Promise<void> {
   return postJson<{ checked: boolean }>('/demo-api/changes/check', { change_no: changeNo }).then(() => undefined);
+}
+
+export function importChanges(changes: ImportRow[]): Promise<ImportResult> {
+  return postJson<ImportResult>('/demo-api/changes/import', { changes });
 }

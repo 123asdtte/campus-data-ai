@@ -18,7 +18,8 @@ import { useSession } from '../session/SessionContext';
 import { fmt, todayStamp } from '../demo/format';
 import type { DemoChange, DemoStudent } from '../demo/types';
 import { invalidateDemoData, useDemoData } from '../demo/useDemoData';
-import { checkChange, createChange } from '../demo/ledger';
+import { checkChange, createChange, importChanges } from '../demo/ledger';
+import type { ImportRow } from '../demo/ledger';
 
 interface ChangeRow {
   key: string;
@@ -201,28 +202,28 @@ export default function ChangesPage() {
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      const pad = (value: string) => value.padStart(2, '0');
       const normalizeDate = (value: unknown): string => {
         if (typeof value === 'number') {
           const parsed = XLSX.SSF.parse_date_code(value);
-          if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
+          if (parsed) return `${parsed.y}-${pad(String(parsed.m))}-${pad(String(parsed.d))}`;
         }
-        return String(value ?? '').trim();
+        const text = String(value ?? '').trim();
+        const match = text.match(/^(\d{4})[.\-/年](\d{1,2})[.\-/月](\d{1,2})日?$/);
+        if (match) return `${match[1]}-${pad(match[2])}-${pad(match[3])}`;
+        return text;
       };
-      const existing = new Set(changes.map((item) => item.change_no));
-      const imported: DemoChange[] = [];
-      let skipped = 0;
-      records.forEach((row, index) => {
+      const payload: ImportRow[] = [];
+      let skippedLocal = 0;
+      records.forEach((row) => {
         const uid = String(row.UID ?? row.uid ?? '').trim();
         if (!studentMap.has(uid) || (scopedUids && !scopedUids.has(uid))) {
-          skipped += 1;
+          skippedLocal += 1;
           return;
         }
-        const baseNo = String(row['异动编号'] ?? row['编号'] ?? `IMP-${Date.now()}-${index + 1}`).trim();
-        const changeNo = existing.has(baseNo) ? `${baseNo}-IMP${index + 1}` : baseNo;
-        existing.add(changeNo);
-        imported.push({
+        payload.push({
           uid,
-          change_no: changeNo,
+          change_no: String(row['异动编号'] ?? row['编号'] ?? '').trim(),
           type: String(row['异动类型'] ?? row['类型'] ?? '其他').trim() || '其他',
           date: normalizeDate(row['异动日期'] ?? row['日期']),
           reason: String(row['异动原因'] ?? row['原因'] ?? '').trim(),
@@ -230,12 +231,19 @@ export default function ChangesPage() {
           status: String(row['正式审批状态'] ?? row['审批状态'] ?? '审批中').trim() || '审批中',
         });
       });
-      if (imported.length) {
-        setChanges((current) => [...imported, ...current]);
-        addAudit('导入异动', `${file.name} · 导入 ${imported.length} 条 · 跳过 ${skipped} 条`);
-        void message.success(`已导入 ${imported.length} 条异动${skipped ? `，跳过 ${skipped} 条无匹配 UID 的记录` : ''}`);
+      if (!payload.length) {
+        void message.warning(`没有可导入记录；请检查模板中的 UID。跳过 ${skippedLocal} 条。`);
+        return;
+      }
+      const result = await importChanges(payload);
+      setChanges((current) => [...result.imported, ...current]);
+      invalidateDemoData();
+      const skipped = skippedLocal + result.skipped_total;
+      addAudit('导入异动', `${file.name} · 写入 ${result.imported.length} 条 · 跳过 ${skipped} 条`);
+      if (result.skipped.length) {
+        void message.warning(`已写入 ${result.imported.length} 条；跳过 ${skipped} 条：${result.skipped[0].reason}`);
       } else {
-        void message.warning(`没有导入记录；请检查模板中的 UID。跳过 ${skipped} 条。`);
+        void message.success(`已写入 ${result.imported.length} 条异动${skipped ? `，跳过 ${skipped} 条` : ''}`);
       }
     } catch (reason) {
       void message.error(`导入失败：${reason instanceof Error ? reason.message : '文件无法解析'}`);

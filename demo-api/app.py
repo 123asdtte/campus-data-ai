@@ -34,9 +34,12 @@ CLIENT_ID = os.environ.get(
 )
 STAFF_ROLES = {"xgb", "superadmin"}
 CHANGE_TYPES = {"休学", "复学", "退学", "转专业", "保留学籍", "跟读生转正式", "预科生转正", "留级"}
+CHANGE_STATUSES = {"审批中", "已批", "退回"}
 MAX_LOCAL_CHANGES = 500
-MAX_BODY_BYTES = 8 * 1024
+MAX_IMPORT_ROWS = 200
+MAX_BODY_BYTES = 64 * 1024
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CHANGE_NO_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 STATE_LOCK = threading.Lock()
 
 # Docker Desktop 会注入 127.0.0.1:8080 代理；容器内没有该代理。
@@ -114,6 +117,41 @@ def merge_ledger(user: dict, roles: set[str], state: dict) -> tuple[list[dict], 
     numbers = {c.get("change_no") for c in all_changes}
     checked = [no for no in state["checked"] if no in numbers]
     return all_changes, checked
+
+
+def validate_change(body: dict, user: dict, roles: set[str]) -> tuple[dict | None, int, str]:
+    uid = str(body.get("uid") or "").strip()
+    change_type = str(body.get("type") or "").strip()
+    date = str(body.get("date") or "").strip()
+    reason = str(body.get("reason") or "").strip()
+    target = str(body.get("target") or "").strip() or "—"
+    if not uid:
+        return None, 400, "缺少学生 UID"
+    if change_type not in CHANGE_TYPES:
+        return None, 400, "异动类型不在允许范围"
+    if not DATE_PATTERN.match(date):
+        return None, 400, "异动日期格式应为 YYYY-MM-DD"
+    if not 1 <= len(reason) <= 200 or len(target) > 200:
+        return None, 400, "原因需为 1-200 字，去向不超过 200 字"
+    if not any(s.get("uid") == uid for s in (DATA.get("students") or [])):
+        return None, 404, "学生不存在"
+    scope = visible_uids(user, roles)
+    if scope is not None and uid not in scope:
+        return None, 403, "该学生不在当前账号的数据范围内"
+    return {
+        "uid": uid,
+        "type": change_type,
+        "date": date,
+        "reason": reason,
+        "target": target,
+    }, 0, ""
+
+
+def next_change_no(existing: set[str]) -> str:
+    while True:
+        change_no = f"YD-LOCAL-{datetime.now():%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
+        if change_no not in existing:
+            return change_no
 
 
 def scope_metrics(students: list[dict], changes: list[dict], classes: list[dict]) -> dict:
@@ -325,7 +363,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
-        if path not in ("/changes", "/changes/check"):
+        if path not in ("/changes", "/changes/import", "/changes/check"):
             self._json(404, {"error": "not found"})
             return
         identity = self._identify()
@@ -341,33 +379,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/changes":
             self._create_change(user, roles, body)
+        elif path == "/changes/import":
+            self._import_changes(user, roles, body)
         else:
             self._check_change(user, roles, body)
 
     def _create_change(self, user: dict, roles: set[str], body: dict) -> None:
-        uid = str(body.get("uid") or "").strip()
-        change_type = str(body.get("type") or "").strip()
-        date = str(body.get("date") or "").strip()
-        reason = str(body.get("reason") or "").strip()
-        target = str(body.get("target") or "").strip() or "—"
-        if not uid:
-            self._json(400, {"error": "缺少学生 UID"})
-            return
-        if change_type not in CHANGE_TYPES:
-            self._json(400, {"error": "异动类型不在允许范围"})
-            return
-        if not DATE_PATTERN.match(date):
-            self._json(400, {"error": "异动日期格式应为 YYYY-MM-DD"})
-            return
-        if not 1 <= len(reason) <= 200 or len(target) > 200:
-            self._json(400, {"error": "原因需为 1-200 字，去向不超过 200 字"})
-            return
-        if not any(s.get("uid") == uid for s in (DATA.get("students") or [])):
-            self._json(404, {"error": "学生不存在"})
-            return
-        scope = visible_uids(user, roles)
-        if scope is not None and uid not in scope:
-            self._json(403, {"error": "该学生不在当前账号的数据范围内"})
+        fields, status, error = validate_change(body, user, roles)
+        if fields is None:
+            self._json(status, {"error": error})
             return
 
         username = (user.get("userName") or "").strip()
@@ -378,25 +398,83 @@ class Handler(BaseHTTPRequestHandler):
                 return
             existing = {c.get("change_no") for c in (DATA.get("changes") or [])}
             existing.update(c.get("change_no") for c in state["changes"])
-            while True:
-                change_no = f"YD-LOCAL-{datetime.now():%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
-                if change_no not in existing:
-                    break
             change = {
-                "uid": uid,
-                "change_no": change_no,
-                "type": change_type,
-                "date": date,
-                "reason": reason,
-                "target": target,
+                **fields,
+                "change_no": next_change_no(existing),
                 "status": "审批中",
                 "created_by": username,
                 "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             }
             state["changes"].insert(0, change)
             save_ledger(state)
-        print(f"[demo-api] change created by {username}: {change_no} {uid} {change_type}", file=sys.stderr)
+        print(f"[demo-api] change created by {username}: {change['change_no']} {fields['uid']} {fields['type']}", file=sys.stderr)
         self._json(201, {"change": change})
+
+    def _import_changes(self, user: dict, roles: set[str], body: dict) -> None:
+        rows = body.get("changes")
+        if not isinstance(rows, list) or not rows:
+            self._json(400, {"error": "changes 必须是非空数组"})
+            return
+        if len(rows) > MAX_IMPORT_ROWS:
+            self._json(413, {"error": f"单次最多导入 {MAX_IMPORT_ROWS} 条"})
+            return
+
+        skipped: list[dict] = []
+        valid: list[dict] = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                skipped.append({"row": index + 1, "reason": "记录不是对象"})
+                continue
+            fields, _, error = validate_change(row, user, roles)
+            if fields is None:
+                skipped.append({"row": index + 1, "uid": str(row.get("uid") or ""), "reason": error})
+                continue
+            status = str(row.get("status") or "审批中").strip()
+            provided = str(row.get("change_no") or "").strip()
+            valid.append({
+                **fields,
+                "status": status if status in CHANGE_STATUSES else "审批中",
+                "_provided_no": provided if CHANGE_NO_PATTERN.match(provided) else "",
+            })
+        if not valid:
+            self._json(400, {"error": "没有可导入的记录", "skipped": skipped[:20]})
+            return
+
+        username = (user.get("userName") or "").strip()
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        with STATE_LOCK:
+            state = load_ledger()
+            existing = {c.get("change_no") for c in (DATA.get("changes") or [])}
+            existing.update(c.get("change_no") for c in state["changes"])
+            remaining = MAX_LOCAL_CHANGES - len(state["changes"])
+            imported: list[dict] = []
+            for item in valid:
+                if remaining <= 0:
+                    skipped.append({"row": "剩余", "uid": item["uid"], "reason": "台账已达上限"})
+                    continue
+                provided = item.pop("_provided_no")
+                change_no = provided or next_change_no(existing)
+                if change_no in existing:
+                    suffix = 1
+                    while f"{provided}-IMP{suffix}" in existing:
+                        suffix += 1
+                    change_no = f"{provided}-IMP{suffix}"
+                existing.add(change_no)
+                change = {
+                    **item,
+                    "change_no": change_no,
+                    "created_by": username,
+                    "created_at": now,
+                }
+                state["changes"].insert(0, change)
+                imported.append(change)
+                remaining -= 1
+            save_ledger(state)
+        print(
+            f"[demo-api] import by {username}: {len(imported)} imported, {len(skipped)} skipped",
+            file=sys.stderr,
+        )
+        self._json(200, {"imported": imported, "skipped": skipped[:20], "skipped_total": len(skipped)})
 
     def _check_change(self, user: dict, roles: set[str], body: dict) -> None:
         change_no = str(body.get("change_no") or "").strip()
