@@ -1448,7 +1448,7 @@
 
 ## D-065 班级数被花名册写法放大：170 行班名只对应 135 个班，学生把自己的班读成两个
 
-- **状态**：Implemented（2026-10-24 本地实测：**72 单测通过（skipped=2）**；只回退 `app.py` 时新用例 3 条失败、`AssertionError: 1 != 2`；远端 CI 待本轮推送后确认）
+- **状态**：Verified in CI（提交 `94b6770`：远端 10 项 check-run 全部 completed success，含「本地演示 API 测试」「演示栈 E2E」「前端类型检查与构建」「AI 评审」）；本地实测 **72 单测通过（skipped=2）**，只回退 `app.py` 时新用例 3 条失败、`AssertionError: 1 != 2`
 - **Decision owner**：AI
 - **问题与证据**：读 `demo-api/data/demo-data.json` 实测：`class_summary` 170 行只对应 **135 个 `class_code`**，其中 35 个班各占两行（全称「信息安全技术应用2601班」44 人 + 简称「信息安全2601」1 人），因为班级汇总按 `class_name` 分组而花名册里同一班存在两种写法。`scope_metrics()` 把 `total_classes` 和 `roster_class_names` 都设成行数（`demo-api/app.py` 原 737-739 行），于是学生 scoped payload 实测 `total_classes=2 / roster_class_names=2`——前 400 名学生里 136 人（34%）看到的「班级数」大于自己真实的班级数；全校口径下 `metrics.total_classes` 是 135 而 `roster_class_names` 是 170，两个数被同一个字段名族混在一起，工作台 KPI「班级数」随时会从 135 跳成 170。先按 §十 复核过是否越权：`class_short` 跨 `class_code` 的数量实测为 **0**，排课表里 `class_short → class_name` 也是 1:1，所以这不是数据泄露而是计数错误，优先级按「关键业务缺陷」处理。
 - **决定**：在 `scope_metrics()` 里引入 `class_identity()`：优先用 `class_code` 作为班级本体标识，`class_code` 缺失时退回辅导员页已经在用的同一条归一化规则（去空白、去结尾「班」），保证前后端只有一套口径。`total_classes` 改成按 `class_identity` 去重计数，`roster_class_names` 继续按行数计（它本来表示「花名册里有几种写法」，`WorkbenchPage.tsx` 的提示文案「花名册 N 个班名」正是这个意思）。**不动 `class_summary` 行本身**：辅导员页 `CounselorPage.tsx:44-58` 依赖逐行 `class_name`/`class_short` 生成匹配键，合并行会让 40 名写法为简称的学生从名单里消失——把可见缺陷修成不可见丢人，不能接受。
@@ -1478,4 +1478,4 @@
 ## 环境与阻塞（2026-10-24 本轮）
 
 - Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样失败，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本轮所有前端改动的浏览器验证、以及 `demo-api` 容器重建都无法在本地完成；受影响项：D-063 Esc 行为（未自动化）、跨周课程定位（未修复）、D-065 的学生页 KPI 截图核对。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`。
-- 远端 CI 本轮实测：`94b6770`（D-065）除「演示栈 E2E」仍在 `in_progress` 外，其余 9 项 check-run 已 completed success（含「本地演示 API 测试」「前端类型检查与构建」「AI 评审」）；E2E 结果待下一轮确认后再把 D-065 状态升级为 Verified in CI。
+- 远端 CI 本轮实测：`94b6770`（D-065）10 项 check-run 全部 completed success（含「演示栈 E2E」），已据此把 D-065 升级为 Verified in CI；`da9aa07`（仅本文档改动）的结果待下一轮确认。
