@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as XLSX from 'xlsx';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ledger = path.resolve(here, '../../demo-api/state/ledger.json');
@@ -116,15 +117,26 @@ test.describe('本地演示关键路径', () => {
     expect(download.suggestedFilename()).toMatch(/带班名单_.*\.csv$/);
   });
 
-  test('管理员导入预检：上传 CSV 后可校验（不提交）', async ({ page }) => {
+  test('管理员导入预检：上传 XLSX 后可校验（不提交）', async ({ page }) => {
     await login(page, 'admin', 'admin123');
     await page.locator('a.app-nav-item', { hasText: '数据导入' }).click();
     await expect(page.getByRole('heading', { name: '数据导入' })).toBeVisible();
 
-    await page.locator('input[type=file]').setInputFiles(
-      path.resolve(here, '../../samples/test_acceptance.csv'),
-    );
-    await expect(page.getByText(/已选择：test_acceptance\.csv/)).toBeVisible();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['学号', '姓名', '学院', '专业', '班级', '入学年份', '在校状态'],
+      ['G2026001', '测试甲', '计算机学院', '软件技术', '软件2601', 2026, '在校'],
+      ['G2026002', '测试乙', '电子信息学院', '物联网应用技术', '物联网2601', 2026, '在校'],
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Sheet1');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    await page.locator('input[type=file]').setInputFiles({
+      name: 'e2e-import.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer,
+    });
+    await expect(page.getByText(/已选择：e2e-import\.xlsx/)).toBeVisible();
     await page.getByRole('button', { name: '上传并识别' }).click();
     await expect(page.getByText('识别结果')).toBeVisible();
     await expect(page.getByText(/识别到/)).toBeVisible();
