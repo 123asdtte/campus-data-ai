@@ -17,7 +17,7 @@ interface LoginValues {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { refresh } = useSession();
+  const { session, refresh } = useSession();
   const [initialUser] = useState(() => window.localStorage.getItem(REMEMBER_KEY) ?? '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -67,6 +67,18 @@ export default function LoginPage() {
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const target = session.roles.includes('student_portal')
+      ? '/my-schedule'
+      : session.roles.includes('counselor')
+        ? '/counselor'
+        : session.roles.includes('xgb')
+          ? '/workbench'
+          : '/';
+    navigate(target, { replace: true });
+  }, [session, navigate]);
 
   const onFinish = async (values: LoginValues) => {
     const username = values.username.trim();

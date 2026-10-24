@@ -41,6 +41,12 @@ test.describe('本地演示关键路径', () => {
     await expect(page.getByRole('alert')).toContainText('账号不存在');
   });
 
+  test('已登录访问登录页会回到角色首页', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/login');
+    await expect(page).toHaveURL(/\/$/);
+  });
+
   test('学生只看到本人课表，越权路由被送回', async ({ page }) => {
     await login(page, 'SK-2026-000001', 'Demo@2026');
     await expect(page).toHaveURL(/\/my-schedule/);

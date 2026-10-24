@@ -1031,3 +1031,17 @@
 - **验证（实测）**：不存在账号 `__e2e_missing__` 登录停留在 `/login` 并显示“账号不存在”；学生课表“明天/本周”问答断言通过；Playwright **11 passed / 40.3s**。
 - **回退**：还原 `translateLoginError`；无数据变更。
 - **授权**：B 类（本地演示用户体验）。
+
+---
+
+## D-039 已登录用户访问登录页回角色首页
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：已登录用户直接访问 `/login` 时仍看到登录表单；此时会话已存在，重复登录会造成角色首页跳转分支与登录页并存，也容易让演示人员误以为需要再次登录。
+- **决定**：登录页监听会话；一旦 `SessionContext` 拿到有效 session，就按角色替换跳转到 `/my-schedule`、`/counselor`、`/workbench` 或 `/`。会话失效/退出时 session 为空，不触发。
+- **影响与兼容性**：只影响已登录访问登录页的场景；切换账号仍需先退出登录。未登录、登录失败和失效提示路径不变。
+- **涉及文件**：`web/src/pages/LoginPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：管理员登录后访问 `/login` 被替换跳转 `/`；Playwright **13 passed / 43.9s**。
+- **回退**：移除登录页的 session 监听 effect；无数据变更。
+- **授权**：B 类（本地演示导航体验）。
