@@ -75,7 +75,11 @@ export default function FloatingAssistant() {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape') return;
+      // 抽屉/弹窗盖在面板之上时，Esc 应该只关最上面那层；否则用户关掉学生详情
+      // 却发现背后的对话也被一起收掉了，正在问的问题就没了。
+      if (document.querySelector('.ant-drawer-open, .ant-modal-wrap')) return;
+      setOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

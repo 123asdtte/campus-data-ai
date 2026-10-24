@@ -1415,3 +1415,18 @@
 - **未验证**：远端 CI（本轮记录时尚未推送）；Windows 宿主上直接跑 demo-api 时的权限位无法验证（系统语义不同）；正式环境把审计落库、按角色收敛日志可读性属需授权事项，本轮未做。
 - **回退**：删除两处 `os.chmod` 与新增测试类即可，无数据与配置变更；已收紧的历史审计文件权限不会自动回到 0644（对演示数据无影响）。
 - **授权**：B 类（演示容器内虚构数据的日志权限）。未触碰正式环境、真实数据与认证配置。
+
+## D-063 Esc 会把背后的 AI 对话连带收掉；跨周课程定位仍会给出假「已定位」
+
+- **状态**：Esc 修复 Implemented（未自动化、未浏览器验证）；跨周定位 未修复（本轮只记录证据与方案）
+- **Decision owner**：AI
+- **问题与证据**（两项均由只读审计代理逐行核对，行号已复核）：
+  1. `web/src/components/FloatingAssistant.tsx:75-82` 在 `window` 上监听 `keydown`，任何 Esc 都执行 `setOpen(false)`；而 `StudentsPage.tsx:363`、`WorkbenchPage.tsx:501`、`ChangesPage.tsx:449` 的抽屉靠 antd 默认「Esc 关抽屉」。结果是用户在抽屉上按 Esc 关掉抽屉时，背后正在进行的对话被一起收起，重开还要重新问。
+  2. 课表「定位到课程」只对当前周有效：`StudentSchedulePage.tsx:48-51` 的网格只渲染 `weekMatches(row.weeks, currentWeek)`，而 `FloatingAssistant.tsx:116` 传的 `detail` 只有 `weekday` + `period`，丢掉了服务端已经给出的 `date`/周次（`app.py:262`）。问「下周有哪些课」时，`StudentSchedulePage.tsx:60-71` 照样 `setFocusCell`，高亮的是本周同格里的另一门课或占位格——比不高亮更糟，等于宣称「AI 帮你定位到了」。
+- **本轮已做**：`FloatingAssistant.tsx` 的 Esc 处理改为先看是否有更上层浮层（`.ant-drawer-open, .ant-modal-wrap`），有则交还给浮层、不收对话；`tsc --noEmit` 通过，既有 27 条 E2E 全绿。**未做**：跨周定位的修复——正确的判据是「高亮格子必须真的是那门课」，需要把课程名/周次随事件一起传（`AssistantCourse` → `FocusCell`），再在页面侧比对；我第一版用「格子文本为空 ⇒ 视为没定位」的启发式，被 E2E 直接推翻：演示课表每个格子都有占位文本，`document.querySelectorAll('[data-weekday][data-period]')` 里找不到空格子（`Received: null`），于是该启发式连同其用例一并撤销，不留半对的判断和永远不会红的测试。
+- **下一轮怎么做**（按此实施即可，不必重新调研）：`FloatingAssistant.tsx:116` 传 `{ weekday, period, course: 课程名 }`（`AssistantCourse` 已含课程名与 `date`，`api/assistant.ts:9`），`StudentSchedulePage.tsx:18-21` 的 `FocusCell` 加 `course?: string`，`applyFocus` 里只有当命中的格子 `textContent` 含该课程名时才 `setFocusCell`，否则 `message.info('该课程不在当前第 N 周，未做定位')`；E2E 断言「高亮存在 ⇒ 该格文本含课程名」，并补一条 `/students` 抽屉 Esc 用例（先确认打开抽屉的实际触发控件：行内按钮而非整行，本轮 `page.locator('table tbody tr').first().click()` 未能打开抽屉，60s 超时，用例已撤）。
+- **影响与兼容性**：Esc 改动只在有浮层时不改行为，无浮层时与原先一致；跨周定位修复未实施，当前行为不变。
+- **涉及文件**：`web/src/components/FloatingAssistant.tsx`（已改）、`docs/DECISION-LOG.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **未验证**：Esc 修复没有自动化用例、也没做浏览器人工验证（抽屉触发控件待确认），因此不记为已验收；`a1b89c4` 的「演示栈 E2E」「AI 评审」与 `41ff105`（D-062）的远端 CI 结果本轮未复核；跨周定位仅记录证据未修复。
+- **回退**：还原 `FloatingAssistant.tsx` 的 `onKey` 为 `if (event.key === 'Escape') setOpen(false);` 即可。
+- **授权**：B 类（演示前端交互，未触碰正式环境与真实数据）。
