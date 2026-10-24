@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Button,
   Empty,
   Form,
@@ -13,6 +14,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
+import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/ui';
 import { useSession } from '../session/SessionContext';
 import { fmt, todayStamp } from '../demo/format';
@@ -142,16 +144,39 @@ export default function ChangesPage() {
     [changes, studentMap, platformChecked, scopedUids],
   );
 
+  const [params, setParams] = useSearchParams();
+  const focusStudent = params.get('student') ?? '';
+  const focusChange = params.get('change') ?? '';
+  const tableRef = useRef<HTMLDivElement>(null);
+
   const filtered = useMemo(() => {
     const q = keyword.trim().toLowerCase();
     return rows.filter((row) => {
+      if (focusStudent && row.uid !== focusStudent) return false;
+      if (focusChange && row.change_no !== focusChange) return false;
       if (type !== 'all' && row.type !== type) return false;
       if (status !== 'all' && row.status !== status) return false;
       if (college !== 'all' && row.college !== college) return false;
       if (q && !`${row.uid} ${row.name} ${row.class_name} ${row.change_no}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, keyword, type, status, college]);
+  }, [rows, keyword, type, status, college, focusStudent, focusChange]);
+
+  useEffect(() => {
+    if (!focusStudent && !focusChange) return;
+    const timer = window.setTimeout(() => {
+      tableRef.current?.querySelector<HTMLElement>('.ant-table-row.is-focused')?.scrollIntoView({ block: 'center' });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [focusStudent, focusChange, filtered.length]);
+
+  const clearFocus = () => {
+    const next = new URLSearchParams(params);
+    next.delete('student');
+    next.delete('change');
+    setParams(next, { replace: true });
+    setKeyword('');
+  };
 
   if (error) {
     return <div className="wb"><Tag color="red">演示数据加载失败：{error}</Tag></div>;
@@ -286,6 +311,7 @@ export default function ChangesPage() {
     void message.success(`已导出 ${fmt(filtered.length)} 条异动`);
   };
 
+  const profileBase = isCounselor ? '/counselor' : '/workbench';
   const columns: ColumnsType<ChangeRow> = [
     { title: '异动编号', dataIndex: 'change_no', width: 150, render: (value: string) => <span className="wb-mono">{value}</span> },
     {
@@ -294,7 +320,7 @@ export default function ChangesPage() {
       width: 150,
       render: (value: string, row) => (
         <span className="wb-two-line">
-          <b>{row.uid}</b>
+          <Link className="wb-link" to={`${profileBase}?student=${row.uid}`}>{row.uid}</Link>
           <small>{value} · 学籍：{row.student_status}</small>
         </span>
       ),
@@ -365,6 +391,18 @@ export default function ChangesPage() {
         }
       />
 
+      {(focusStudent || focusChange) ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={focusChange
+            ? `已定位到异动 ${focusChange}，当前筛选共 ${fmt(filtered.length)} 条`
+            : `已按学生 ${focusStudent} 筛选，当前共 ${fmt(filtered.length)} 条`}
+          action={<Button size="small" onClick={clearFocus}>清除定位</Button>}
+        />
+      ) : null}
+
       <section className="wb-kpis ch-kpis">
         <div className="wb-kpi"><div className="wb-kpi-label">异动总数</div><div className="wb-kpi-value">{fmt(rows.length)}</div><div className="wb-kpi-hint">工作台 {data.metrics.change_total} 条 · {data.metrics.orphan_changes} 条学号未匹配</div></div>
         <div className="wb-kpi"><div className="wb-kpi-label">待平台核对</div><div className="wb-kpi-value">{fmt(pending)}</div><div className="wb-kpi-hint">正式审批状态另列</div></div>
@@ -412,7 +450,19 @@ export default function ChangesPage() {
         <header className="wb-panel-head"><h2>异动台账</h2><span>平台核对与源表正式审批分开显示 · 支持 Excel 导入</span></header>
         <div className="wb-toolbar">
           <Input allowClear prefix={<SearchOutlined />} aria-label="搜索异动"
-            placeholder="异动编号 / UID / 班级" value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ width: 230 }} />
+            placeholder="异动编号 / UID / 班级"
+            value={keyword || focusStudent || focusChange}
+            onChange={(e) => {
+              const value = e.target.value;
+              setKeyword(value);
+              if (focusStudent || focusChange) {
+                const next = new URLSearchParams(params);
+                next.delete('student');
+                next.delete('change');
+                setParams(next, { replace: true });
+              }
+            }}
+            style={{ width: 230 }} />
           <Select aria-label="异动类型" value={type} onChange={setType} style={{ width: 150 }} options={[{ value: 'all', label: '全部类型' }, ...types.map((item) => ({ value: item, label: item }))]} />
           <Select aria-label="正式审批状态" value={status} onChange={setStatus} style={{ width: 170 }} options={[{ value: 'all', label: '全部正式审批状态' }, ...statuses.map((item) => ({ value: item, label: item }))]} />
           <Select aria-label="学院" value={college} onChange={setCollege} style={{ width: 170 }} options={[{ value: 'all', label: '全部学院' }, ...colleges.map((item) => ({ value: item, label: item }))]} />
@@ -433,15 +483,18 @@ export default function ChangesPage() {
           />
           <span className="wb-result-count">命中 {fmt(filtered.length)} 条</span>
         </div>
-        <Table<ChangeRow>
-          rowKey="key"
-          size="middle"
-          columns={columns}
-          dataSource={filtered}
-          scroll={{ x: 1160 }}
-          pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${fmt(total)} 条` }}
-          locale={{ emptyText: <Empty description="没有匹配的异动记录" /> }}
-        />
+        <div ref={tableRef}>
+          <Table<ChangeRow>
+            rowKey="key"
+            size="middle"
+            columns={columns}
+            dataSource={filtered}
+            scroll={{ x: 1160 }}
+            rowClassName={(row) => ((focusChange ? row.change_no === focusChange : focusStudent ? row.uid === focusStudent : false) ? 'is-focused' : '')}
+            pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${fmt(total)} 条` }}
+            locale={{ emptyText: <Empty description="没有匹配的异动记录" /> }}
+          />
+        </div>
       </section>
 
       <p className="wb-footnote">{data.metrics.disclaimer} · 异动登记写入演示服务端台账，不写青果或正式库</p>

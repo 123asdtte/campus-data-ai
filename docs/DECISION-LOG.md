@@ -1706,3 +1706,18 @@
 - 授权：B 类（仅 CI 脚本与文档，无正式环境操作；LLM 上游 Secrets 更换仍为授权项，本条不涉及）。
 - **验证结果（run 40111346746，提交 7859d04，实测）**：job 从 5.5 分钟缩到 46 秒，fail-open 留痕正常（comment=6380756155 原地更新）。但失败模式与此前不同——上游本次**可达**（首个探测成功返回 769 字节思维链，未触发连接超时），真正的瓶颈是**限流**：探测 5 个开关全部 429（挨个试完，白烧 5 次配额），正式请求 429 → 退避 20s 重试 → 仍 429。据此追加一条修复：候选开关循环中一旦撞 429 立即 break（限流时瓶颈是配额不是开关字段），探测从最多 6 次请求降到最多 2 次，把剩余配额留给正式请求。上游限流策略本身（每日配额还是每分钟窗口）无法从外部判断，更换 `AI_BASE_URL`/`AI_MODEL` 或升级配额仍需授权。
 - **验证结果二（run 40111610585，提交 9ef1b54，实测）**：探测止损生效——第一个开关即 429 立即停止（仅 2 次探测请求）；正式请求成功拿到配额并连上上游，300s 内流式收到 26271 字节 `reasoning_content`、0 字节正文，随后按「只思考不输出」路径发布精确失败说明并更新既有 comment。至此脚本侧可自主优化的路径全部闭环，确诊根因为：该 `AI_MODEL` 是推理模型且其网关不接受已知的 5 种关思考开关（且限流使自动探测无法逐个验证）。剩余修复均为仓库配置变更，属授权项：①设置仓库 Variable `AI_EXTRA_BODY`（用该网关实际支持的字段）；②更换 Secret `AI_MODEL` 为非推理模型。失败说明已把这两条排查方向写清楚，接手人无需从零排查。
+
+## D-083 AI 学生检索与定位：从“能回答”到“能打开正确档案”
+
+- **日期**：2026-10-25　分支：`feat/ai-student-locator`
+- **问题**：悬浮助手已能回答聚合/课表问题，但员工说“帮我找这个学生/打开他的异动”时只能得到 unknown 或模块首页跳转；没有学生检索、歧义处理和按记录定位的闭环。`/students` 是管理员专属且走 Java 后端，辅导员/学工处无法复用；`/counselor`、`/workbench` 已有学生抽屉但没有 URL 定位能力。
+- **备选方案**：a) 新建独立学生检索页和详情页——会与现有工作台/辅导员台重复；b) 让模型或前端按姓名取第一条——违反“不猜测、不误开档案”；c) 在现有学生抽屉上补服务端检索 + URL 定位 + 候选卡片——选择 c，复用现有组件和页面。
+- **实现**：
+  - `demo-api/app.py`：新增 UID/脱敏姓名提取、按当前身份范围 `search_scoped_students`、`student_brief`，以及 `student_found / student_ambiguous / student_not_found / student_query_needs_identifier`；页面上下文 `student_uid` 只在服务端复核命中后才用于“他的/这个学生”指称；唯一命中返回受控的 `/workbench?student=` 或 `/counselor?student=`，问异动时返回 `/changes?student=`；候选只含 UID/脱敏姓名/班级/状态，不含电话/身份证。
+  - 前端：`StudentProfileDrawer` 抽出工作台/辅导员共用抽屉；`FloatingAssistant` 与管理员独立 `AssistantPage` 都渲染候选卡片，悬浮入口把当前 URL 的学生/异动上下文传给服务端；工作台/辅导员读取 `?student=` 自动打开抽屉并按范围拒绝；`ChangesPage` 支持 `?student=`/`?change=` 过滤、横幅与行高亮；异动表的学生 UID 可点进档案。
+- **为什么不是模糊匹配**：演示数据姓名脱敏（如“李**”全校 57 人），只有唯一 UID 自动打开；同名只给候选。名称片段只形成候选集合，不取第一条。
+- **测试（实测）**：`demo-api` 105 tests OK（skipped=2，新增 7 条检索/歧义/越界/上下文/聚合回归）；`npm run build` 通过；Playwright 32 passed（新增 3 条：唯一 UID→档案→异动定位+上下文、同名只给候选、辅导员范围外不打开）；随后补管理员独立 AI 页候选跳转用例并单独通过（完整 33 条待 CI 复核）；只读冒烟 33 项全 PASS；E2E 前后台账已备份/恢复。
+- **未验证/边界**：仅虚构演示数据；真实学生数据未接入；姓名脱敏导致同名较多，真实系统需要按学号/UID 的映射与更细的检索字段；页面上下文来自 URL，服务端会再次按身份复核，但跨标签页/旧对话仍以当前 URL 为准。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`web/src/components/StudentProfileDrawer.tsx`、`web/src/components/FloatingAssistant.tsx`、`web/src/api/assistant.ts`、`web/src/pages/WorkbenchPage.tsx`、`web/src/pages/CounselorPage.tsx`、`web/src/pages/ChangesPage.tsx`、`web/src/styles.css`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
+- **回退**：`git revert` 本分支提交；服务端检索/上下文为新增路径，回退后助手回到原聚合问答，不涉及数据迁移。
+- **授权**：B 类（虚构演示数据；无正式环境、真实数据、外部模型或写入副作用）。
