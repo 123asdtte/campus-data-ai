@@ -104,7 +104,7 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
   `UID / 异动编号 / 异动类型 / 异动日期 / 异动原因 / 异动后去向 / 正式审批状态 / 备注`。
 - 演示模板使用 UID；正式版导入 Excel 时由后端把学号映射为 UID，并按角色校验班级范围。
 - “正式审批（源表）”与“平台核对”分开：平台核对**不修改**正式审批，也不回写青果；正式审批仍在青果/线下完成。
-- 当前导入/核对状态保存在浏览器内存，刷新即重置；正式版必须落到后端并写审计。
+- 发起、导入、核对已写入服务端 JSON 台账，刷新页面或重建容器后仍在；正式版必须改为数据库 API、行级权限与审计。
 
 ---
 
@@ -121,6 +121,12 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 
 # 仅清空演示异动台账（每次演示前可选；需显式 -Force）
 .\scripts\demo\reset-ledger.ps1 -Force
+
+# 备份台账（默认写到 demo-api/state/backups/ledger-时间戳.json）
+.\scripts\demo\backup-ledger.ps1
+
+# 恢复台账（恢复前自动备份当前台账；demo-api 运行时会短暂停止后自动启动）
+.\scripts\demo\restore-ledger.ps1 -File .\demo-api\state\backups\ledger-20261024-040000.json
 ```
 
 脚本会检查网关，移除以 `docker run` 创建的同名旧容器，再用
@@ -179,6 +185,7 @@ python -m unittest discover -s demo-api/tests -v
 - 数据接口：匿名 `/demo-api/data` 401；学生 1 人/15 排课；辅导员 270 人/73 排课/6 异动；学工处/管理员 5581 人；四件套学生/辅导员 403、学工处/管理员 200；旧公开 JSON 404
 - 数据缓存：同一登录身份内页面切换共享一次 `/demo-api/data`（管理员总览→工作台→报表仅 1 次请求）；退出后换学生登录会重新请求，页面只显示本人课表，未复用上一身份数据
 - 异动台账：辅导员发起异动 → 服务端返回 `YD-LOCAL-*` 并进入“待平台核对”；刷新页面记录仍在，`docker compose ... --force-recreate demo-api` 后仍在；平台核对结果同样持久化
+- 台账备份/恢复演练：创建记录 → 备份 → 重置（本地记录 0 条）→ 恢复（记录回归）→ demo-api healthy（2026-10-24）
 - 异动权限（API 实测）：学生发起/核对 403；辅导员只能登记/核对本人学生（越界 403），学工处可登记他班学生；非法类型/格式日期/无效日历日（如 `2026-02-30`）400
 - 异动导入：带 BOM 的模板 CSV 经前端解析后批量提交，2 条写入并刷新后仍在；重复异动编号自动追加 `-IMPn`；非法类型/越界行按行跳过；单次上限 200 条
 - demo-api 测试：**25 passed**（2026-10-24）——学生/辅导员/全校身份范围、越界写入 403、无效日历日/格式/类型/空原因/不存在学生拒绝、台账按范围过滤、异动编号不重复、三种身份的 payload 范围、并发槽耗尽返回 503 且释放后恢复；数据一致性（UID 唯一、联系方式脱敏、异动/课表引用存在、指标与四件套文件）

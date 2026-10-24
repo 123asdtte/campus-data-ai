@@ -955,3 +955,20 @@
 - **验证（实测）**：单元测试 **19 passed**，连续 10 次全部通过；单槽场景第二个请求返回 503，释放后恢复 200；重建容器后冒烟 PASS、Playwright **9 passed / 27.6s**。
 - **回退**：删除并发槽逻辑与 Compose 环境变量；无数据变更。
 - **授权**：B 类（公网试用稳定性加固）。
+
+---
+
+## D-034 演示台账备份与恢复
+
+- **状态**：Verified（本地演示栈，2026-10-24；未合并）
+- **Decision owner**：AI
+- **问题与证据**：此前只有 `reset-ledger.ps1`，无法在演示前保存已整理的台账，也无法在误删后恢复；生产数据库备份属于 C 类未授权事项。
+- **决定**：
+  - `backup-ledger.ps1`：默认写入 `demo-api/state/backups/ledger-时间戳.json`，复制后校验 JSON 及 `changes/checked` 字段，失败则删除不完整副本；
+  - `restore-ledger.ps1`：校验来源、数组类型与 500 条上限；恢复前自动备份当前台账；运行中的 demo-api 短暂停止，替换后启动并等待 healthy；
+  - 脚本保持 ASCII 输出，读取 JSON 使用 `-Encoding UTF8`，兼容 Windows PowerShell 5.1。
+- **影响与兼容性**：只影响演示 JSON 台账；恢复期间 demo-api 短暂不可用，Web 与主栈不受影响；不触碰正式数据库。
+- **涉及文件**：`scripts/demo/backup-ledger.ps1`、`scripts/demo/restore-ledger.ps1`、`docs/LOCAL-DEMO.md`、`PRODUCTION-READINESS-REPORT.md`。
+- **验证（实测）**：创建 `YD-LOCAL-*` → 备份 → 重置（本地记录 `[]`）→ 恢复（记录回归）→ demo-api healthy；演练数据与备份文件随后清理。
+- **回退**：删除两个脚本与文档条目；无数据变更。
+- **授权**：B 类（演示环境可运维性）。
