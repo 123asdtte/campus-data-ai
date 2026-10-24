@@ -4,6 +4,8 @@ import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-desi
 import { useNavigate } from 'react-router-dom';
 import BrandMark from '../components/BrandMark';
 import LoginBrandPanel from '../components/LoginBrandPanel';
+import LoginGateArt from '../components/LoginGateArt';
+import LoginNotice from '../components/LoginNotice';
 import { login } from '../api/auth';
 import { useSession } from '../session/SessionContext';
 
@@ -37,92 +39,105 @@ export default function LoginPage() {
 
   return (
     <div className="login-shell">
-      <div className="login-frame">
-        <header className="login-header">
-          <div className="login-lockup">
-            <span className="login-lockup-mark"><BrandMark size={30} /></span>
-            <span className="login-lockup-text">
-              <b>郴州思科职业学院</b>
-              <small>数据管理平台 · DATA PLATFORM</small>
-            </span>
-          </div>
-          <div className="login-header-meta">
-            <SafetyCertificateOutlined />
-            <span>统一身份认证</span>
-            <i aria-hidden="true" />
-            <span className="login-header-en">UNIFIED IDENTITY</span>
-          </div>
-        </header>
+      <header className="login-header">
+        <div className="login-lockup">
+          <span className="login-lockup-mark"><BrandMark size={30} /></span>
+          <span className="login-lockup-text">
+            <b>郴州思科职业学院</b>
+            <small>数据管理平台 · DATA PLATFORM</small>
+          </span>
+        </div>
+        <div className="login-header-meta">
+          <SafetyCertificateOutlined />
+          <span>统一身份认证平台</span>
+          <i aria-hidden="true" />
+          <span className="login-header-en">UNIFIED IDENTITY</span>
+        </div>
+      </header>
 
-        <div className="login-body">
+      <div className="login-crumb">
+        <div className="login-crumb-path">
+          <span>数据管理平台</span>
+          <i aria-hidden="true">/</i>
+          <b>统一身份认证</b>
+        </div>
+        <div className="login-crumb-meta">
+          <SafetyCertificateOutlined />
+          <span>授权访问 · 操作留痕</span>
+        </div>
+      </div>
+
+      <main className="login-main">
+        <LoginGateArt />
+        <div className="login-stage">
           <LoginBrandPanel />
 
-          <main className="login-panel">
-            <div className="login-form-wrap">
-              <header className="login-form-head">
-                <span className="login-eyebrow">ACCOUNT SIGN-IN / 账号登录</span>
-                <h2>统一身份登录</h2>
-                <p>使用学校统一账号登录，系统将按账号角色进入工作台。</p>
-              </header>
+          <section className="login-card" aria-labelledby="login-title">
+            <header className="login-card-head">
+              <span className="login-eyebrow">UNIFIED IDENTITY</span>
+              <h2 id="login-title">账号登录</h2>
+              <p>使用学校统一账号登录，系统将按角色进入工作台。</p>
+            </header>
 
-              {error ? (
-                <div className="login-error" role="alert">
-                  <Alert type="error" showIcon message={error} />
-                </div>
-              ) : null}
-
-              <Form
-                layout="vertical"
-                requiredMark={false}
-                onFinish={onFinish}
-                className="login-form"
-                initialValues={{ username: '', password: '' }}
-              >
-                <Form.Item
-                  label="账号"
-                  name="username"
-                  rules={[{ required: true, message: '请输入账号' }]}
-                >
-                  <Input
-                    size="large"
-                    autoComplete="username"
-                    prefix={<UserOutlined />}
-                    placeholder="请输入学号或工号"
-                  />
-                </Form.Item>
-                <Form.Item
-                  label="密码"
-                  name="password"
-                  rules={[{ required: true, message: '请输入密码' }]}
-                >
-                  <Input.Password
-                    size="large"
-                    autoComplete="current-password"
-                    prefix={<LockOutlined />}
-                    placeholder="请输入密码"
-                  />
-                </Form.Item>
-
-                <div className="login-helper">忘记密码请联系所在学院或学工处重置。</div>
-
-                <Button className="login-submit" type="primary" htmlType="submit" size="large" block loading={loading}>
-                  登录
-                </Button>
-              </Form>
-
-              <div className="login-security">
-                <SafetyCertificateOutlined />
-                <span>账号由统一身份平台校验 · 访问与导出操作留痕</span>
+            {error ? (
+              <div className="login-error" role="alert">
+                <Alert type="error" showIcon message={error} />
               </div>
-            </div>
-          </main>
-        </div>
+            ) : null}
 
-        <footer className="login-footer">
-          <span>© {new Date().getFullYear()} 郴州思科职业学院 · 数据管理平台</span>
-          <span>仅限校内授权人员使用 · 推荐使用 Chrome / Edge 浏览器</span>
-        </footer>
-      </div>
+            <Form
+              layout="vertical"
+              requiredMark={false}
+              onFinish={onFinish}
+              className="login-form"
+              initialValues={{ username: '', password: '' }}
+            >
+              <Form.Item
+                label="账号"
+                name="username"
+                rules={[{ required: true, message: '请输入账号' }]}
+              >
+                <Input
+                  size="large"
+                  autoComplete="username"
+                  prefix={<UserOutlined />}
+                  placeholder="请输入学号或工号"
+                />
+              </Form.Item>
+              <Form.Item
+                label="密码"
+                name="password"
+                rules={[{ required: true, message: '请输入密码' }]}
+              >
+                <Input.Password
+                  size="large"
+                  autoComplete="current-password"
+                  prefix={<LockOutlined />}
+                  placeholder="请输入密码"
+                />
+              </Form.Item>
+
+              <div className="login-helper">忘记密码请联系所在学院或学工处重置。</div>
+
+              <Button className="login-submit" type="primary" htmlType="submit" size="large" block loading={loading}>
+                登录
+              </Button>
+            </Form>
+
+            <div className="login-security">
+              <SafetyCertificateOutlined />
+              <span>账号由统一身份平台校验 · 访问与操作留痕</span>
+            </div>
+          </section>
+
+          <LoginNotice />
+        </div>
+      </main>
+
+      <footer className="login-footer">
+        <span>© {new Date().getFullYear()} 郴州思科职业学院 · 数据管理平台</span>
+        <span>仅限校内授权人员使用 · 推荐使用 Chrome / Edge 浏览器</span>
+      </footer>
     </div>
   );
 }
