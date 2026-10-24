@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Form, Input, Modal } from 'antd';
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -22,6 +22,44 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const frameRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const finePointer = window.matchMedia('(pointer: fine)').matches;
+    if (reduceMotion || !finePointer) return;
+
+    let raf = 0;
+    let x = 0;
+    let y = 0;
+    const apply = () => {
+      raf = 0;
+      frame.style.setProperty('--parallax-x', `${(x * -10).toFixed(1)}px`);
+      frame.style.setProperty('--parallax-y', `${(y * -8).toFixed(1)}px`);
+    };
+    const onMove = (event: PointerEvent) => {
+      x = event.clientX / window.innerWidth - 0.5;
+      y = event.clientY / window.innerHeight - 0.5;
+      if (!raf) raf = window.requestAnimationFrame(apply);
+    };
+    const reset = () => {
+      x = 0;
+      y = 0;
+      if (!raf) raf = window.requestAnimationFrame(apply);
+    };
+
+    window.addEventListener('pointermove', onMove, { passive: true });
+    document.documentElement.addEventListener('pointerleave', reset);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      document.documentElement.removeEventListener('pointerleave', reset);
+      window.removeEventListener('blur', reset);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, []);
 
   const onFinish = async (values: LoginValues) => {
     const username = values.username.trim();
@@ -50,7 +88,7 @@ export default function LoginPage() {
 
   return (
     <div className="login-shell">
-      <div className="login-frame">
+      <div className="login-frame" ref={frameRef}>
         <LoginBrandPanel />
 
         <main className="login-right">
@@ -132,7 +170,14 @@ export default function LoginPage() {
             </div>
           </section>
 
-          <LoginDataArt />
+          <div className="login-data-art-wrap" aria-hidden="true">
+            <span className="login-art-halo" />
+            <span className="login-art-ring" />
+            <span className="login-art-particle login-art-particle-a" />
+            <span className="login-art-particle login-art-particle-b" />
+            <span className="login-art-particle login-art-particle-c" />
+            <LoginDataArt />
+          </div>
         </main>
       </div>
 

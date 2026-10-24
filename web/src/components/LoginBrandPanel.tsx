@@ -4,6 +4,7 @@ import LoginGateArt from './LoginGateArt';
 export default function LoginBrandPanel() {
   return (
     <aside className="login-brand" aria-label="平台介绍">
+      <span className="login-brand-glow" aria-hidden="true" />
       <LoginGateArt />
       <div className="login-brand-logo">
         <span className="login-brand-mark"><BrandMark size={32} /></span>
