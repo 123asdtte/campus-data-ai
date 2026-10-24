@@ -1479,8 +1479,9 @@
 
 - Docker Desktop Linux 引擎持续返回 `request returned 500 Internal Server Error ... dockerDesktopLinuxEngine`，`docker version` 同样取不到服务端信息，演示栈 8083 不可达（`healthz=000`，curl exit 28）。因此本地无法重建 `demo-api` 容器，也无法跑 Playwright。受影响且**仍未验证**的事项：D-063 悬浮助手 Esc 焦点守卫（无自动化覆盖）、D-071 跨周定位的新提示（逻辑已改为「当前周确有该课才高亮，否则明说未定位」，但页面表现没看过）、D-065 学生页 KPI 的截图核对、D-072 锁改动在高并发下的尾延迟。恢复入口：引擎起来后 `docker compose -p campus-demo -f docker-compose.demo.yml up -d --build demo-api web`，再 `cd web && npx playwright test --reporter=line`，或整体 `powershell -File scripts/demo/verify-local-demo.ps1`。
 - 远端 CI 历史记录（2026-10-24 13:17 UTC，已被下一条取代）：分支头 `c786abe`（纯文档）的一轮 checks 多数仍 pending，已见「脚本语法与孤儿清理自检」「后端语法与导入检查」「Compose 组合校验」pass。上一个代码头 `b0e603f`（D-072）可见「本地演示 API 测试」「前端类型检查与构建」「后端接口与校验测试」「AI 助手原型测试」「AI 评审」pass，「演示栈 E2E」当时仍 pending；远端日志没取到用例条数，所以不引用远端具体数字。任何一次 CI 绿都不等于生产验收。
-- 远端 CI 最新实测（2026-10-24 13:36 UTC）：分支头 `1d567c2` 的 10 项 checks 全部 SUCCESS（含「演示栈 E2E」「前端类型检查与构建」）。这只说明该提交上既有用例在 Linux 远端跑通，不等于 D-071 的新提示、D-065 的 KPI 版式已被覆盖——那些仍需本地浏览器核对或新增用例。
-- 本地测试基线：`demo-api` **95 tests OK (skipped=2)**（D-073 +3、D-074 +1），整轮连跑 10 次一致；`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；Playwright 用例增至 **28 条**（D-075 新增 1 条），本地只做到「显式 `tsc` 单文件通过 + `playwright test --list` 能收集」，真跑仍缺——演示栈起不来，需靠远端「演示栈 E2E」验证。
+- 远端 CI 最新实测（2026-10-24 13:56 UTC，run 40099942110）：分支头 `5277fcd`（D-073/D-074/D-075）10 项 checks 全部 pass，日志实读两处数字——「本地演示 API 测试」`Ran 95 tests in 2.612s` OK、「演示栈 E2E」`Running 28 tests` → `28 passed (1.7m)`。这仍不等于 D-071 的跨周定位提示被覆盖（既无自动化也无肉眼），也不等于任何人看过悬浮面板新版式的样子；CI 绿不等于生产验收。
+- 本地测试基线：`demo-api` **95 tests OK (skipped=2)**（D-073 +3、D-074 +1），整轮连跑 10 次一致；`web` 侧 `npm run build`（`tsc --noEmit && vite build`）通过；Playwright 用例增至 **28 条**，本地只做到「显式 `tsc` 单文件通过 + `playwright test --list` 能收集」，真跑证据来自上面那条远端日志。
+- CI 步骤名里写死的用例条数（曾写「25 条」）已去掉：数字与实际早已不符，改由日志里的 `Running N tests` 为准。
 - PR #58 当前状态（2026-10-24 13:41 UTC 实测，分支头 `1d567c2`）：`OPEN`、`MERGEABLE`、`mergeStateStatus=CLEAN`、`reviewDecision` 为空（无人提交审查）。合并仍需业务负责人批准，本轮不自行合并。- 历史 CI 记录：`94b6770`（D-065）当时 10 项 check-run 全部 completed success（含「演示栈 E2E」），D-065 据此升级为 Verified in CI；那条 E2E 绿只证明当时的镜像与用例，不代表本轮 D-071 的前端改动已被 E2E 覆盖。
 
 
@@ -1577,7 +1578,7 @@
 ## D-073 台账与审计路径改在调用时解析：只换 STATE_DIR 就必须换掉全部状态文件
 
 - **日期**：2026-10-24
-- **状态**：Fixed locally（`585a3cd`）+ 远端 CI 待本轮推送后回填
+- **状态**：Verified in CI（`585a3cd`；远端 run 40099942110 的「本地演示 API 测试」日志实读 `Ran 95 tests in 2.612s` + OK，check-run 120889841755）
 - **问题**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入期就把路径拼死了。测试隔离状态最自然的写法是只换 `demo.STATE_DIR`，而这个写法**静默无效**：读写仍然落在仓库真实的 `demo-api/state/` 里。D-072 的第一版锁测试就是这样把虚构异动写进了本地台账，我当时用「setUp 里同时替换三个名字」绕过去，把坑留在了原地。
 - **决定**：删掉两个模块常量，改成 `state_path()` / `assistant_log_path()` 在每次读写时按当前 `STATE_DIR` 解析（app.py:99-107）。产品行为不变：容器里 `STATE_DIR` 依旧是启动时注入的环境变量，解析结果与过去逐字节一致。测试侧只保留一处 `demo.STATE_DIR = 临时目录`，`test_app.py`/`test_http_api.py`/`test_ledger_lock.py` 里那 6 处手工同步 `STATE_PATH`/`ASSISTANT_LOG_PATH` 的补丁全部删掉。
 - **为什么不留在测试侧**：`quarantine_ledger()` 用 `STATE_PATH.with_name()` 派生隔离副本，导入期绑定下损坏备份也会跑到真实目录里，排障的人按临时目录找不到；这类「换个目录不生效」的债会在每条新测试上重新踩一次。
@@ -1586,7 +1587,7 @@
   - 可证伪：在同一进程里把两个函数退回「导入期算好的固定路径」，该文件立刻 `FAILED (failures=4)`，报的就是「台账没写进当前 STATE_DIR」和「本次测试改动了真实 state/ 目录」。
   - 整轮 `python -m unittest discover -s tests -p 'test_*.py'` → **94 tests OK (skipped=2)**（91 → 94），且真实 `state/` 目录 sha1 指纹在整轮前后完全相同（`{'changed': []}`）。
 - **本轮自己造成的污染与处置**：上面那次「退回导入期绑定」的变异探针把 `BG-DIR-1` 虚构记录写进了本地 `demo-api/state/ledger.json`（39 → 113 字节）并生成了一个隔离副本。核对内容确认全是探针写入后，用 `save_ledger(empty_ledger())` 由应用自己的写路径还原成空台账（39 字节），删掉探针生成的那个副本；目录里另有两个更早运行留下的 3 字节 `{{{` 副本**未动**（不是本轮产生的，删除别人的产物不在这次授权范围内）。`demo-api/state/` 被 gitignore 命中（`git status --ignored` 显示 `!!`），远端与 PR 不含这些文件。
-- **未验证**：容器内（Linux）路径行为——本机 Docker 引擎仍返回 500；远端 CI 待回填。
+- **未验证**：容器内（`STATE_DIR` 由 compose 注入的真实挂载路径）行为——本机 Docker 引擎仍返回 500，只验到远端 CI 的 Linux 单测层。
 - **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`demo-api/tests/test_http_api.py`、`demo-api/tests/test_ledger_lock.py`、`demo-api/tests/test_state_dir_isolation.py`（新增）。分支 `feat/local-demo-workbench`，PR #58。
 - **回退**：`git revert 585a3cd`（含其测试文件），历史行为逐字节还原。
 - **授权**：B 类（本地代码与本地虚构状态文件；未触碰正式数据、认证或外部服务）。
@@ -1595,7 +1596,7 @@
 ## D-074 413 也会被 RST 吞掉：排空改成「有上限、有短超时」，并把两条契约拆开钉
 
 - **日期**：2026-10-24
-- **状态**：Fixed locally（`4965452`）+ 远端 CI 待本轮推送后回填
+- **状态**：Verified in CI（`4965452`；远端同一 run 的「本地演示 API 测试」`Ran 95 tests` OK，两条超限用例在 Linux 上同样成立——含「连打三次必须拿到 413」那条，说明排空在 Linux 也没被 RST 吞掉）
 - **问题**：D-070 让早退错误先排空请求体再回响应，但对 `Content-Length > MAX_BODY_BYTES` 明确选择**不排空**，理由是「读干净等于放弃了这个上限本身」。代价当时没量化，这轮量化了：整轮测试 10 次里 **4 次**红，红的是 `test_body_over_limit_is_rejected_not_parsed`，异常 `ConnectionAbortedError [WinError 10053]`——客户端把 64KB+ 的请求体发完了，字节还躺在接收缓冲区里，服务端带着未读数据关闭就是 RST，把**已经送达**的 413 一起丢弃。前端用户看到的仍是「网络错误」，而不是「请求体过大」。单独跑那条用例 10 次全绿，所以它是整轮上下文里的时序问题，不是新代码写坏了。
 - **先证伪自己的猜测**：怀疑是排空超时太短，把 `DRAIN_TIMEOUT_SECONDS` 从 1.0 调到 10.0 做 A/B，各 4 轮整轮——两边都还是同一用例红 1 次，超时假设不成立。真正的差异在测试自己：那份 body 用 `json.dumps` 默认 `ensure_ascii=True`，中文被转义成 6 字节/字，长度 393,292 字节，**超过**新的排空上限 `DRAIN_MAX_BYTES = 4 × MAX_BODY_BYTES = 262,144`，按设计就不排空。
 - **修法**：`_drain_body()` 分块读（8KB/次）到声明长度为止，上限 `DRAIN_MAX_BYTES`、超时 1 秒（到点放弃，慢速客户端不能占着 32 个并发槽之一不放），结束后把 socket 超时还原成 `Handler.timeout`；`_read_json` 的 413 分支从 `_json` 改走 `_reject`。于是「刚超限」这个真实触发区间（64KB～256KB）能稳定送达，比它更大的请求体仍然只拒绝、不替攻击者吞数据。
@@ -1612,7 +1613,7 @@
 ## D-075 悬浮面板不再丢弃服务端的 `as_of` 与追问：同一份回答，两个界面口径一致
 
 - **日期**：2026-10-24
-- **状态**：Implemented locally + 远端「演示栈 E2E」验证待回填（本地 Docker 引擎仍 500）
+- **状态**：Verified in CI（`5277fcd`；远端「演示栈 E2E」check-run 120889842005 日志实读 `Running 28 tests using 1 worker` → `28 passed (1.7m)`，含本轮新增那条；「前端类型检查与构建」pass。本地 Docker 引擎仍 500，所以真跑证据只有远端这一份）
 - **问题**：`/demo-api/assistant/query` 的响应里 `as_of`（这批数据的取值时刻）和 `suggestions`（针对这次回答的下一步问法）都有值，完整问数页 `AssistantPage.tsx` 早就在用（第 69-70、140-142 行），悬浮面板却两个都丢掉：范围行只有「数据范围 · X」，追问条永远是按页面写死的 5 条。于是同一句「明天有什么课」，在问数页能看到数据截止时刻、能顺着回答追问，在悬浮面板里看不到也点不到——「AI 能力与业务页面割裂」剩的就是这一公里。
 - **决定**：面板只做问数页已经验证过的两件事，不新增视觉语言。
   - `replyMeta()` 把范围与截止时间拼进已有的 `.fa-scope` 药丸：`数据范围 · 仅本人课表 · 截至 2026-10-24 21:36`。`as_of` 原值是带时区的完整 ISO，在 392px 宽的面板里会折行，所以格式化到分；问数页仍显示原值，本次不动它。
@@ -1620,7 +1621,7 @@
   - **`intent` 仍不进面板**：`INTENT_LABELS` 是内部口径名（`change_count`/`out_of_scope`），面向学生和老师的悬浮入口不需要读它，问数页保留即可。这是范围决定，不是遗漏。
 - **验证（实测）**：`npm run build`（`tsc --noEmit && vite build`）通过；`replyMeta`/`formatAsOf` 用真实响应值在 node 里跑过四种输入：带范围+ISO → `数据范围 · 仅本人档案 · 截至 2026-10-24 21:36`；空 scope → 空串（不渲染药丸）；`as_of` 不是 ISO → 原样回落；`reply` 缺失（欢迎语）→ 空串。
 - **新增 E2E**：`web/e2e/demo.spec.ts:167`「悬浮面板把服务端的截止时间与追问一起交给用户，不再只显示数据范围」——期望值不写死演示数据，而是从 `page.waitForResponse` 拿到的本次响应里取 `answer`/`as_of`/`suggestions[0]` 再断言 DOM，所以「面板重新丢掉这两项」必然变红，而账号当周有没有排课都不影响它跑。静态检查做到：显式 `npx tsc --noEmit ... e2e/demo.spec.ts` 通过（`e2e/` 不在 `web/tsconfig.json` 的 `include` 里，`npm run build` 原本根本不看用例）、`npx playwright test --list` 收集到 **28 tests**。
-- **未验证**：真实浏览器里药丸换行与追问条的观感；这条 E2E 的真跑（本地演示栈不可用，待远端「演示栈 E2E」）；D-071 跨周定位提示仍无自动化覆盖——它的判据依赖具体周次与格子内容，本轮没有可复现的跨周样例，盲写容易做成永真断言，所以没补。
+- **未验证**：真实浏览器里药丸换行与追问条的观感——E2E 断的是文本内容，不是版式（远端已跑通 28 条，但没人眼看过）；D-071 跨周定位提示仍无自动化覆盖——它的判据依赖具体周次与格子内容，本轮没有可复现的跨周样例，盲写容易做成永真断言，所以没补。
 - **涉及文件**：`web/src/components/FloatingAssistant.tsx`、`web/e2e/demo.spec.ts`、`docs/DECISION-LOG.md`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
 - **回退**：`git revert` 本次提交（连同那条 E2E），面板恢复为只显示数据范围 + 静态追问。
 - **授权**：B 类（仅前端展示逻辑与本地测试，虚构数据，无副作用、不出网）。
