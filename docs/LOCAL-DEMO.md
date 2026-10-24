@@ -169,6 +169,33 @@ python -m unittest discover -s demo-api/tests -v
 
 默认使用系统 Edge（`channel: msedge`）；CI 已安装 Chromium 时可设 `PW_CHANNEL=chromium`。
 
+### 7.1 无 Docker 替代入口（stub 网关栈）
+
+Docker 引擎不可用（如本轮 Docker Desktop Linux 引擎 500）时的单进程替代栈：
+`scripts/demo/local-demo-node.py`。它不是真实网关，只用于本地演示与 E2E 跑通用例；
+缺少登录锁定、租户、clientId 校验、JWT 签名等行为，经此栈验证的结论不能替代 Docker
+演示栈或 CI 的 E2E 结果。
+
+```bash
+# 端口可省略（默认 8093/9280/9281）；显式指定以避开 Docker 演示栈占用的 8083/9180/9181
+DEMO_ENTRY_PORT=8093 DEMO_GW_PORT=9280 DEMO_API_PORT=9281 \
+  python -X utf8 scripts/demo/local-demo-node.py
+```
+
+三层结构：
+
+1. **静态入口**（`DEMO_ENTRY_PORT`）：服务 `web/dist`，SPA 回退 `index.html`，`/gw/*` 反代 stub 网关（不经系统代理）；
+2. **stub 网关**（`DEMO_GW_PORT`）：仅 `POST /auth/login` 与 `GET /system/user/getInfo`，契约与 RuoYi 网关一致；
+3. **demo-api 子进程**（`DEMO_API_PORT`）：与 Docker 栈同一份数据与台账。
+
+**stub 边界**：前端对 `/gw/internal/proxy/*` 的调用（数据总览 `stats/overview`、筛选元数据 `meta/filters`、学生列表 `students`、导入预检）依赖真实 Java 网关的内部签名链路，stub 网关对其返回 404 而非 200/401。因此在此栈上：
+
+- 学生页学生列表为空、总览/工作台 KPI 为 0（E2E「总览与工作台各自标明数据源」失败）；
+- 管理员导入预检失败；
+- 业务请求 401 清会话路径不触发（404 ≠ 401，E2E「业务请求遇到 401 同样清理会话」失败）。
+
+其余 25 条 E2E（登录、课表问答、悬浮助手、异动台账、权限边界等）在此栈全部通过（2026-10-24，`DEMO_BASE_URL=http://127.0.0.1:8093`，serial 跑 29/29 执行、25 通过；4 个失败均为上述 stub 边界，非回归——Docker 栈上同批用例曾 29/29 全过）。跑 E2E 前先备份 `demo-api/state/` 下的 `ledger.json` 与 `assistant-audit.jsonl`，跑完恢复。
+
 ---
 
 ## 8. 已验证
@@ -246,4 +273,5 @@ python -m unittest discover -s demo-api/tests -v
 - 演示数据：`demo-api/data/`（服务端，不在 web/public）
 - 数据 API：`demo-api/app.py`、`demo-api/Dockerfile`
 - 启动/停止：`scripts/demo/start-local-demo.ps1`、`stop-local-demo.ps1`
+- 无 Docker 替代入口：`scripts/demo/local-demo-node.py`（见第 7.1 节）
 - 私有映射：`Z:\ai\本地部署\demo-private\`（不在仓库内）
