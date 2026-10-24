@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app as demo  # noqa: E402
 import os
+import io
 import stat
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -770,3 +771,37 @@ class AssistantAuditPermissionTest(unittest.TestCase):
             )
         self.assertEqual(len(demo.ASSISTANT_LOG_PATH.read_text(encoding="utf-8").splitlines()), 3)
         self.assertEqual(self._audit_mode(), 0o600)
+
+
+class TruncatedBodyTest(unittest.TestCase):
+    """请求体读不完时必须回一个明确状态码，不能把连接直接掐了。
+
+    客户端声明了 Content-Length 却拖到 socket 超时，旧实现里 rfile.read 抛
+    TimeoutError 且不在任何 try 内，连接被直接关闭：调用方拿到 0 字节，前端只能
+    显示「未知错误」。这条断言在没有修复前会因异常外抛而失败。
+    """
+
+    class _BoomStream:
+        def read(self, _size: int) -> bytes:
+            raise TimeoutError("timed out")
+
+    def _handler(self, rfile, responses: list) -> demo.Handler:
+        handler = demo.Handler.__new__(demo.Handler)
+        handler.headers = {"Content-Length": "64"}
+        handler.rfile = rfile
+        handler._json = lambda status, payload: responses.append((status, payload))
+        return handler
+
+    def test_read_timeout_answers_408(self):
+        responses: list = []
+        handler = self._handler(self._BoomStream(), responses)
+        self.assertIsNone(handler._read_json())
+        self.assertEqual([status for status, _ in responses], [408])
+        self.assertIn("重试", responses[0][1]["error"])
+
+    def test_incomplete_body_still_parses_as_bad_json(self):
+        # 只发了半截 JSON（没超时）必须走 400 而不是 408：两种失败的处理方式不同。
+        responses: list = []
+        handler = self._handler(io.BytesIO(b'{"question":'), responses)
+        self.assertIsNone(handler._read_json())
+        self.assertEqual(responses[0][0], 400)

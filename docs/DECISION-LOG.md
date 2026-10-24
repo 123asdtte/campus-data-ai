@@ -1430,3 +1430,17 @@
 - **未验证**：Esc 修复没有自动化用例、也没做浏览器人工验证（抽屉触发控件待确认），因此不记为已验收；`a1b89c4` 的「演示栈 E2E」「AI 评审」与 `41ff105`（D-062）的远端 CI 结果本轮未复核；跨周定位仅记录证据未修复。
 - **回退**：还原 `FloatingAssistant.tsx` 的 `onKey` 为 `if (event.key === 'Escape') setOpen(false);` 即可。
 - **授权**：B 类（演示前端交互，未触碰正式环境与真实数据）。
+
+## D-064 请求体拖到超时会直接掐连接：0 字节响应比 408 更难排查
+
+- **状态**：Implemented（2026-10-24 本地：67 单测通过，去掉修复后新用例以 `TimeoutError` 失败；远端 CI 待复核）
+- **Decision owner**：AI
+- **问题与证据**：`demo-api/app.py` 的 `_read_json()` 原先只把 `json.loads` 包在 `try` 里，`self.rfile.read(length)` 在外面。服务端 `timeout = 10`，因此客户端声明 `Content-Length` 却只发半截请求体时抛的是 `TimeoutError`（`OSError` 子类），沿 `handle_one_request` 冒泡后连接被直接关闭。审计代理在真实服务上实测：`bytes_received=0, elapsed=10.0s`，无状态码、无 JSON 错误体；`POST /assistant/query`、`/changes`、`/changes/import` 全部受影响。前端 `askAssistant` 拿到的是 fetch 层网络异常，只能显示「查询失败，请重试」，运维侧也无法从响应区分是网关、超时还是数据问题。
+- **决定**：把 `read` 单独包进 `except (OSError, ValueError)`，回 `408 {"error": "请求体读取超时或不完整，请重试"}` 并打服务端日志；解析失败仍走原来的 400，两类失败不再混在一起。补 2 条单测：`TimeoutError` → 408 且文案含「重试」；只发半截 JSON（未超时）→ 仍是 400。
+- **备选方案**：把 `timeout` 调大或改成读循环带总预算——否掉，超时值属部署参数（演示容器与 compose 一致），调大只会把失败推迟，且客户端仍拿不到可判读的状态；直接返回 400——否掉，与「格式非法」混淆，排查时会被引到错误方向；只在 `do_POST` 外层包 try——否掉，`_read_json` 被三个入口共用，收口在读取处一次改对，三处同时受益。
+- **影响与兼容性**：只新增一个此前不存在的状态码路径，既有 400/401/403/413/503 行为与响应结构不变；前端无需改动，现有错误分支会显示更准确的文案。
+- **涉及文件**：`demo-api/app.py`、`demo-api/tests/test_app.py`、`docs/LOCAL-DEMO.md`。分支 `feat/local-demo-workbench`，PR #58。
+- **验证（实测）**：本机（Windows）`python -m unittest discover -s demo-api/tests`：**67 tests / OK (skipped=2)**（2 条 skip 仍是 D-062 的 POSIX 权限断言）。负证据：`git stash push -- demo-api/app.py` 去掉修复后重跑该类，`Ran 2 tests` 且 `FAILED (errors=1)`，异常正是 `TimeoutError: timed out`，说明新用例真的在盯这条路径。
+- **未验证**：远端 CI（本轮记录时尚未推送）；`handle_one_request` 更外层的未捕获异常（如 `_identify` 阶段的意外错误）仍会表现为连接被关而非结构化错误——本轮只收口请求体读取；慢速请求体拖满并发槽导致 `/healthz` 一并 503 的风险（审计项 S2）**未修**，因为把槽位判断从 `Server.process_request` 挪进 `handle()` 需要先窥探请求行（`rfile.peek` 会在恶意空闲连接上阻塞），风险大于收益，留待单独一轮处理。
+- **回退**：删除该 `try/except` 与新增测试类即可，无数据与配置变更。
+- **授权**：B 类（演示服务错误处理与单测）。未触碰正式环境、真实数据与认证配置。

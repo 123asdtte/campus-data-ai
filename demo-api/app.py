@@ -957,7 +957,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(413, {"error": "请求体过大"})
             return None
         try:
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            raw = self.rfile.read(length)
+        except (OSError, ValueError) as error:
+            # 客户端声明了 Content-Length 却把请求体拖到 socket 超时（timeout=10）时，
+            # read 抛的是 TimeoutError。不接住的话连接直接被关闭，调用方拿到 0 字节、
+            # 前端只能显示「未知错误」——比一个明确的 408 难得排查得多。
+            print(f"[demo-api] 请求体读取失败：{error}", file=sys.stderr)
+            self._json(408, {"error": "请求体读取超时或不完整，请重试"})
+            return None
+        try:
+            payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._json(400, {"error": "请求体不是合法 JSON"})
             return None
