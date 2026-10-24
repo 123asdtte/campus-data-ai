@@ -1559,7 +1559,7 @@
 ## D-072 S3 台账锁不再覆盖 socket 写入；顺带查出 STATE_PATH 在导入期绑定导致的测试串写
 
 - **日期**：2026-10-24
-- **状态**：Fixed locally；远端 CI 与演示栈未验证
+- **状态**：Fixed locally；分支头  的 check-run「本地演示 API 测试」为 pass（远端日志未取到条数，故不引用具体数字），同一 run 的前端构建/后端校验/AI 评审均 pass；「演示栈 E2E」当时仍 pending，因此 E2E 与浏览器表现依旧未验证
 - **问题 1（S3，真实稳定性缺陷）**：`_check_change` 把 404、403 写在 `with STATE_LOCK:` 里，`_create_change` 把 409 写在锁里。`Handler` 的 `timeout = 10` 意味着一个不再收数据的客户端可以把 `wfile.write` 卡到 10 秒；这期间全局锁不放手，别人的建单、导入、核销以及 `scoped_payload()` 的台账读全部串行等待。演示栈并发槽有 32 个，但一把锁把并发优势抹平了。
 - **修法**：两个 handler 都改成「锁内只读台账 + 落账，结果装进 `response`，`self._json()` 与日志都挪到 `with` 之外」。响应状态码与 body 一字未改，只调整了写出时机；越权仍然是 403、不存在仍然是 404、超限仍然是 409，权限判断依旧在锁内读到的最新台账上做。
 - **问题 2（写这条时发现的新缺陷，测试隔离）**：`STATE_PATH = STATE_DIR / "ledger.json"`、`ASSISTANT_LOG_PATH` 在模块导入时就绑定了路径（app.py:29-31），所以测试里只换 `demo.STATE_DIR` 并不会换台账文件。第一版 `test_ledger_lock.py` 就这样把 6 条虚构测试行写进了仓库真实的 `demo-api/state/ledger.json`（本地运行时状态，已被 gitignore，不影响远端）。核对内容后确认这 6 行 `created_by=xgb01 / reason=演示测试` 全是本轮测试写入、没有夹带别人的数据，才还原成空台账；新测试现在同时替换并在 `tearDown` 还原 `STATE_DIR`、`STATE_PATH`、`ASSISTANT_LOG_PATH`，跑完两轮后 `state/ledger.json` 仍是 0 条，隔离成立。
