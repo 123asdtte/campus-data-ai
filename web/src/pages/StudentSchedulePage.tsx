@@ -18,6 +18,7 @@ import { useSession } from '../session/SessionContext';
 interface FocusCell {
   weekday: string;
   period: string;
+  course?: string;
 }
 
 export default function StudentSchedulePage() {
@@ -26,6 +27,7 @@ export default function StudentSchedulePage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [focusCell, setFocusCell] = useState<FocusCell | null>(null);
+  const [focusNotice, setFocusNotice] = useState('');
   const focusTimer = useRef<number>();
 
   const student = useMemo(() => {
@@ -59,6 +61,18 @@ export default function StudentSchedulePage() {
 
   const applyFocus = useCallback((detail: FocusCell) => {
     if (!detail?.weekday || !detail?.period) return;
+    // 页面只渲染当前周次的排课：这一格里没有那门课时不能假装「已定位」，跨周的问题是问不出高亮的
+    const visible = weekSchedule.some((row) => row.weekday === detail.weekday
+      && row.period === detail.period
+      && (!detail.course || row.course === detail.course));
+    if (!visible) {
+      setFocusNotice(
+        `${detail.course ? `「${detail.course}」` : '该课程'}不在当前第 ${currentWeek} 周的`
+        + `${detail.weekday} ${detail.period}，页面未做定位。`,
+      );
+      return;
+    }
+    setFocusNotice('');
     setFocusCell(detail);
     window.setTimeout(() => {
       const cell = document.querySelector(
@@ -68,7 +82,7 @@ export default function StudentSchedulePage() {
     }, 80);
     window.clearTimeout(focusTimer.current);
     focusTimer.current = window.setTimeout(() => setFocusCell(null), 5000);
-  }, []);
+  }, [weekSchedule, currentWeek]);
 
   useEffect(() => {
     const onFocus = (event: Event) => {
@@ -124,6 +138,8 @@ export default function StudentSchedulePage() {
           </div>
         }
       />
+
+      {focusNotice ? <Alert type="info" showIcon message={focusNotice} /> : null}
 
       <section className="wb-panel ss-profile">
         <div className="ss-avatar"><CalendarOutlined /></div>

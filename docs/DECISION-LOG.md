@@ -1543,3 +1543,15 @@
 - **未验证**：远端 CI；Docker 演示栈、Playwright 27 条 E2E、真实浏览器 `fetch` 的延迟写体行为（Docker Desktop Linux 引擎本轮仍返回 500，8083 起不来）。
 - **回退**：`git revert 96e66d9`（`app.py` 与测试文件同时回到 `expectedFailure` 版本）。
 - **授权**：B 类（本地虚构数据、只读契约测试，不落台账、不碰生产）。
+
+## D-071 悬浮助手的「在课表中定位」跨周会落空：定位前先确认这一格里真有那门课
+
+- **日期**：2026-10-24
+- **状态**：Implemented locally；浏览器与 E2E **未验证**（Docker 演示栈仍不可用）
+- **问题与证据**：`FloatingAssistant.focusCourse` 只把 `{weekday, period}` 传给课表页（[FloatingAssistant.tsx:119-129](file:///Z:/AI%E5%B7%A5%E5%85%B7/Qoder%20CN/.qoder-versions/0.4.11/campus-data-demo/web/src/components/FloatingAssistant.tsx)），而课表页只渲染 `weekMatches(row.weeks, currentWeek)` 命中的排课（[StudentSchedulePage.tsx:46-49](file:///Z:/AI%E5%B7%A5%E5%85%B7/Qoder%20CN/.qoder-versions/0.4.11/campus-data-demo/web/src/pages/StudentSchedulePage.tsx)）。学生问「下周上什么课」时，助手返回的课程可能属于别的周次：点卡片后 `applyFocus` 仍然无条件 `setFocusCell` 并 `scrollIntoView`，落点要么是一空格子要么根本没有该课，用户看到的效果和「定位成功」无从区分。这违反第一阶段要求「数据不可用/查不到必须明确说明，不得伪造结果」。
+- **修法**：事件 `detail` 与路由 `state` 都带上 `course`；`applyFocus` 先在 `weekSchedule` 里确认「该 weekday + 该节次 + 确有这门课」在当前周可见，才高亮并滚动；不可见则不改高亮，改为在页头下方 `Alert type="info"` 明说「『某课』不在当前第 N 周的周五 5-6节，页面未做定位」。`useCallback` 依赖补上 `weekSchedule`、`currentWeek`，避免用旧闭包判断。
+- **备选与取舍**：本可以再加一个周次切换器让用户跳过去，但演示数据里 `current_week` 由 `metrics.schedule_meta` 给定、页面并无按周浏览的既有交互，加切换器属于扩需求；先做「不假装成功」这一步，把能力边界说清楚。
+- **验证（实测）**：`web` 下 `npm run build`（= `tsc --noEmit && vite build`）通过，产物正常生成。
+- **未验证**：真实浏览器里点击卡片的高亮与提示文案、移动端布局、Playwright 27 条 E2E —— Docker Desktop Linux 引擎仍返回 500，演示栈起不来，本轮无法验证，不得当作已验收。
+- **回退**：`git revert` 本次提交即可，事件多出的 `course` 字段是可选的，旧调用路径不受影响。
+- **授权**：B 类（仅前端展示逻辑，虚构数据，无副作用）。

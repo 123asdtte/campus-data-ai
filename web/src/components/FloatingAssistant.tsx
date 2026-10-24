@@ -117,7 +117,8 @@ export default function FloatingAssistant() {
   };
 
   const focusCourse = (course: AssistantCourse) => {
-    const detail = { weekday: course.weekday, period: course.period };
+    // 带上课程名：课表页要据此判断这堂课在当前周次是否真的可见，不能空定位
+    const detail = { weekday: course.weekday, period: course.period, course: course.course };
     setOpen(false);
     if (pathname === '/my-schedule') {
       window.dispatchEvent(new CustomEvent('campus:focus-course', { detail }));
