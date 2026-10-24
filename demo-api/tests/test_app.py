@@ -249,6 +249,19 @@ class AssistantQueryTest(unittest.TestCase):
         self.assertEqual(reply["courses"], [])
         self.assertIn("只回答你自己的课表和本人学籍信息", reply["answer"])
 
+    def test_other_student_questions_are_not_answered_as_own_schedule(self):
+        # 曾被误答成学生本人课表（“今天没有课”），必须明确拒绝而不是误导。
+        for question in ("张三的课表是什么？", "我室友明天有什么课？", "隔壁班的同学今天有什么课？"):
+            reply = self.answer(question)
+            self.assertEqual(reply["intent"], "refused", question)
+            self.assertEqual(reply["courses"], [], question)
+            self.assertIn("查不到其他学生", reply["answer"], question)
+
+    def test_own_schedule_questions_are_not_blocked_by_other_guard(self):
+        for question in ("我明天有什么课？", "我的课表", "本周的课表", "我们班的课表", "下周有哪些课？"):
+            reply = self.answer(question)
+            self.assertNotEqual(reply["intent"], "refused", question)
+
     def test_student_profile_question_uses_own_record(self):
         student = next(
             item for item in demo.DATA["students"]

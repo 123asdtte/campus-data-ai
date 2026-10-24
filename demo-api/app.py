@@ -61,6 +61,23 @@ PERIOD_SCOPES = {
 SENSITIVE_PATTERN = re.compile(
     r"成绩|分数|其他学生|别人|电话|手机号|身份证|学号|导出|名单|请假|处分|心理|宿舍|家庭"
 )
+# 「张三的课表」这类他人指称不会被敏感词命中，需要单独识别，避免被误答成学生本人的课表。
+OTHER_STUDENT_PATTERN = re.compile(r"室友|同学|隔壁|同桌|([\u4e00-\u9fa5]{2,4})的(?:课表|课程表)")
+TIME_OWNER_WORDS = {
+    "我", "自己", "我们", "咱们", "全班", "我们班", "本学期", "这学期",
+    "今天", "明天", "后天", "昨天", "本周", "下周", "上周", "这周",
+    "周一", "周二", "周三", "周四", "周五", "周六", "周日",
+    "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日", "星期天",
+    "上午", "下午", "晚上",
+}
+
+
+def mentions_other_student(question: str) -> bool:
+    for match in OTHER_STUDENT_PATTERN.finditer(question):
+        owner = match.group(1)
+        if owner is None or owner not in TIME_OWNER_WORDS:
+            return True
+    return False
 MAX_QUESTION_CHARS = 200
 
 # Docker Desktop 会注入 127.0.0.1:8080 代理；容器内没有该代理。
@@ -368,6 +385,15 @@ def schedule_answer(
             "intent": "refused",
             "answer": "学生助手只回答你自己的课表和本人学籍信息；学号、证件号、联系方式、成绩、其他学生信息和名单导出不在这里提供。",
             "scope": {"label": "仅本人课表", "week": current_week},
+        }
+
+    if mentions_other_student(question):
+        return {
+            **base,
+            "intent": "refused",
+            "answer": "课表助手只能查你本人的课表和学籍信息，查不到其他学生的课程安排。你可以问：我明天有什么课、今天还剩几节课、这周五第一节在哪。",
+            "scope": {"label": "仅本人课表", "week": current_week},
+            "suggestions": ["明天下午有什么课？", "今天还剩几节课？"],
         }
 
     # 本人档案字段在 /portal 页面已经展示，这里只是同一份数据的另一种问法；学号与联系方式不回答。
