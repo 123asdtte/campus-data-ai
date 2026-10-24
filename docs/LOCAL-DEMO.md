@@ -118,6 +118,9 @@ docker exec -i campus-gateway-db psql -U gateway_dba -d campus_gateway \
 
 # 停止
 .\scripts\demo\stop-local-demo.ps1
+
+# 仅清空演示异动台账（每次演示前可选；需显式 -Force）
+.\scripts\demo\reset-ledger.ps1 -Force
 ```
 
 脚本会检查网关，移除以 `docker run` 创建的同名旧容器，再用
