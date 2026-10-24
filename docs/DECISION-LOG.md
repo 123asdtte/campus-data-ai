@@ -872,14 +872,14 @@
   3. 依赖服务端 302——会破坏 SPA 和 JSON 接口语义，未采用。
 - **决定**：
   - `auth.ts` 新增 `SessionExpiredError`、`notifySessionExpired(failedToken?)`、`SESSION_EXPIRED_EVENT` 和一次性提示标记；
-  - `fetchSession`（HTTP 401 或 `code:401`）、`useDemoData`（HTTP 401）、异动写接口（HTTP 401）统一触发失效通知；
+  - `fetchSession`（HTTP 401 或 `code:401`）、`useDemoData`（HTTP 401）、异动写接口（HTTP 401）、所有网关业务请求（HTTP 401 或 `code:401`）、带鉴权下载（HTTP 401）统一触发失效通知；
   - `SessionProvider` 监听事件，清空 session、清除数据缓存，并让受保护路由回到 `/login`；
   - 登录页读取一次性提示，展示“登录状态已失效，请重新登录”；
   - 通知携带失败请求的 token，与当前 token 不一致时忽略，避免旧请求误清新登录会话；
   - 移除登录错误外层容器的重复 `role="alert"`，只保留 AntD Alert 的语义。
 - **影响与兼容性**：仅影响前端登录态处理；正常登录、角色路由、数据缓存和台账写入路径不变。失效时页面会整体回到登录页，未保存的前端表单内容会丢失（演示环境可接受）。
 - **涉及文件**：`web/src/api/auth.ts`、`web/src/session/SessionContext.tsx`、`web/src/demo/useDemoData.ts`、`web/src/demo/ledger.ts`、`web/src/pages/LoginPage.tsx`、`web/e2e/demo.spec.ts`、`docs/LOCAL-DEMO.md`。
-- **验证（实测）**：`npm run build` 通过；Playwright **7 passed / 20.9s**，新增用例将 localStorage token 改为 `invalid-token` 后刷新 `/my-schedule`，断言跳转 `/login`、显示失效提示、token 已清空。
+- **验证（实测）**：`npm run build` 通过；Playwright **8 passed / 23.8s**——刷新页面加载失效 token、业务请求（学生列表刷新）遇到 401 两条路径均跳转 `/login`、显示失效提示、token 已清空。
 - **回退**：还原上述文件；无数据与接口变更。
 - **授权**：B 类（本地演示前端健壮性）。
 

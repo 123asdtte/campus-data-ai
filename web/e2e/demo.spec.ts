@@ -139,4 +139,17 @@ test.describe('本地演示关键路径', () => {
     await expect(page.getByRole('alert')).toContainText('登录状态已失效');
     expect(await page.evaluate(() => window.localStorage.getItem('campus.gateway.token'))).toBeNull();
   });
+
+  test('业务请求遇到 401 同样清理会话', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.locator('a.app-nav-item', { hasText: '学生信息' }).click();
+    await expect(page.getByRole('heading', { name: '学生信息' })).toBeVisible();
+
+    await page.evaluate(() => window.localStorage.setItem('campus.gateway.token', 'invalid-token'));
+    await page.getByRole('button', { name: '刷新' }).click();
+
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole('alert')).toContainText('登录状态已失效');
+    expect(await page.evaluate(() => window.localStorage.getItem('campus.gateway.token'))).toBeNull();
+  });
 });

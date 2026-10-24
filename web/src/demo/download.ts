@@ -1,5 +1,5 @@
 import { message } from 'antd';
-import { getToken } from '../api/auth';
+import { getToken, notifySessionExpired } from '../api/auth';
 
 async function downloadWithAuth(url: string, filename: string, success: string) {
   const token = getToken();
@@ -9,6 +9,10 @@ async function downloadWithAuth(url: string, filename: string, success: string) 
   }
   try {
     const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (response.status === 401) {
+      notifySessionExpired(token);
+      throw new Error('登录状态已失效，请重新登录');
+    }
     if (!response.ok) {
       let detail = `HTTP ${response.status}`;
       try {
