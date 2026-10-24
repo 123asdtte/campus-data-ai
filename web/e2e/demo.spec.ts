@@ -230,6 +230,21 @@ test.describe('本地演示关键路径', () => {
     await expect(panel.locator('.fa-message.is-assistant')).toHaveCount(2);
   });
 
+  test('悬浮助手能听懂“今天数据有什么问题”这类自然问法', async ({ page }) => {
+    await login(page, 'admin', 'admin123');
+    await page.goto('/pipeline');
+    await page.getByRole('button', { name: '打开 AI 助手' }).click();
+    const panel = page.getByRole('dialog', { name: 'AI 助手' });
+    // 不点推荐 chip、直接打字：这条问法里没有“数据质量”四个字，以前会被落回“我只能回答……”
+    await panel.getByRole('textbox', { name: '向 AI 助手提问' }).fill('今天数据有什么问题？');
+    await panel.getByRole('button', { name: '发送问题' }).click();
+    const bubble = panel.locator('.fa-message.is-assistant').last();
+    await expect(bubble).toContainText('重复学号', { timeout: 15000 });
+    await expect(bubble.locator('.fa-scope')).toContainText('全校范围');
+    await expect(bubble.locator('.fa-action')).toContainText('查看数据工作台');
+    await page.keyboard.press('Escape');
+  });
+
   test('辅导员台账：发起、刷新持久化、平台核对持久化', async ({ page }) => {
     await login(page, 'counselor01', 'Demo@2026');
     await expect(page).toHaveURL(/\/counselor/);

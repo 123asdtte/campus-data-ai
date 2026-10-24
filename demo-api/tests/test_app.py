@@ -321,6 +321,19 @@ class AssistantQueryTest(unittest.TestCase):
         self.assertIn("不是当前学籍状态", reply["answer"])
         self.assertNotIn("名学生", reply["answer"])
 
+    def test_natural_phrasing_of_quality_question_still_answers_quality(self):
+        staff_payload = demo.scoped_payload(staff_user(), STAFF)
+        counselor_payload = demo.scoped_payload(counselor_user(), COUNSELOR_ROLE)
+        # “数据质量”四个字只是其中一种说法：用户更常说“今天数据有什么问题”。
+        for question in ("数据质量怎么样？", "今天数据有什么问题？", "这批数据有啥问题没？"):
+            reply = demo.staff_answer(question, staff_payload, STAFF)
+            self.assertEqual(reply["intent"], "quality", question)
+            self.assertIn("重复学号", reply["answer"], question)
+            # 辅导员没有全校质量统计，必须说清范围而不是编一份数
+            limited = demo.staff_answer(question, counselor_payload, COUNSELOR_ROLE)
+            self.assertEqual(limited["intent"], "quality", question)
+            self.assertIn("没有全校数据质量统计范围", limited["answer"], question)
+
     def test_question_about_other_objects_is_not_answered_with_headcount(self):
         staff_payload = demo.scoped_payload(staff_user(), STAFF)
         # “哪些”是提问词，不指向学生：收件箱资料不能拿学籍人数冒充答案，宁落回 unknown 的引导。

@@ -506,7 +506,8 @@ def staff_answer(question: str, payload: dict, roles: set[str]) -> dict:
     if "在校" in q and "在籍" not in statuses:
         statuses.append("在籍")
 
-    if any(word in q for word in ("数据质量", "缺失", "异常", "同名", "数据标记")):
+    # “今天数据有什么问题？”是最自然的说法，不能只认“数据质量”这四个字。
+    if any(word in q for word in ("数据质量", "缺失", "异常", "同名", "数据标记")) or ("数据" in q and "问题" in q):
         quality = metrics.get("data_quality") or {}
         if not quality:
             return {
